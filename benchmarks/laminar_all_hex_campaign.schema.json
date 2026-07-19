@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowlab.local/schemas/laminar-all-hex-campaign.v1.json",
+  "title": "FlowLab laminar all-hex campaign manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "campaignId",
+    "scientificStatus",
+    "mobile",
+    "execution",
+    "solver",
+    "physicalEnvelope",
+    "nestedClaims",
+    "laneCounts",
+    "primaryScientificCellCount",
+    "cells",
+    "gateCatalog",
+    "sourceRegister",
+    "externalInputs"
+  ],
+  "properties": {
+    "schema": {"const": "flowlab.laminar-all-hex-campaign.v1"},
+    "campaignId": {"const": "laminar-all-hex-v2"},
+    "scientificStatus": {"const": "planned-fail-closed"},
+    "mobile": {
+      "type": "object",
+      "required": ["inScope", "changes"],
+      "properties": {
+        "inScope": {"const": false},
+        "changes": {"const": "none"}
+      }
+    },
+    "execution": {"type": "object"},
+    "solver": {"type": "object"},
+    "physicalEnvelope": {"type": "object"},
+    "nestedClaims": {"type": "array", "minItems": 5},
+    "laneCounts": {"type": "object"},
+    "primaryScientificCellCount": {"const": 78},
+    "cells": {
+      "type": "array",
+      "minItems": 92,
+      "items": {
+        "type": "object",
+        "required": [
+          "schema",
+          "cellId",
+          "lane",
+          "executionKind",
+          "parameters",
+          "resourceWeight",
+          "resourceClass",
+          "acceptanceDependencies",
+          "plannedStatus"
+        ]
+      }
+    },
+    "gateCatalog": {"type": "object"},
+    "sourceRegister": {"type": "object"},
+    "externalInputs": {"type": "object"}
+  }
+}

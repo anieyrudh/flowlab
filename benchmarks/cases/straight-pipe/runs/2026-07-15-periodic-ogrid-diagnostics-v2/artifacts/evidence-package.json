@@ -1,0 +1,79 @@
+{
+  "applicability": {
+    "boundaryCondition": "periodic-pressure-gradient",
+    "geometry": "3D five-block full-pipe O-grid with a fixed inscribed polygonal wall (64 wall facets); no collapsed axis; not CAD-exact geometry",
+    "geometryAreaRelativeDeficit": 0.0016056069643816118,
+    "meshRecipe": "full-pipe-ogrid-v1",
+    "pressureDropExtraction": "final meanVelocityForce gradient from the converged periodic solve",
+    "reynoldsNumber": 1061.032953945969
+  },
+  "caseId": "straight-pipe",
+  "conservation": {
+    "inletMassFlowRateKgPerS": -0.01,
+    "outletMassFlowRateKgPerS": 0.01,
+    "relativeImbalance": 0.0
+  },
+  "errorAssessment": {
+    "analyticalReferencePressureDropPa": 0.471570201753764,
+    "fineMeshPressureDropPa": 0.4727511260256,
+    "pressureDropRelativeError": 0.0025042385363708876
+  },
+  "meshRefinement": {
+    "characteristicLengthDefinition": "uniform axial and annular-radial spacing; fixed resolved core and wall facets",
+    "effectiveDiscretizationDimension": 2,
+    "fineGridGciPercent": 0.2832664480262958,
+    "levels": [
+      {
+        "characteristicCellSizeM": 0.0015,
+        "id": "coarse",
+        "pressureDropPa": 0.4585948468464
+      },
+      {
+        "characteristicCellSizeM": 0.00075,
+        "id": "medium",
+        "pressureDropPa": 0.46978343614799994
+      },
+      {
+        "characteristicCellSizeM": 0.000375,
+        "id": "fine",
+        "pressureDropPa": 0.4727511260256
+      }
+    ],
+    "observedOrder": 1.9146159035995187,
+    "refinementRatio": 2.0,
+    "richardsonExtrapolatedPressureDropPa": 0.47382244228375764
+  },
+  "provenance": {
+    "caseManifestSha256": "88b7eb5e51eec53a2d11676d1e155d2d9485e8c493e0502cf74d6b5ea95d3ba8",
+    "containerImage": "flowlab/openfoam11-gmsh:2026-07-13",
+    "containerImageProvenance": {
+      "architecture": "amd64",
+      "captureStatus": "captured",
+      "imageId": "sha256:4fa4e4961b90b0df2781d70b6c033be7e67d324c17e129667469099abf6568fe",
+      "os": "linux",
+      "repoDigests": [
+        "flowlab/openfoam11-gmsh@sha256:4fa4e4961b90b0df2781d70b6c033be7e67d324c17e129667469099abf6568fe"
+      ],
+      "requestedImage": "flowlab/openfoam11-gmsh:2026-07-13"
+    },
+    "containerPlatform": "linux/amd64",
+    "evidencePackagingRunnerSourceSha256": "3cd25194d4822455dd4ed78f58df1feda250a4d3ae830c38a06df9314d07c3d0",
+    "meshArtifactSha256": "6d0a539a63ea71b62c1642eea163d077919276720541d7b7addba91aae25fbd0",
+    "qoiExtractionSha256": "a1da99f25a88d44656de0df7bcea40db94d5ebb05442ae3983fc7377354eff54",
+    "rawResultSha256": "2623972f570f05468ce89620e9da2c05fb24a10d8775ec34b8d025723f9e4dfd",
+    "runnerSourceSha256": "3cd25194d4822455dd4ed78f58df1feda250a4d3ae830c38a06df9314d07c3d0",
+    "runnerSourceSnapshotSha256": "3cd25194d4822455dd4ed78f58df1feda250a4d3ae830c38a06df9314d07c3d0",
+    "solverCommand": "foamRun -solver incompressibleFluid",
+    "solverLogSha256": "7fc365e3a6e327c634be5298a94e89fc052a63064f368e00786ffa90926d84be",
+    "solverVersion": "OpenFOAM-11"
+  },
+  "schema": "flowlab.straight-pipe-evidence.v1",
+  "scientificStatus": "analysis-only",
+  "timeRefinement": {
+    "method": "direct-steady",
+    "rationale": "All three cases passed the predeclared periodic-controller tail-stability, continuity, and inner linear-solver criteria. Generic normalized SIMPLE initial residuals are retained as diagnostics but are not acceptance criteria for this periodic pressure-gauge formulation.",
+    "solverMethod": "OpenFOAM incompressibleFluid SIMPLE",
+    "temporalDiscretization": "none"
+  },
+  "validated": false
+}

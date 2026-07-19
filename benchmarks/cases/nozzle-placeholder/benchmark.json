@@ -1,0 +1,41 @@
+{
+  "schema": "flowlab.benchmark_fixture.v1",
+  "id": "nozzle-placeholder",
+  "name": "Compressible Nozzle Placeholder",
+  "status": "pending-real-run",
+  "caseType": "nozzle",
+  "advancedMode": "compressible-flow",
+  "solverTargets": ["openfoam", "su2"],
+  "expectedInputs": {
+    "geometry": "converging or converging-diverging nozzle",
+    "fluid": ["gas model", "temperature", "pressure"],
+    "boundaryConditions": ["inlet total condition", "outlet static pressure", "wall heat flux or adiabatic wall"],
+    "meshControls": ["throat refinement", "shock/adaptation review", "quality thresholds"]
+  },
+  "requiredPatches": [
+    { "name": "inlet", "role": "total-condition-inlet", "required": true },
+    { "name": "outlet", "role": "pressure-outlet", "required": true },
+    { "name": "walls", "role": "wall", "required": true },
+    { "name": "throat", "role": "region-of-interest", "required": true }
+  ],
+  "requiredFields": ["pressure", "velocity", "density", "temperature", "mach_number"],
+  "requiredDiagnostics": ["solverLog", "residualHistory", "machOrDensityFieldSummary", "meshQuality"],
+  "acceptanceCriteria": [
+    {
+      "id": "compressible-field-evidence",
+      "description": "Real solver output includes compressible fields needed to inspect nozzle acceleration.",
+      "evidenceRequired": ["density field", "temperature field", "Mach or velocity field", "solver log"],
+      "status": "pending-real-run"
+    }
+  ],
+  "realOutputs": {
+    "status": "pending-real-run",
+    "track": "Track A",
+    "files": [],
+    "blockingReason": "FlowLab does not yet have promoted real nozzle solver output for this benchmark fixture."
+  },
+  "promotion": {
+    "requiredEvidence": ["case manifest", "solver logs", "compressible result fields", "diagnostic summaries", "mesh quality evidence"],
+    "forbiddenUntilCaptured": ["validated status", "passed acceptance criteria", "numeric observed CFD values"]
+  }
+}

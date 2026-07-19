@@ -1,0 +1,289 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "flowlab.benchmark_fixture.v1",
+  "title": "FlowLab benchmark fixture metadata",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "name",
+    "status",
+    "caseType",
+    "solverTargets",
+    "expectedInputs",
+    "requiredPatches",
+    "requiredFields",
+    "requiredDiagnostics",
+    "acceptanceCriteria",
+    "realOutputs",
+    "promotion"
+  ],
+  "properties": {
+    "schema": { "const": "flowlab.benchmark_fixture.v1" },
+    "id": { "type": "string" },
+    "name": { "type": "string" },
+    "status": { "enum": ["pending-real-run", "validated"] },
+    "caseType": { "type": "string" },
+    "advancedMode": { "type": "string" },
+    "solverTargets": {
+      "type": "array",
+      "items": { "enum": ["openfoam", "su2", "code-saturne"] },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "expectedInputs": { "type": "object" },
+    "requiredPatches": { "type": "array", "minItems": 1 },
+    "requiredFields": { "type": "array", "minItems": 1 },
+    "requiredDiagnostics": { "type": "array", "minItems": 1 },
+    "acceptanceCriteria": { "type": "array", "minItems": 1 },
+    "realOutputs": { "type": "object" },
+    "promotion": { "type": "object" },
+    "quantitativeVerification": {
+      "type": "object",
+      "description": "Additive quantitative V&V contract. Required for the straight-pipe analytic benchmark.",
+      "required": [
+        "reference",
+        "applicability",
+        "quantitiesOfInterest",
+        "units",
+        "meshRefinement",
+        "timeRefinement",
+        "errorAssessment",
+        "conservation",
+        "provenance"
+      ],
+      "properties": {
+        "reference": {
+          "type": "object",
+          "required": ["id", "kind", "equation", "applicability", "source"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "kind": { "const": "analytic" },
+            "equation": { "type": "string", "minLength": 1 },
+            "applicability": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "source": { "type": "string", "minLength": 1 }
+          }
+        },
+        "applicability": {
+          "type": "object",
+          "required": [
+            "status",
+            "referenceRegime",
+            "maximumReynoldsNumber",
+            "boundaryConditionRequirement",
+            "evidenceRequired"
+          ],
+          "properties": {
+            "status": { "enum": ["pending-real-run", "captured"] },
+            "referenceRegime": { "const": "fully-developed-laminar" },
+            "maximumReynoldsNumber": { "type": "number", "exclusiveMinimum": 0, "maximum": 2100 },
+            "boundaryConditionRequirement": {
+              "enum": [
+                "fully-developed-profile-or-periodic-pressure-gradient",
+                "fully-developed-profile-or-documented-entrance-length"
+              ]
+            },
+            "evidenceRequired": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "quantitiesOfInterest": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "description", "unit", "reference"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "unit": { "type": "string", "minLength": 1 },
+              "reference": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "units": {
+          "type": "object",
+          "required": [
+            "length",
+            "diameter",
+            "dynamicViscosity",
+            "density",
+            "volumetricFlowRate",
+            "massFlowRate",
+            "pressureDrop",
+            "velocity"
+          ],
+          "properties": {
+            "length": { "const": "m" },
+            "diameter": { "const": "m" },
+            "dynamicViscosity": { "const": "Pa*s" },
+            "density": { "const": "kg/m^3" },
+            "volumetricFlowRate": { "const": "m^3/s" },
+            "massFlowRate": { "const": "kg/s" },
+            "pressureDrop": { "const": "Pa" },
+            "velocity": { "const": "m/s" }
+          }
+        },
+        "meshRefinement": {
+          "type": "object",
+          "required": [
+            "status",
+            "method",
+            "minimumLevels",
+            "minimumRefinementRatio",
+            "maximumFineGridGciPercent",
+            "quantitiesOfInterest",
+            "evidenceRequired"
+          ],
+          "properties": {
+            "status": { "enum": ["pending-real-run", "captured"] },
+            "method": { "const": "grid-convergence-index" },
+            "minimumLevels": { "type": "integer", "minimum": 3 },
+            "minimumRefinementRatio": { "type": "number", "exclusiveMinimum": 1 },
+            "maximumFineGridGciPercent": { "type": "number", "exclusiveMinimum": 0 },
+            "quantitiesOfInterest": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "evidenceRequired": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "timeRefinement": {
+          "type": "object",
+          "required": [
+            "status",
+            "applicability",
+            "requiredWhen",
+            "method",
+            "minimumLevelsWhenRequired",
+            "quantitiesOfInterest",
+            "evidenceRequired",
+            "notApplicableEvidenceRequired"
+          ],
+          "properties": {
+            "status": { "enum": ["pending-real-run", "captured"] },
+            "applicability": { "const": "conditional" },
+            "requiredWhen": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "method": { "const": "time-step-convergence" },
+            "minimumLevelsWhenRequired": { "type": "integer", "minimum": 3 },
+            "quantitiesOfInterest": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "evidenceRequired": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "notApplicableEvidenceRequired": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "errorAssessment": {
+          "type": "object",
+          "required": [
+            "status",
+            "method",
+            "formula",
+            "quantitiesOfInterest",
+            "acceptanceThresholds",
+            "evidenceRequired"
+          ],
+          "properties": {
+            "status": { "enum": ["pending-real-run", "captured"] },
+            "method": { "const": "relative-error-against-analytic-reference" },
+            "formula": { "type": "string", "minLength": 1 },
+            "quantitiesOfInterest": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "acceptanceThresholds": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["qoi", "metric", "maximum", "unit"],
+                "properties": {
+                  "qoi": { "type": "string", "minLength": 1 },
+                  "metric": { "type": "string", "minLength": 1 },
+                  "maximum": { "type": "number", "exclusiveMinimum": 0 },
+                  "unit": { "type": "string", "minLength": 1 }
+                }
+              }
+            },
+            "evidenceRequired": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "conservation": {
+          "type": "object",
+          "required": ["status", "quantity", "metric", "formula", "unit", "maximum", "evidenceRequired"],
+          "properties": {
+            "status": { "enum": ["pending-real-run", "captured"] },
+            "quantity": { "const": "mass-flow-rate" },
+            "metric": { "const": "relative-inlet-outlet-mass-flow-imbalance" },
+            "formula": { "type": "string", "minLength": 1 },
+            "unit": { "const": "1" },
+            "maximum": { "type": "number", "exclusiveMinimum": 0 },
+            "evidenceRequired": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "provenance": {
+          "type": "object",
+          "required": ["status", "requiredRunMetadata", "requiredArtifacts"],
+          "properties": {
+            "status": { "enum": ["pending-real-run", "captured"] },
+            "requiredRunMetadata": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "requiredArtifacts": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "id": { "const": "straight-pipe" } },
+        "required": ["id"]
+      },
+      "then": { "required": ["quantitativeVerification"] }
+    }
+  ],
+  "additionalProperties": true
+}

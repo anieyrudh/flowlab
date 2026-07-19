@@ -1,0 +1,53 @@
+{
+  "schema": "flowlab.benchmark_fixture.v1",
+  "id": "venturi",
+  "name": "Venturi Pressure Recovery",
+  "status": "pending-real-run",
+  "caseType": "venturi",
+  "advancedMode": "incompressible-navier-stokes",
+  "solverTargets": ["openfoam", "su2"],
+  "expectedInputs": {
+    "geometry": "converging throat and downstream recovery section",
+    "fluid": ["density", "dynamicViscosity", "vaporPressure"],
+    "boundaryConditions": ["inlet velocity or total condition", "outlet pressure"],
+    "meshControls": ["throat refinement", "quality thresholds", "patch roles"]
+  },
+  "requiredPatches": [
+    { "name": "inlet", "role": "velocity-inlet", "required": true },
+    { "name": "outlet", "role": "pressure-outlet", "required": true },
+    { "name": "walls", "role": "no-slip-wall", "required": true },
+    { "name": "throat", "role": "region-of-interest", "required": true }
+  ],
+  "requiredFields": ["pressure", "velocity"],
+  "requiredDiagnostics": [
+    "solverLog",
+    "residualHistory",
+    "pressureProbe",
+    "velocityProbe",
+    "meshQuality"
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "throat-field-evidence",
+      "description": "Solver-produced pressure and velocity fields cover the throat region.",
+      "evidenceRequired": ["pressure field", "velocity field", "throat region metadata"],
+      "status": "pending-real-run"
+    },
+    {
+      "id": "recovery-diagnostic-evidence",
+      "description": "Downstream pressure recovery can be computed from captured fields or diagnostics.",
+      "evidenceRequired": ["pressure probe table", "field summary"],
+      "status": "pending-real-run"
+    }
+  ],
+  "realOutputs": {
+    "status": "pending-real-run",
+    "track": "Track A",
+    "files": [],
+    "blockingReason": "No Track A solver output has been captured for this benchmark fixture."
+  },
+  "promotion": {
+    "requiredEvidence": ["case manifest", "solver logs", "result fields", "diagnostic summaries", "mesh quality evidence"],
+    "forbiddenUntilCaptured": ["validated status", "passed acceptance criteria", "numeric observed CFD values"]
+  }
+}

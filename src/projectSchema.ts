@@ -1,0 +1,525 @@
+import { z } from "zod";
+import type { FluidEdge, FluidNode, FluidProject, NodeId, PipePortId } from "./types";
+
+const portIds = ["inlet", "outlet", "north", "south"] as const;
+
+const vec2Schema = z.object({
+  x: z.number().finite(),
+  y: z.number().finite()
+});
+
+const fluidNodeSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(["source", "sink", "pump", "mixer", "junction"]),
+  label: z.string().min(1),
+  position: vec2Schema,
+  rotation: z.number().finite().optional(),
+  elevation: z.number().finite(),
+  pressure: z.number().finite().optional(),
+  flowDemand: z.number().finite().optional(),
+  head: z.number().finite().optional(),
+  pumpCurveA: z.number().finite().optional(),
+  concentration: z.number().finite().optional(),
+  boundary: z.enum(["pressure", "flow"]).optional()
+});
+
+const channelShapeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("circular"), diameter: z.number().positive() }),
+  z.object({ kind: z.literal("rectangular"), width: z.number().positive(), height: z.number().positive() })
+]);
+
+const boundaryTagRoles = ["inlet", "outlet", "wall", "interface"] as const;
+
+function isAsciiStl(text: string) {
+  const normalized = text.toLowerCase();
+  return /^[\x00-\x7F]*$/.test(text) && normalized.includes("solid") && normalized.includes("facet normal") && normalized.includes("vertex");
+}
+
+function isSafeStlPath(path: string) {
+  if (!/\.stl$/i.test(path)) return false;
+  if (path.includes("\0") || path.includes("..")) return false;
+  if (/^([a-z]+:)?\/\//i.test(path)) return false;
+  if (path.startsWith("/") || path.startsWith("\\") || /^[a-z]:[\\/]/i.test(path)) return false;
+  return true;
+}
+
+const stlBoundsSchema = z.object({
+  min: z.object({ x: z.number().finite(), y: z.number().finite(), z: z.number().finite() }),
+  max: z.object({ x: z.number().finite(), y: z.number().finite(), z: z.number().finite() })
+});
+
+const boundaryTagSchema = z
+  .object({
+    role: z.enum(boundaryTagRoles),
+    patchName: z.string().max(80)
+  })
+  .superRefine((tag, context) => {
+    if (tag.patchName.trim() && !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(tag.patchName.trim())) {
+      context.addIssue({
+        code: "custom",
+        path: ["patchName"],
+        message: "OpenFOAM patch names must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens"
+      });
+    }
+  });
+
+const reviewedGeometryMetadataSchema = z.object({
+  triangleCount: z.number().int().nonnegative(),
+  bounds: stlBoundsSchema.nullable(),
+  openEdgeCount: z.number().int().nonnegative(),
+  nonManifoldEdgeCount: z.number().int().nonnegative(),
+  watertightStatus: z.enum(["closed", "open", "non-manifold", "unknown"]),
+  asciiValid: z.boolean(),
+  validation: z.array(z.string())
+});
+
+const boundaryConditionTypesByRole = {
+  inlet: ["velocity-inlet", "mass-flow-inlet", "pressure-inlet"],
+  outlet: ["pressure-outlet", "outflow"],
+  wall: ["no-slip-wall", "slip-wall", "rough-wall", "heat-flux-wall", "temperature-wall"],
+  interface: ["coupled-interface", "mapped-interface"]
+} as const;
+
+const boundaryConditionSchema = z
+  .object({
+    type: z.enum([
+      "velocity-inlet",
+      "mass-flow-inlet",
+      "pressure-inlet",
+      "pressure-outlet",
+      "outflow",
+      "no-slip-wall",
+      "slip-wall",
+      "rough-wall",
+      "heat-flux-wall",
+      "temperature-wall",
+      "coupled-interface",
+      "mapped-interface"
+    ]),
+    status: z.enum(["unset", "ready", "placeholder"]).optional(),
+    velocity: z.object({ x: z.number().finite(), y: z.number().finite(), z: z.number().finite() }).optional(),
+    massFlowRate: z.number().finite().optional(),
+    pressure: z.number().finite().optional(),
+    temperature: z.number().finite().optional(),
+    heatFlux: z.number().finite().optional(),
+    roughness: z.number().finite().nonnegative().optional(),
+    notes: z.string().max(1000).optional()
+  })
+  .optional();
+
+const reviewedGeometrySurfaceSchema = z
+  .object({
+    id: z.string().min(1),
+    surfaceName: z.string().min(1).max(120),
+    role: z.enum(boundaryTagRoles),
+    patchName: z.string().min(1).max(80),
+    sourceType: z.enum(["uploaded-stl", "local-stl-path"]),
+    cadReviewed: z.boolean(),
+    reviewedAt: z.string().datetime().nullable().optional(),
+    notes: z.string().max(2000).optional(),
+    boundaryCondition: boundaryConditionSchema,
+    stlText: z.string().optional(),
+    stlPath: z.string().optional(),
+    metadata: reviewedGeometryMetadataSchema.optional()
+  })
+  .superRefine((surface, context) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(surface.patchName.trim())) {
+      context.addIssue({
+        code: "custom",
+        path: ["patchName"],
+        message: "OpenFOAM patch names must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens"
+      });
+    }
+
+    if (surface.stlPath && !isSafeStlPath(surface.stlPath)) {
+      context.addIssue({
+        code: "custom",
+        path: ["stlPath"],
+        message: "STL path must be a safe relative .stl path"
+      });
+    }
+
+    if (surface.stlText && !isAsciiStl(surface.stlText)) {
+      context.addIssue({
+        code: "custom",
+        path: ["stlText"],
+        message: "Uploaded STL must be ASCII and include solid, facet normal, and vertex records"
+      });
+    }
+
+    if (surface.sourceType === "uploaded-stl" && !surface.stlText) {
+      context.addIssue({
+        code: "custom",
+        path: ["stlText"],
+        message: "Uploaded STL surface requires STL text"
+      });
+    }
+
+    if (surface.sourceType === "local-stl-path" && !surface.stlPath) {
+      context.addIssue({
+        code: "custom",
+        path: ["stlPath"],
+        message: "Local STL surface requires a safe relative STL path"
+      });
+    }
+
+    const boundaryCondition = surface.boundaryCondition;
+    if (boundaryCondition) {
+      const allowedTypes = boundaryConditionTypesByRole[surface.role] as readonly string[];
+      if (!allowedTypes.includes(boundaryCondition.type)) {
+        context.addIssue({
+          code: "custom",
+          path: ["boundaryCondition", "type"],
+          message: `Boundary condition ${boundaryCondition.type} is not valid for ${surface.role} surfaces`
+        });
+      }
+    }
+  });
+
+const reviewedGeometrySchema = z
+  .object({
+    sourceType: z.enum(["flowlab-generated", "uploaded-stl", "local-stl-path"]),
+    cadReviewed: z.boolean(),
+    reviewedAt: z.string().datetime().nullable().optional(),
+    reviewNotes: z.string().max(2000).optional(),
+    stlText: z.string().optional(),
+    stlPath: z.string().optional(),
+    metadata: reviewedGeometryMetadataSchema.optional(),
+    boundaryTags: z.array(boundaryTagSchema).optional(),
+    surfaces: z.array(reviewedGeometrySurfaceSchema).optional()
+  })
+  .superRefine((geometry, context) => {
+    const hasSurfaces = Boolean(geometry.surfaces?.length);
+
+    if (geometry.stlPath && !isSafeStlPath(geometry.stlPath)) {
+      context.addIssue({
+        code: "custom",
+        path: ["stlPath"],
+        message: "STL path must be a safe relative .stl path"
+      });
+    }
+
+    if (geometry.stlText && !isAsciiStl(geometry.stlText)) {
+      context.addIssue({
+        code: "custom",
+        path: ["stlText"],
+        message: "Uploaded STL must be ASCII and include solid, facet normal, and vertex records"
+      });
+    }
+
+    if (geometry.sourceType === "uploaded-stl" && !geometry.stlText && !hasSurfaces) {
+      context.addIssue({
+        code: "custom",
+        path: ["stlText"],
+        message: "Uploaded STL geometry requires STL text"
+      });
+    }
+
+    if (geometry.sourceType === "local-stl-path" && !geometry.stlPath && !hasSurfaces) {
+      context.addIssue({
+        code: "custom",
+        path: ["stlPath"],
+        message: "Local STL geometry requires a safe relative STL path"
+      });
+    }
+
+    if (geometry.sourceType === "flowlab-generated" && geometry.cadReviewed) {
+      context.addIssue({
+        code: "custom",
+        path: ["cadReviewed"],
+        message: "FlowLab-generated starter geometry cannot be marked CAD reviewed"
+      });
+    }
+
+    if (geometry.surfaces?.length) {
+      const patchNames = new Map<string, number>();
+      geometry.surfaces.forEach((surface, index) => {
+        const patchName = surface.patchName.trim();
+        const previous = patchNames.get(patchName);
+        if (previous !== undefined) {
+          context.addIssue({
+            code: "custom",
+            path: ["surfaces", index, "patchName"],
+            message: `Duplicate OpenFOAM patch name also used by surface ${previous + 1}`
+          });
+        }
+        patchNames.set(patchName, index);
+      });
+    }
+  });
+
+const adaptiveMeshSchema = z.object({
+  enabled: z.boolean(),
+  targetField: z.enum(["velocity", "pressure", "temperature", "phase", "wall-shear", "residual"]),
+  errorMode: z.enum(["gradient", "relative-error", "absolute-error"]),
+  adaptEvery: z.number().int().min(1).max(100),
+  maxCells: z.number().int().min(100).max(50_000_000),
+  minCellSize: z.number().positive(),
+  maxCellSize: z.number().positive(),
+  gradation: z.number().min(1).max(5),
+  writeAdaptedState: z.boolean()
+});
+
+const fluidEdgeSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(["pipe", "venturi", "bend", "valve", "nozzle", "contraction", "expansion"]),
+  label: z.string().min(1),
+  from: z.string().min(1),
+  to: z.string().min(1),
+  fromPort: z.enum(portIds).optional(),
+  toPort: z.enum(portIds).optional(),
+  length: z.number().positive(),
+  shape: channelShapeSchema,
+  roughness: z.number().nonnegative(),
+  minorLossK: z.number().nonnegative(),
+  throatDiameter: z.number().positive().optional(),
+  dischargeCoefficient: z.number().positive().optional(),
+  valveOpening: z.number().min(0).max(1).optional()
+});
+
+const projectSchema = z.object({
+  version: z.literal(1),
+  name: z.string().min(1),
+  fluid: z.object({
+    density: z.number().positive(),
+    dynamicViscosity: z.number().positive(),
+    vaporPressure: z.number().nonnegative(),
+    bulkModulus: z.number().positive(),
+    temperature: z.number().positive()
+  }),
+  nodes: z.record(z.string(), fluidNodeSchema),
+  edges: z.record(z.string(), fluidEdgeSchema),
+  sweeps: z.array(
+    z.object({
+      id: z.string().min(1),
+      targetId: z.string().min(1),
+      targetKind: z.enum(["edge", "node", "fluid"]),
+      parameter: z.string().min(1),
+      min: z.number().finite(),
+      max: z.number().finite(),
+      steps: z.number().int().min(2)
+    })
+  ),
+  solver: z.object({
+    tier: z.enum(["instant-1d", "openfoam", "su2", "code-saturne", "mujoco"]),
+    advancedMode: z.enum([
+      "incompressible-navier-stokes",
+      "compressible-flow",
+      "heat-transfer",
+      "conjugate-heat-transfer",
+      "water-hammer",
+      "multiphase-vof",
+      "cavitation",
+      "rigid-body-fluid-forces"
+    ]),
+    turbulence: z.enum(["laminar", "rans-k-epsilon", "rans-sst", "les", "dns"]),
+    meshResolution: z.enum(["coarse", "medium", "fine"]),
+    reviewedGeometry: reviewedGeometrySchema.optional(),
+    meshControls: z
+      .object({
+        longitudinalRefinement: z.number().int().min(1).max(4).optional(),
+        boundaryLayerLayers: z.number().int().min(0).max(8).optional(),
+        boundaryLayerGrowthRate: z.number().min(1).max(3).optional(),
+        targetYPlus: z.number().positive().optional(),
+        refinementRegions: z
+          .array(
+            z.object({
+              edgeId: z.string().min(1),
+              factor: z.number().int().min(1).max(4),
+              reason: z.string().optional()
+            })
+          )
+          .optional(),
+        featureRefinement: z
+          .object({
+            enabled: z.boolean().optional(),
+            factor: z.number().int().min(1).max(4).optional(),
+            clusterStrength: z.number().min(0).max(0.95).optional()
+          })
+          .optional(),
+        quality: z
+          .object({
+            minCellArea: z.number().positive().optional(),
+            maxAspectRatio: z.number().positive().optional(),
+            minInteriorAngleDeg: z.number().positive().max(89).optional()
+          })
+          .optional()
+      })
+      .optional(),
+    adaptiveMesh: adaptiveMeshSchema.optional(),
+    performance: z
+      .object({
+        openfoamParallel: z
+          .object({
+            enabled: z.boolean(),
+            ranks: z.number().int().min(2).max(256),
+            decomposition: z.literal("scotch")
+          })
+          .optional()
+      })
+      .optional(),
+    maxIterations: z.number().int().positive(),
+    tolerance: z.number().positive()
+  }),
+  visualization: z.object({
+    mode: z.enum(["design", "simulate", "sweep", "analyze"]),
+    overlay: z.enum(["velocity", "pressure", "reynolds", "temperature", "phase", "residuals", "geometry"]),
+    particles: z.boolean(),
+    streamlines: z.boolean(),
+    grid: z.boolean()
+  }),
+  viewport: z.object({ x: z.number().finite(), y: z.number().finite(), zoom: z.number().positive() })
+});
+
+type ParseProjectOptions = {
+  allowTopologyWarnings?: boolean;
+};
+
+function defaultPortFor(node: FluidNode, role: "from" | "to"): PipePortId {
+  if (node.type === "source") return "outlet";
+  if (node.type === "sink") return "inlet";
+  return role === "from" ? "outlet" : "inlet";
+}
+
+function inferRotation(node: FluidNode, nodes: Record<NodeId, FluidNode>, edges: Record<string, FluidEdge>): number {
+  if (typeof node.rotation === "number") return node.rotation;
+  const edge = Object.values(edges).find((candidate) => candidate.from === node.id || candidate.to === node.id);
+  if (!edge) return 0;
+  const otherId = edge.from === node.id ? edge.to : edge.from;
+  const other = nodes[otherId];
+  if (!other) return 0;
+  return Math.round((Math.atan2(other.position.y - node.position.y, other.position.x - node.position.x) * 180) / Math.PI);
+}
+
+export function normalizeProject(project: FluidProject): FluidProject {
+  const nodes = Object.fromEntries(
+    Object.entries(project.nodes).map(([id, node]) => [
+      id,
+      {
+        ...node,
+        id,
+        rotation: inferRotation(node, project.nodes, project.edges)
+      }
+    ])
+  ) as Record<NodeId, FluidNode>;
+
+  const edges = Object.fromEntries(
+    Object.entries(project.edges).map(([id, edge]) => {
+      const from = nodes[edge.from];
+      const to = nodes[edge.to];
+      return [
+        id,
+        {
+          ...edge,
+          id,
+          fromPort: edge.fromPort ?? (from ? defaultPortFor(from, "from") : "outlet"),
+          toPort: edge.toPort ?? (to ? defaultPortFor(to, "to") : "inlet")
+        }
+      ];
+    })
+  ) as Record<string, FluidEdge>;
+
+  return {
+    ...project,
+    nodes,
+    edges
+  };
+}
+
+function canSharePort(node: FluidNode): boolean {
+  return node.type === "mixer" || node.type === "junction";
+}
+
+function validateNetwork(project: FluidProject): string | null {
+  const occupied = new Map<string, string>();
+
+  for (const edge of Object.values(project.edges)) {
+    if (edge.from === edge.to) return `${edge.label} cannot connect a node to itself.`;
+    if (!project.nodes[edge.from] || !project.nodes[edge.to]) return `${edge.label} references a missing endpoint node.`;
+
+    if (edge.fromPort === "inlet") return `${edge.label} cannot use inlet as a source-side port.`;
+    if (edge.toPort === "outlet") return `${edge.label} cannot use outlet as a target-side port.`;
+
+    const endpoints: Array<[string, PipePortId | undefined]> = [
+      [edge.from, edge.fromPort],
+      [edge.to, edge.toPort]
+    ];
+    for (const [nodeId, port] of endpoints) {
+      const node = project.nodes[nodeId];
+      if (!node || !port || canSharePort(node)) continue;
+      const key = `${nodeId}:${port}`;
+      const previous = occupied.get(key);
+      if (previous) return `${edge.label} reuses ${port} on ${node.label}; already occupied by ${previous}.`;
+      occupied.set(key, edge.label);
+    }
+  }
+
+  return null;
+}
+
+function validateTopology(project: FluidProject): string | null {
+  const parent = new Map<string, string>();
+
+  function find(nodeId: string): string {
+    const current = parent.get(nodeId) ?? nodeId;
+    if (current === nodeId) return current;
+    const root = find(current);
+    parent.set(nodeId, root);
+    return root;
+  }
+
+  function union(a: string, b: string) {
+    const rootA = find(a);
+    const rootB = find(b);
+    if (rootA !== rootB) parent.set(rootB, rootA);
+  }
+
+  for (const nodeId of Object.keys(project.nodes)) {
+    parent.set(nodeId, nodeId);
+  }
+
+  for (const edge of Object.values(project.edges)) {
+    if (project.nodes[edge.from] && project.nodes[edge.to] && edge.from !== edge.to) {
+      union(edge.from, edge.to);
+    }
+  }
+
+  const components = new Map<string, FluidNode[]>();
+  for (const node of Object.values(project.nodes)) {
+    const root = find(node.id);
+    components.set(root, [...(components.get(root) ?? []), node]);
+  }
+
+  if (components.size > 1) return `Network has ${components.size} disconnected components.`;
+
+  for (const nodes of components.values()) {
+    const connectedEdgeCount = Object.values(project.edges).filter((edge) => nodes.some((node) => node.id === edge.from || node.id === edge.to)).length;
+    if (connectedEdgeCount === 0) return `${nodes[0].label} is not connected to the hydraulic network.`;
+
+    const hasSource = nodes.some((node) => node.type === "source");
+    const hasSink = nodes.some((node) => node.type === "sink");
+    if (!hasSource || !hasSink) {
+      return `${nodes.map((node) => node.label).join(", ")} component needs at least one source and one sink boundary.`;
+    }
+  }
+
+  return null;
+}
+
+export function parseProject(input: unknown, options: ParseProjectOptions = {}): { ok: true; project: FluidProject } | { ok: false; message: string } {
+  const parsed = projectSchema.safeParse(input);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path = issue?.path.length ? issue.path.join(".") : "project";
+    return { ok: false, message: `${path}: ${issue?.message ?? "Invalid project"}` };
+  }
+
+  const project = normalizeProject(parsed.data as FluidProject);
+  const validationError = validateNetwork(project);
+  if (validationError) return { ok: false, message: validationError };
+  if (!options.allowTopologyWarnings) {
+    const topologyError = validateTopology(project);
+    if (topologyError) return { ok: false, message: topologyError };
+  }
+  return { ok: true, project };
+}

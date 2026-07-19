@@ -1,0 +1,6 @@
+{
+  "schema": "flowlab.validated-campaign-pointer.v1",
+  "campaignId": "laminar-all-hex-v4",
+  "report": "benchmarks/cases/open-boundary/campaigns/2026-07-16-laminar-all-hex-v4-followups/final-assessment-r2/final-assessment.json",
+  "sha256": "f57a5bfff04bf99756182c2e594d409fb417c4a511a6608309fa49dbc6164969"
+}

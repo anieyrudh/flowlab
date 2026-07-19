@@ -1,0 +1,78 @@
+{
+  "schema": "flowlab.reference_cases.registry.v1",
+  "updatedAt": "2026-06-16",
+  "cases": [
+    {
+      "id": "su2-euler-naca0012",
+      "label": "SU2 NACA0012 Euler",
+      "solver": "su2",
+      "source": {
+        "kind": "github",
+        "repo": "su2code/TestCases",
+        "url": "https://github.com/su2code/TestCases",
+        "casePath": "euler/naca0012",
+        "expectedFiles": ["*.cfg", "*.su2"]
+      },
+      "physics": ["compressible-flow"],
+      "importMode": "local-copy-or-reviewed-download",
+      "notes": [
+        "Use as a reviewed SU2 tutorial handoff; FlowLab does not auto-download or license-promote third-party files.",
+        "Imported meshes should still pass FlowLab meshio validation and solver runtime checks before execution."
+      ]
+    },
+    {
+      "id": "su2-turbulent-flat-plate",
+      "label": "SU2 Turbulent Flat Plate",
+      "solver": "su2",
+      "source": {
+        "kind": "github",
+        "repo": "su2code/TestCases",
+        "url": "https://github.com/su2code/TestCases",
+        "casePath": "rans/flatplate",
+        "expectedFiles": ["*.cfg", "*.su2"]
+      },
+      "physics": ["incompressible-navier-stokes", "compressible-flow"],
+      "importMode": "local-copy-or-reviewed-download",
+      "notes": [
+        "Treat this as a turbulence validation starter and compare against SU2's upstream expected output.",
+        "FlowLab currently records the handoff plan; production execution still depends on native SU2 availability."
+      ]
+    },
+    {
+      "id": "openfoam-icofoam-cavity",
+      "label": "OpenFOAM icoFoam cavity",
+      "solver": "openfoam",
+      "source": {
+        "kind": "tutorial",
+        "repo": "OpenFOAM Foundation tutorials",
+        "url": "https://develop.openfoam.com/Development/openfoam/-/tree/master/tutorials",
+        "casePath": "tutorials/incompressible/icoFoam/cavity/cavity",
+        "expectedFiles": ["0/U", "0/p", "constant/transportProperties", "system/controlDict", "system/fvSchemes", "system/fvSolution"]
+      },
+      "physics": ["incompressible-navier-stokes"],
+      "importMode": "local-copy-or-tutorial-path",
+      "notes": [
+        "Use as a smoke tutorial for solver/runtime compatibility, not as FlowLab production mesh evidence.",
+        "FlowLab's patch diagnostics contract is added separately when generated through FlowLab adapters."
+      ]
+    },
+    {
+      "id": "openfoam-pitzdaily",
+      "label": "OpenFOAM pitzDaily turbulent channel",
+      "solver": "openfoam",
+      "source": {
+        "kind": "tutorial",
+        "repo": "OpenFOAM Foundation tutorials",
+        "url": "https://develop.openfoam.com/Development/openfoam/-/tree/master/tutorials",
+        "casePath": "tutorials/incompressible/simpleFoam/pitzDaily",
+        "expectedFiles": ["0/U", "0/p", "constant/transportProperties", "system/controlDict", "system/fvSchemes", "system/fvSolution"]
+      },
+      "physics": ["incompressible-navier-stokes"],
+      "importMode": "local-copy-or-tutorial-path",
+      "notes": [
+        "Use as a RANS compatibility reference once the local OpenFOAM runtime is available.",
+        "Imported tutorial patches need FlowLab boundary/diagnostic mapping before patch metrics are expected."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,713 @@
+{
+  "campaignId": "laminar-all-hex-v4",
+  "checks": {
+    "affineAccepted": true,
+    "everyScientificCellAccountedFor": true,
+    "experimentalDatasetPinned": false,
+    "negativeControlsAccepted": true,
+    "noInfrastructureGaps": true,
+    "nonAffineMmsAccepted": true,
+    "physicalEnvelopeAccepted": true,
+    "productContractAccepted": true,
+    "productEvaluatorAmendmentRecorded": true,
+    "reproducibilityAccepted": true
+  },
+  "controls": {
+    "checks": {
+      "desktopPromotionRemainsBlocked": true,
+      "fourProductContractsPass": true,
+      "pinnedImageDigestPreserved": true,
+      "sixNegativeControlsReject": true
+    },
+    "status": "accepted"
+  },
+  "convergenceControl": {
+    "allAchieved": true,
+    "cellCount": 72,
+    "cells": [
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-1__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-1__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-1__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-1__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-1__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-1__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-4__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-4__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-4__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-4__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-4__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-forward__lh-4__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-1__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-1__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-1__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-1__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-1__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-1__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-4__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-4__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-4__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-4__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-4__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-16p67__dir-reverse__lh-4__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-1__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-1__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-1__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-1__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-1__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-1__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-4__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-4__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-4__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-4__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-4__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-forward__lh-4__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-1__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-1__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-1__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-1__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-1__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-1__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-4__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-4__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-4__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-4__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-4__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-4p17__dir-reverse__lh-4__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-1__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-1__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-1__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-1__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-1__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-1__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-4__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-4__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-4__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-4__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-4__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-forward__lh-4__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-1__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-1__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-1__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-1__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-1__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-1__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-4__ax-1__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-4__ax-1__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-4__ax-1__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-4__ax-2__coarse",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-4__ax-2__fine",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      },
+      {
+        "cellId": "physical__re-66p7__dir-reverse__lh-4__ax-2__medium",
+        "firstSustainedJointPassIteration": 1300,
+        "hardCapReached": false,
+        "status": "accepted",
+        "stopIteration": 1300
+      }
+    ],
+    "commonStopIteration": 1300,
+    "contract": {
+      "axialResidualLimit": 1e-06,
+      "checkIntervalIterations": 100,
+      "commonMinimumAcrossPhysicalMatrix": true,
+      "hardCapIterations": 2000,
+      "method": "host-supervised-common-floor-staged-steady-solve",
+      "minimumAppliesTo": "stop-iteration",
+      "minimumIterations": 1300,
+      "pressureResidualLimit": 1e-08,
+      "rule": "Do not stop any physical cell before iteration 1300. At each checkpoint from 1300 onward, stop at the first checkpoint whose last 25 iterations pass both unchanged residual limits; reject if no such window exists by iteration 2000.",
+      "sustainedWindowIterations": 25
+    },
+    "hardCapCellIds": [],
+    "maximumStopIteration": 1300,
+    "minimumStopIteration": 1300
+  },
+  "decision": {
+    "completedV2OrV3VerdictChanged": false,
+    "desktopRegimeVisible": false,
+    "nextStage": "resolve-only-the-listed-failed-final-gates",
+    "runnableValidatedPresetAvailable": false
+  },
+  "evidence": [
+    {
+      "path": "benchmarks/cases/open-boundary/campaigns/2026-07-16-laminar-all-hex-v4-campaign-r1/campaign-report.json",
+      "sha256": "66c063768a8a7a1f2b4e06d1cf2fca0a6b6e3814ea19e086c33223baf0e7ab1b"
+    },
+    {
+      "path": "benchmarks/cases/open-boundary/campaigns/2026-07-16-laminar-all-hex-v4-campaign-r1/factorial-analysis.json",
+      "sha256": "9ee63543130d93597116b2455e093a30739b19cf40e30843cb0008ff2b060bd7"
+    },
+    {
+      "path": "benchmarks/cases/open-boundary/campaigns/2026-07-16-laminar-all-hex-v4-followups/confirmation-r1/confirmation-report.json",
+      "sha256": "9c9f2498ceb554f6af7ff9b351d3cd3355b7a5021c05d2c6dacfe4f20dec09e5"
+    },
+    {
+      "path": "benchmarks/cases/open-boundary/campaigns/2026-07-16-laminar-all-hex-v4-followups/reproducibility-r1/reproducibility-report.json",
+      "sha256": "3f57a372072c53c5317b54166396ec84b679378f5b02edf5188a21090967f0f1"
+    },
+    {
+      "path": "benchmarks/cases/open-boundary/campaigns/2026-07-16-laminar-all-hex-v4-followups/controls-r3/controls-report.json",
+      "sha256": "f77167216ea7190fb08a3e21a0cd27b07f916e602aa3a8bf744eb1113980395a"
+    },
+    {
+      "path": "benchmarks/cases/open-boundary/campaigns/2026-07-16-laminar-all-hex-v4-followups/product-evaluator-amendment-r2.json",
+      "sha256": "20b6ca36ad8c7d923511344f7209947fe7108b964045458100feaba0503f3514"
+    },
+    {
+      "path": "benchmarks/cases/open-boundary/campaigns/2026-07-16-laminar-all-hex-v3-followups/experimental-data-research-r1/experimental-dataset-assessment.json",
+      "sha256": "a2d00eb6fc2c16591dea04180ed0160348d50010633dee32c57e46352b55d1c5"
+    }
+  ],
+  "experimentalValidation": {
+    "bestCandidate": {
+      "aspectRatioRange": [
+        0.13,
+        0.76
+      ],
+      "authors": [
+        "Mohsen Akbari",
+        "David Sinton",
+        "Majid Bahrami"
+      ],
+      "blockingReasons": [
+        "raw pointwise pressure and flow observations were not located",
+        "finite-sidewall and imperfect PDMS cross-sections do not match the v3 two-wall spanwise-symmetry geometry exactly",
+        "no direct wall-traction measurement was located",
+        "repeat-level data and covariance or coverage-factor metadata were not located"
+      ],
+      "doi": "10.1115/1.3077143",
+      "eligible": false,
+      "reportedFrictionFactorUncertaintyUpperBoundRelative": 0.1,
+      "reynoldsRange": [
+        1.0,
+        35.0
+      ],
+      "title": "Pressure Drop in Rectangular Microchannels as Compared With Theory Based on Arbitrary Cross Section"
+    },
+    "nextAction": "obtain the Akbari repeat-level raw table and uncertainty metadata, or commission a boundary-compatible rectangular-duct experiment with synchronized pressure, flow, and velocity-gradient measurements",
+    "status": "no-compatible-machine-readable-dataset-pinned"
+  },
+  "physicalScope": {
+    "acceptedCellCount": 72,
+    "allForceFieldMeshMassAndLinearChecksPass": true,
+    "cellCount": 72,
+    "forceFieldFailures": [],
+    "nestedNumericalScopes": [
+      {
+        "acceptedCellCount": 24,
+        "allAccepted": true,
+        "cellCount": 24,
+        "name": "Re=4.17 full factorial"
+      },
+      {
+        "acceptedCellCount": 24,
+        "allAccepted": true,
+        "cellCount": 24,
+        "name": "Re=16.67 full factorial"
+      },
+      {
+        "acceptedCellCount": 48,
+        "allAccepted": true,
+        "cellCount": 48,
+        "name": "Re<=16.67 full factorial"
+      },
+      {
+        "acceptedCellCount": 12,
+        "allAccepted": true,
+        "cellCount": 12,
+        "name": "Re=66.7 and L/H=4"
+      },
+      {
+        "acceptedCellCount": 12,
+        "allAccepted": true,
+        "cellCount": 12,
+        "name": "Re=66.7 and L/H=1"
+      }
+    ],
+    "scientificFailures": []
+  },
+  "primaryCampaign": {
+    "accountedCellCount": 78,
+    "scientificCellCount": 78,
+    "status": "numerical-lanes-accepted"
+  },
+  "productEvaluatorAmendment": {
+    "numericalResultsChanged": false,
+    "scientificInputsChanged": false,
+    "scientificThresholdsChanged": false,
+    "scope": "product-report-identity-and-digest-checked-evidence-pointer-only",
+    "sourceDriftAfterCampaign": [
+      {
+        "campaignSha256": "18f43455344e053018711ca831d02231312295217f6921a415ccc31b0f898bb9",
+        "currentSha256": "31368733b28069244d40ea88b9d8e115a810e7f389848e4efd3f74549f912a09",
+        "path": "server/flowlab/validated_benchmark.py"
+      }
+    ],
+    "status": "applied-and-tested"
+  },
+  "promotionAuthorized": false,
+  "reproducibility": {
+    "checks": {
+      "coldRepeatsMatchEachOther": true,
+      "coldRepeatsMatchSourceSignature": true,
+      "coldRepeatsPassFrozenScientificGates": true,
+      "mpiFieldsEquivalentOnAnalyticScale": true,
+      "mpiPassFrozenScientificGates": true,
+      "mpiPrimaryQoisEquivalentToSerial": true,
+      "mpiTwoAndFourCompleted": true,
+      "pinnedImageIdentityPreserved": true,
+      "sourceCellAccepted": true,
+      "sourceHashesMatchedBeforeExecution": true,
+      "twoColdRepeatsCompleted": true
+    },
+    "equivalenceContract": {
+      "derivedErrorNorms": "diagnostic-only-not-promotion-gates",
+      "fieldDifferenceLimit": 1e-10,
+      "fieldDifferenceNormalization": "analytic-field-L2-norm",
+      "primaryQoiRelativeTolerance": 1e-06,
+      "rankCounts": [
+        2,
+        4
+      ]
+    },
+    "status": "accepted"
+  },
+  "schema": "flowlab.laminar-all-hex-final-assessment.v2",
+  "sensitiveCellConfirmation": {
+    "checks": {
+      "allConfirmationCellsAccepted": true,
+      "allNumericSignaturesConfirmed": true,
+      "allSourceCellsAccepted": true,
+      "archivedSourcesMatchedBeforeExecution": true,
+      "noInfrastructureGaps": true,
+      "sixSensitiveCellsRepeated": true
+    },
+    "status": "accepted-confirmation"
+  },
+  "status": "rejected-promotion-blocked"
+}

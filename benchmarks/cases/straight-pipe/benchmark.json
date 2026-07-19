@@ -1,0 +1,187 @@
+{
+  "schema": "flowlab.benchmark_fixture.v1",
+  "id": "straight-pipe",
+  "name": "Straight Pipe Pressure Drop",
+  "status": "pending-real-run",
+  "caseType": "straight-pipe",
+  "advancedMode": "incompressible-navier-stokes",
+  "solverTargets": ["openfoam", "su2"],
+  "expectedInputs": {
+    "geometry": "single circular pipe from inlet to outlet",
+    "fluid": ["density", "dynamicViscosity"],
+    "boundaryConditions": [
+      "fully developed laminar inlet profile or documented entrance-length exclusion",
+      "outlet pressure"
+    ],
+    "meshControls": ["base resolution", "quality thresholds", "patch roles"]
+  },
+  "requiredPatches": [
+    { "name": "inlet", "role": "velocity-inlet", "required": true },
+    { "name": "outlet", "role": "pressure-outlet", "required": true },
+    { "name": "walls", "role": "no-slip-wall", "required": true }
+  ],
+  "requiredFields": ["pressure", "velocity"],
+  "requiredDiagnostics": [
+    "solverLog",
+    "residualHistory",
+    "inletOutletFlowBalance",
+    "pressureDrop",
+    "meshQuality"
+  ],
+  "quantitativeVerification": {
+    "reference": {
+      "id": "hagen-poiseuille-pressure-drop",
+      "kind": "analytic",
+      "equation": "Delta p = 128 * mu * L * Q / (pi * D^4)",
+      "applicability": [
+        "steady flow",
+        "incompressible Newtonian fluid",
+        "laminar fully developed flow",
+        "straight circular pipe",
+        "no-slip wall"
+      ],
+      "source": "Hagen-Poiseuille law for fully developed laminar flow in a straight circular pipe."
+    },
+    "applicability": {
+      "status": "pending-real-run",
+      "referenceRegime": "fully-developed-laminar",
+      "maximumReynoldsNumber": 2100,
+      "boundaryConditionRequirement": "fully-developed-profile-or-periodic-pressure-gradient",
+      "evidenceRequired": [
+        "declared Reynolds number from captured density viscosity diameter and flow rate",
+        "fully developed inlet-profile definition or periodic pressure-gradient setup",
+        "documented entrance-length exclusion if a uniform inlet is used"
+      ]
+    },
+    "quantitiesOfInterest": [
+      {
+        "id": "pressure-drop",
+        "description": "Area-averaged inlet static pressure minus area-averaged outlet static pressure.",
+        "unit": "Pa",
+        "reference": "hagen-poiseuille-pressure-drop"
+      },
+      {
+        "id": "mass-flow-rate",
+        "description": "Integrated inlet and outlet mass flow rate used for the conservation check.",
+        "unit": "kg/s",
+        "reference": "rho * Q"
+      }
+    ],
+    "units": {
+      "length": "m",
+      "diameter": "m",
+      "dynamicViscosity": "Pa*s",
+      "density": "kg/m^3",
+      "volumetricFlowRate": "m^3/s",
+      "massFlowRate": "kg/s",
+      "pressureDrop": "Pa",
+      "velocity": "m/s"
+    },
+    "meshRefinement": {
+      "status": "pending-real-run",
+      "method": "grid-convergence-index",
+      "minimumLevels": 3,
+      "minimumRefinementRatio": 1.3,
+      "maximumFineGridGciPercent": 1.0,
+      "quantitiesOfInterest": ["pressure-drop", "mass-flow-rate"],
+      "evidenceRequired": [
+        "mesh cell-count and characteristic-size table",
+        "pressure-drop and mass-flow-rate QoI table for every mesh",
+        "observed order and Grid Convergence Index calculation"
+      ]
+    },
+    "timeRefinement": {
+      "status": "pending-real-run",
+      "applicability": "conditional",
+      "requiredWhen": ["transient", "pseudo-transient"],
+      "method": "time-step-convergence",
+      "minimumLevelsWhenRequired": 3,
+      "quantitiesOfInterest": ["pressure-drop", "mass-flow-rate"],
+      "evidenceRequired": [
+        "time-step table",
+        "pressure-drop and mass-flow-rate QoI table for every time step",
+        "time-step convergence assessment"
+      ],
+      "notApplicableEvidenceRequired": [
+        "solver method declaration showing a direct steady discretization",
+        "rationale that no temporal discretization contributes to the reported QoIs"
+      ]
+    },
+    "errorAssessment": {
+      "status": "pending-real-run",
+      "method": "relative-error-against-analytic-reference",
+      "formula": "abs(computed - reference) / abs(reference)",
+      "quantitiesOfInterest": ["pressure-drop"],
+      "acceptanceThresholds": [
+        {
+          "qoi": "pressure-drop",
+          "metric": "relative-error",
+          "maximum": 0.05,
+          "unit": "1"
+        }
+      ],
+      "evidenceRequired": [
+        "analytic reference calculation",
+        "mesh-converged solver QoI",
+        "relative-error calculation"
+      ]
+    },
+    "conservation": {
+      "status": "pending-real-run",
+      "quantity": "mass-flow-rate",
+      "metric": "relative-inlet-outlet-mass-flow-imbalance",
+      "formula": "abs(mdot_in + mdot_out) / max(abs(mdot_in), abs(mdot_out))",
+      "unit": "1",
+      "maximum": 0.001,
+      "evidenceRequired": [
+        "signed inlet and outlet integrated mass-flow table",
+        "mass-flow imbalance calculation"
+      ]
+    },
+    "provenance": {
+      "status": "pending-real-run",
+      "requiredRunMetadata": [
+        "solver-name-and-version",
+        "solver-command",
+        "runtime-environment",
+        "case-manifest-sha256",
+        "mesh-artifact-sha256",
+        "raw-result-sha256",
+        "postprocessing-method-and-version"
+      ],
+      "requiredArtifacts": [
+        "case-manifest",
+        "mesh-artifact",
+        "solver-log",
+        "raw-result-fields",
+        "residual-history",
+        "mesh-quality-report",
+        "qoi-extraction-table"
+      ]
+    }
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "mass-balance-evidence",
+      "description": "Inlet and outlet integrated flow diagnostics are present and can be compared.",
+      "evidenceRequired": ["patch flow-rate table", "solver log", "field snapshot"],
+      "status": "pending-real-run"
+    },
+    {
+      "id": "pressure-drop-evidence",
+      "description": "Pressure drop is computed from solver-produced pressure fields or patch averages.",
+      "evidenceRequired": ["pressure field", "patch pressure diagnostic"],
+      "status": "pending-real-run"
+    }
+  ],
+  "realOutputs": {
+    "status": "pending-real-run",
+    "track": "Track A",
+    "files": [],
+    "blockingReason": "No Track A solver output has been captured for this benchmark fixture."
+  },
+  "promotion": {
+    "requiredEvidence": ["case manifest", "solver logs", "result fields", "diagnostic summaries", "mesh quality evidence"],
+    "forbiddenUntilCaptured": ["validated status", "passed acceptance criteria", "numeric observed CFD values"]
+  }
+}

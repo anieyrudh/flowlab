@@ -1,0 +1,53 @@
+{
+  "schema": "flowlab.benchmark_fixture.v1",
+  "id": "heated-channel",
+  "name": "Heated Channel Thermal Starter",
+  "status": "pending-real-run",
+  "caseType": "heated-channel",
+  "advancedMode": "heat-transfer",
+  "solverTargets": ["openfoam", "su2", "code-saturne"],
+  "expectedInputs": {
+    "geometry": "straight rectangular channel",
+    "fluid": ["density", "dynamicViscosity", "temperature", "heatCapacity", "thermalConductivity"],
+    "boundaryConditions": ["inlet velocity", "outlet pressure", "heated wall or isothermal wall"],
+    "meshControls": ["near-wall quality", "quality thresholds", "thermal patch roles"]
+  },
+  "requiredPatches": [
+    { "name": "inlet", "role": "velocity-inlet", "required": true },
+    { "name": "outlet", "role": "pressure-outlet", "required": true },
+    { "name": "heatedWall", "role": "thermal-wall", "required": true },
+    { "name": "adiabaticWalls", "role": "wall", "required": true }
+  ],
+  "requiredFields": ["pressure", "velocity", "temperature"],
+  "requiredDiagnostics": [
+    "solverLog",
+    "residualHistory",
+    "temperatureFieldSummary",
+    "wallHeatFluxOrTemperatureDiagnostic",
+    "meshQuality"
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "thermal-field-evidence",
+      "description": "A solver-produced temperature field or thermal scalar output is captured.",
+      "evidenceRequired": ["temperature field", "thermal diagnostic summary"],
+      "status": "pending-real-run"
+    },
+    {
+      "id": "flow-field-evidence",
+      "description": "Velocity and pressure fields are captured alongside thermal output.",
+      "evidenceRequired": ["pressure field", "velocity field", "solver log"],
+      "status": "pending-real-run"
+    }
+  ],
+  "realOutputs": {
+    "status": "pending-real-run",
+    "track": "Track A",
+    "files": [],
+    "blockingReason": "No Track A solver output has been captured for this benchmark fixture."
+  },
+  "promotion": {
+    "requiredEvidence": ["case manifest", "solver logs", "thermal result fields", "diagnostic summaries", "mesh quality evidence"],
+    "forbiddenUntilCaptured": ["validated status", "passed acceptance criteria", "numeric observed CFD values"]
+  }
+}

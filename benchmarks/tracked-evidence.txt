@@ -1,0 +1,14 @@
+# Compact evidence required by the current benchmark registry and desktop build.
+#
+# Every path here is intentionally tracked even though its parent run/campaign
+# tree is ignored. Add a new entry only after its hash, schema, claim boundary,
+# and retention status have been reviewed.
+
+benchmarks/cases/straight-pipe/runs/2026-07-15-periodic-ogrid-diagnostics-v2/artifacts/candidate-report.json
+benchmarks/cases/straight-pipe/runs/2026-07-15-periodic-ogrid-diagnostics-v2/artifacts/evidence-package.json
+benchmarks/cases/straight-pipe/runs/2026-07-15-periodic-ogrid-diagnostics-v2/serial/fine/runtime/periodic-diagnostics.json
+benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v29-affine-grid-invariance/artifacts/affine-grid-invariance.json
+benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/artifacts/non-affine-mms-report.json
+benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/artifacts/laminar-force-benchmark.json
+benchmarks/cases/open-boundary/campaigns/validated-campaign-pointer.json
+benchmarks/cases/open-boundary/campaigns/2026-07-16-laminar-all-hex-v4-followups/final-assessment-r2/final-assessment.json

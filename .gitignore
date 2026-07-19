@@ -1,0 +1,64 @@
+# macOS and editor state
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Python environments, caches, and coverage
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node/Vite/TypeScript outputs
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Browser and UI test output
+playwright-report/
+test-results/
+
+# Local application and packaging output
+runtime/
+release/
+tmp/
+
+# Root and generated solver logs
+*.log
+
+# Native build output
+*.o
+*.d
+*.so
+*.dylib
+benchmarks/tools/**/Make/linux*/
+
+# Raw scientific execution evidence is retained locally, not in normal Git.
+# The exact compact files intentionally tracked from these trees are listed in
+# benchmarks/tracked-evidence.txt and are force-added only after hash review.
+benchmarks/cases/**/runs/
+benchmarks/cases/**/campaigns/
+
+# Archives and raw external datasets belong in the evidence archive, not Git.
+*.zip
+*.tar
+*.tar.gz
+*.tgz

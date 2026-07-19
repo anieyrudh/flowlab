@@ -1,0 +1,443 @@
+{
+  "artifacts": {
+    "compileLog": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/artifacts/wmake.log",
+    "utilitySource": "/workspace/benchmarks/tools/flowlabPatchTractionAudit/flowlabPatchTractionAudit.C",
+    "utilitySourceSha256": "d0934698ab6d305354d48ced951d96ac5649dee43385c58e0790ff4624fb9c07"
+  },
+  "checks": {
+    "allAxialResidualsPass": true,
+    "allDirectAuditsComplete": true,
+    "allLinearResidualsPass": true,
+    "allMassBalancesPass": true,
+    "allMeshesPass": true,
+    "allPressureResidualsPass": true,
+    "allSolversComplete": true,
+    "allTransverseVelocityErrorsPass": true,
+    "analyticPressureForceMatches": true,
+    "coarseThroughFineAnalyticWallForce": true,
+    "fineAnalyticWallForce": true,
+    "fineFaceViscousTraction": true,
+    "fineFieldsMatchAnalytic": true,
+    "fineMomentumBalance": true,
+    "nonAffineMmsAccepted": true,
+    "openFoamForcesMatchDirectIntegration": true,
+    "tractionUtilityCompiled": true
+  },
+  "definition": {
+    "derived": {
+      "analyticOpenPressureForce": [
+        -0.02,
+        0.0,
+        0.0
+      ],
+      "analyticWallViscousForce": [
+        0.02,
+        0.0,
+        0.0
+      ],
+      "meanVelocityMPerS": 0.16666666666666666,
+      "reynoldsNumberHeightBased": 16.666666666666664
+    },
+    "kinematicPressure": "G(1-x/L)",
+    "parameters": {
+      "depth_m": 1.0,
+      "height_m": 1.0,
+      "length_m": 1.0,
+      "pressure_drop_m2_s2": 0.02,
+      "viscosity_m2_s": 0.01
+    },
+    "schema": "flowlab.plane-poiseuille-definition.v1",
+    "velocity": "(G/(2 nu) y(H-y), 0, 0)"
+  },
+  "execution": {
+    "directIntegration": "flowlabPatchTractionAudit",
+    "iterationsPerLevel": 1000,
+    "levels": [
+      12,
+      24,
+      48
+    ],
+    "solver": "OpenFOAM 11 incompressibleFluid"
+  },
+  "failedChecks": [],
+  "limits": {
+    "analyticPressureForceRelative": 1e-08,
+    "axialInitialResidual": 1e-06,
+    "coarseWallViscousForceRelative": 0.06,
+    "fineFaceViscousTractionRelative": 0.03,
+    "fineWallViscousForceRelative": 0.02,
+    "forceObjectVsDirectAbsolute": 1e-10,
+    "linearResidual": 1e-10,
+    "massRelativeImbalance": 1e-08,
+    "pressureInitialResidual": 1e-08,
+    "transverseVelocityRelativeL2": 1e-05
+  },
+  "nextStage": {
+    "desktopValidatedRegimePromotion": "authorized",
+    "executed": false
+  },
+  "observations": [
+    {
+      "analytic": {
+        "openIntegratedViscousForce": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "openPressureForce": [
+          -0.02,
+          0.0,
+          0.0
+        ],
+        "wallViscousForce": [
+          0.02,
+          0.0,
+          0.0
+        ]
+      },
+      "artifacts": {
+        "case": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/coarse/case",
+        "faceAuditLog": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/coarse/artifacts/face-traction.log",
+        "faceCsv": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/coarse/artifacts/face-traction.csv",
+        "solver": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/coarse/artifacts/foamRun.log"
+      },
+      "cellsPerAxis": 12,
+      "checkMeshPassed": true,
+      "directAuditExitCode": 0,
+      "directFaceIntegration": {
+        "all": {
+          "pressure": [
+            -0.020000000000000035,
+            -7.759724252094068e-15,
+            -8.248356018385541e-15
+          ],
+          "viscous": [
+            0.019999987325388005,
+            9.273324650634094e-16,
+            4.5294265500823395e-15
+          ]
+        },
+        "faceCount": 864,
+        "maxFacePressureRelativeError": 6.796940909409299e-08,
+        "maxFaceViscousTractionRelativeError": 6.810051720678406e-07,
+        "open": {
+          "pressure": [
+            -0.020000000000000035,
+            -1.3353114281084838e-34,
+            -9.244463733058734e-35
+          ],
+          "viscous": [
+            4.1119345537812514e-20,
+            -5.421010862427522e-19,
+            -1.570266390511899e-15
+          ]
+        },
+        "walls": {
+          "pressure": [
+            1.9274705489265603e-19,
+            -7.759616313753916e-15,
+            -1.6961740220714455e-19
+          ],
+          "viscous": [
+            0.019999987325388005,
+            9.278745661514993e-16,
+            3.1696075543676865e-15
+          ]
+        }
+      },
+      "effectiveSpacing": 0.08333333333333333,
+      "faceComparison": {
+        "maxPressureRelativeError": 6.796940909409299e-08,
+        "maxViscousTractionRelativeError": 6.810051720678406e-07
+      },
+      "finalAxialInitialResidual": 8.446802925697338e-09,
+      "finalLinearResidual": 2.27147147547027e-13,
+      "finalPressureInitialResidual": 1.49983520244948e-10,
+      "forceComparison": {
+        "openForceObjectVsDirectAbsolute": 1.7637826258903687e-16,
+        "openIntegratedViscousRelativeMagnitude": 7.851332423123569e-14,
+        "openPressureForceRelativeError": 1.734723475976807e-15,
+        "totalMomentumRelativeImbalance": 6.337306015028125e-07,
+        "wallForceObjectVsDirectAbsolute": 1.3877788485433824e-17,
+        "wallViscousForceRelativeError": 6.337305997680891e-07
+      },
+      "level": "coarse",
+      "massRelativeImbalance": 1.1004904103959643e-14,
+      "openFoamForces": {
+        "open": {
+          "pressure": [
+            -0.020000000000000035,
+            -1.3353114281084838e-34,
+            -9.244463733058734e-35
+          ],
+          "viscous": [
+            7.19588435548225e-20,
+            1.4390073334313858e-16,
+            -1.4690460459913485e-15
+          ]
+        },
+        "walls": {
+          "pressure": [
+            1.9274705489265612e-19,
+            -7.757683384568281e-15,
+            -1.6961740220714467e-19
+          ],
+          "viscous": [
+            0.01999998732538799,
+            9.278702293651269e-16,
+            3.1696075543678e-15
+          ]
+        }
+      },
+      "pressureRelativeL2Error": 5.590412545164495e-08,
+      "solverExitCode": 0,
+      "transverseVelocityRelativeL2Error": 2.9407473972526377e-09,
+      "velocityRelativeL2Error": 0.009508158462232234
+    },
+    {
+      "analytic": {
+        "openIntegratedViscousForce": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "openPressureForce": [
+          -0.02,
+          0.0,
+          0.0
+        ],
+        "wallViscousForce": [
+          0.02,
+          0.0,
+          0.0
+        ]
+      },
+      "artifacts": {
+        "case": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/medium/case",
+        "faceAuditLog": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/medium/artifacts/face-traction.log",
+        "faceCsv": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/medium/artifacts/face-traction.csv",
+        "solver": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/medium/artifacts/foamRun.log"
+      },
+      "cellsPerAxis": 24,
+      "checkMeshPassed": true,
+      "directAuditExitCode": 0,
+      "directFaceIntegration": {
+        "all": {
+          "pressure": [
+            -0.019999999999999886,
+            -1.2687154216329699e-14,
+            -1.8275704525065834e-14
+          ],
+          "viscous": [
+            0.019997527370293828,
+            9.60266268247544e-16,
+            1.169297311779083e-14
+          ]
+        },
+        "faceCount": 3456,
+        "maxFacePressureRelativeError": 6.00888223796503e-06,
+        "maxFaceViscousTractionRelativeError": 0.00012906277076682983,
+        "open": {
+          "pressure": [
+            -0.019999999999999886,
+            -3.081487911019598e-35,
+            -5.135813185032636e-35
+          ],
+          "viscous": [
+            2.9164959734917255e-19,
+            -3.2526065174565133e-19,
+            -4.866943426570978e-15
+          ]
+        },
+        "walls": {
+          "pressure": [
+            1.4263268017392997e-19,
+            -1.2687034713915874e-14,
+            -1.580520548255349e-19
+          ],
+          "viscous": [
+            0.019997527370293828,
+            9.605915290751543e-16,
+            7.200415195037722e-15
+          ]
+        }
+      },
+      "effectiveSpacing": 0.041666666666666664,
+      "faceComparison": {
+        "maxPressureRelativeError": 6.00888223796503e-06,
+        "maxViscousTractionRelativeError": 0.00012906277076682983
+      },
+      "finalAxialInitialResidual": 4.724507286302636e-07,
+      "finalLinearResidual": 9.349340943206073e-13,
+      "finalPressureInitialResidual": 3.889323099922901e-09,
+      "forceComparison": {
+        "openForceObjectVsDirectAbsolute": 4.961320826304952e-16,
+        "openIntegratedViscousRelativeMagnitude": 2.4334717230890743e-13,
+        "openPressureForceRelativeError": 5.7245874707234634e-15,
+        "totalMomentumRelativeImbalance": 0.00012363148530290108,
+        "wallForceObjectVsDirectAbsolute": 3.816391661005582e-17,
+        "wallViscousForceRelativeError": 0.00012363148530862567
+      },
+      "level": "medium",
+      "massRelativeImbalance": 1.2780627455232356e-13,
+      "openFoamForces": {
+        "open": {
+          "pressure": [
+            -0.019999999999999886,
+            -3.081487911019598e-35,
+            -5.135813185032636e-35
+          ],
+          "viscous": [
+            7.066340773701565e-20,
+            3.7986378365745255e-16,
+            -4.548190724358691e-15
+          ]
+        },
+        "walls": {
+          "pressure": [
+            1.4263268017393016e-19,
+            -1.268603277981839e-14,
+            -1.5805205482553486e-19
+          ],
+          "viscous": [
+            0.019997527370293866,
+            9.605882769301616e-16,
+            7.200415195042607e-15
+          ]
+        }
+      },
+      "pressureRelativeL2Error": 4.7922829405112735e-06,
+      "solverExitCode": 0,
+      "transverseVelocityRelativeL2Error": 2.1081463706091134e-07,
+      "velocityRelativeL2Error": 0.0022404936998697807
+    },
+    {
+      "analytic": {
+        "openIntegratedViscousForce": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "openPressureForce": [
+          -0.02,
+          0.0,
+          0.0
+        ],
+        "wallViscousForce": [
+          0.02,
+          0.0,
+          0.0
+        ]
+      },
+      "artifacts": {
+        "case": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/fine/case",
+        "faceAuditLog": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/fine/artifacts/face-traction.log",
+        "faceCsv": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/fine/artifacts/face-traction.csv",
+        "solver": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v40-laminar-force-benchmark/fine/artifacts/foamRun.log"
+      },
+      "cellsPerAxis": 48,
+      "checkMeshPassed": true,
+      "directAuditExitCode": 0,
+      "directFaceIntegration": {
+        "all": {
+          "pressure": [
+            -0.020000000000000198,
+            -4.578533449685625e-15,
+            -7.5780512413246e-15
+          ],
+          "viscous": [
+            0.01999564831410007,
+            1.1716973023290836e-16,
+            5.170434790403011e-15
+          ]
+        },
+        "faceCount": 13824,
+        "maxFacePressureRelativeError": 4.659355082488326e-06,
+        "maxFaceViscousTractionRelativeError": 0.00022256877695054882,
+        "open": {
+          "pressure": [
+            -0.020000000000000198,
+            -2.2854368673395243e-34,
+            4.879022525781001e-35
+          ],
+          "viscous": [
+            5.829125816174916e-19,
+            1.5000953495873659e-18,
+            -2.593818765922394e-15
+          ]
+        },
+        "walls": {
+          "pressure": [
+            1.6576258368822825e-19,
+            -4.578419729478844e-15,
+            -1.6383462667808856e-19
+          ],
+          "viscous": [
+            0.01999564831410007,
+            1.1566963496070036e-16,
+            2.62280021007518e-15
+          ]
+        }
+      },
+      "effectiveSpacing": 0.020833333333333332,
+      "faceComparison": {
+        "maxPressureRelativeError": 4.659355082488326e-06,
+        "maxViscousTractionRelativeError": 0.00022256877695054882
+      },
+      "finalAxialInitialResidual": 2.25786222940919e-07,
+      "finalLinearResidual": 6.48677520014324e-13,
+      "finalPressureInitialResidual": 8.878618784345168e-10,
+      "forceComparison": {
+        "openForceObjectVsDirectAbsolute": 4.3414929621020684e-16,
+        "openIntegratedViscousRelativeMagnitude": 1.2969096326001578e-13,
+        "openPressureForceRelativeError": 9.8879238130678e-15,
+        "totalMomentumRelativeImbalance": 0.00021758429500640109,
+        "wallForceObjectVsDirectAbsolute": 3.816391647244904e-17,
+        "wallViscousForceRelativeError": 0.00021758429499651316
+      },
+      "level": "fine",
+      "massRelativeImbalance": 1.531182484509143e-14,
+      "openFoamForces": {
+        "open": {
+          "pressure": [
+            -0.020000000000000198,
+            -2.2854368673395243e-34,
+            4.879022525781001e-35
+          ],
+          "viscous": [
+            6.904961870111594e-20,
+            2.595402124011374e-16,
+            -2.2446760367460647e-15
+          ]
+        },
+        "walls": {
+          "pressure": [
+            1.6576258368822784e-19,
+            -4.576200529626817e-15,
+            -1.6383462667808847e-19
+          ],
+          "viscous": [
+            0.019995648314100032,
+            1.1566990555266311e-16,
+            2.6228002100753282e-15
+          ]
+        }
+      },
+      "pressureRelativeL2Error": 3.7787361701799425e-06,
+      "solverExitCode": 0,
+      "transverseVelocityRelativeL2Error": 1.3402265867297452e-07,
+      "velocityRelativeL2Error": 0.0003721036206051045
+    }
+  ],
+  "schema": "flowlab.open-boundary-laminar-force-benchmark.v1",
+  "scientificStatus": "independent-analytic-laminar-force-validation",
+  "status": "accepted",
+  "upstreamGate": {
+    "allChecksPassed": true,
+    "path": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/artifacts/non-affine-mms-report.json",
+    "schema": "flowlab.open-boundary-non-affine-mms.v1",
+    "sha256": "bd3749f956399a65b1a56d32d4e0fc68e3c71d98db903b24edda810e1cbf6e45",
+    "status": "accepted"
+  },
+  "validated": true
+}

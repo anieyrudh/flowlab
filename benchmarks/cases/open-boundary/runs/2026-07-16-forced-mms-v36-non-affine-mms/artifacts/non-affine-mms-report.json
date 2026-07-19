@@ -1,0 +1,171 @@
+{
+  "checks": {
+    "affineGridInvarianceAccepted": true,
+    "allFinalLinearResidualsPass": true,
+    "allFinalNonlinearResidualsPass": true,
+    "allMassBalancesPass": true,
+    "allMeshesPass": true,
+    "allSolversComplete": true,
+    "pressureErrorsMonotonicallyDecrease": true,
+    "pressureFineGci": true,
+    "pressureObservedOrder": true,
+    "pressureOrderConsistency": true,
+    "velocityErrorsMonotonicallyDecrease": true,
+    "velocityFineGci": true,
+    "velocityObservedOrder": true,
+    "velocityOrderConsistency": true
+  },
+  "convergence": {
+    "pressure": {
+      "gciRelativeToAnalyticFieldNorm": {
+        "asymptoticRatio": 1.1497555101226062,
+        "fine": 0.001801334422430011,
+        "medium": 0.00586720507596091
+      },
+      "observedOrder": {
+        "coarseToMedium": 1.6357024837888061,
+        "mediumToFine": 1.5022802613444814
+      },
+      "orderSpread": 0.13342222244432467,
+      "relativeL2Errors": [
+        0.012685607424414215,
+        0.004082401884091166,
+        0.0014410675379440087
+      ]
+    },
+    "velocity": {
+      "gciRelativeToAnalyticFieldNorm": {
+        "asymptoticRatio": 1.0035341859327893,
+        "fine": 4.200268370076039e-05,
+        "medium": 0.00017236882860475802
+      },
+      "observedOrder": {
+        "coarseToMedium": 2.0357024895510976,
+        "mediumToFine": 2.0318557206486
+      },
+      "orderSpread": 0.003846768902497466,
+      "relativeL2Errors": [
+        0.0005634093594397008,
+        0.00013740943240078302,
+        3.360214696060832e-05
+      ]
+    }
+  },
+  "definition": {
+    "boundaryCompatibility": {
+      "inlet/outlet": "fixed exact pressure traces; pressureInletOutletVelocity; analytic dU/dx=0",
+      "y/z": "exact fixed velocity traces; fixedFluxPressure initialized with analytic values and outward-normal gradients"
+    },
+    "kinematicPressure": "G(1-x) + P sin(pi x) sin(pi y) sin(pi z)",
+    "momentumSource": "grad(p) + (2 nu A pi^2 sin(pi y) sin(pi z), 0, 0)",
+    "parameters": {
+      "base_velocity_m_s": 1.0,
+      "domain": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "pressure_amplitude_m2_s2": 0.01,
+      "pressure_drop_m2_s2": 0.02,
+      "velocity_amplitude_m_s": 0.2,
+      "viscosity_m2_s": 0.01
+    },
+    "schema": "flowlab.non-affine-open-boundary-mms-definition.v1",
+    "strongForm": "div(U tensor U) - div(nu dev2(T(grad(U)))) + grad(p) = S",
+    "velocity": "(U0 + A sin(pi y) sin(pi z), 0, 0)"
+  },
+  "execution": {
+    "iterationsPerLevel": 1000,
+    "levels": [
+      12,
+      24,
+      48
+    ],
+    "linearSolverTolerance": 1e-12,
+    "solver": "OpenFOAM 11 incompressibleFluid/PBiCGStab/DILU"
+  },
+  "failedChecks": [],
+  "limits": {
+    "finalLinearResidual": 1e-10,
+    "finalNonlinearResidual": 1e-08,
+    "fineGciRelativeToAnalyticFieldNorm": 0.01,
+    "gciSafetyFactor": 1.25,
+    "massRelativeImbalance": 1e-08,
+    "maximumOrderSpread": 0.75,
+    "minimumObservedOrder": 1.5
+  },
+  "nextStage": {
+    "executed": false,
+    "independentLaminarPhysicalBenchmark": "authorized"
+  },
+  "observations": [
+    {
+      "artifacts": {
+        "blockMesh": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/coarse/artifacts/blockMesh.log",
+        "case": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/coarse/case",
+        "checkMesh": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/coarse/artifacts/checkMesh.log",
+        "exactInit": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/coarse/case/exact-init.json",
+        "solver": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/coarse/artifacts/foamRun.log"
+      },
+      "cellsPerAxis": 12,
+      "checkMeshPassed": true,
+      "effectiveSpacing": 0.08333333333333333,
+      "finalLinearResidual": 2.337670452847611e-13,
+      "finalNonlinearResidual": 4.127010687548865e-11,
+      "level": "coarse",
+      "massRelativeImbalance": 4.9263487436100534e-15,
+      "pressureRelativeL2Error": 0.012685607424414215,
+      "solverExitCode": 0,
+      "velocityRelativeL2Error": 0.0005634093594397008
+    },
+    {
+      "artifacts": {
+        "blockMesh": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/medium/artifacts/blockMesh.log",
+        "case": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/medium/case",
+        "checkMesh": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/medium/artifacts/checkMesh.log",
+        "exactInit": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/medium/case/exact-init.json",
+        "solver": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/medium/artifacts/foamRun.log"
+      },
+      "cellsPerAxis": 24,
+      "checkMeshPassed": true,
+      "effectiveSpacing": 0.041666666666666664,
+      "finalLinearResidual": 8.697000156407561e-13,
+      "finalNonlinearResidual": 2.248145667620193e-09,
+      "level": "medium",
+      "massRelativeImbalance": 4.4357645578714255e-14,
+      "pressureRelativeL2Error": 0.004082401884091166,
+      "solverExitCode": 0,
+      "velocityRelativeL2Error": 0.00013740943240078302
+    },
+    {
+      "artifacts": {
+        "blockMesh": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/fine/artifacts/blockMesh.log",
+        "case": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/fine/case",
+        "checkMesh": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/fine/artifacts/checkMesh.log",
+        "exactInit": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/fine/case/exact-init.json",
+        "solver": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v36-non-affine-mms/fine/artifacts/foamRun.log"
+      },
+      "cellsPerAxis": 48,
+      "checkMeshPassed": true,
+      "effectiveSpacing": 0.020833333333333332,
+      "finalLinearResidual": 9.720385959212055e-13,
+      "finalNonlinearResidual": 5.760538199604286e-10,
+      "level": "fine",
+      "massRelativeImbalance": 4.7649500689309694e-14,
+      "pressureRelativeL2Error": 0.0014410675379440087,
+      "solverExitCode": 0,
+      "velocityRelativeL2Error": 3.360214696060832e-05
+    }
+  ],
+  "schema": "flowlab.open-boundary-non-affine-mms.v1",
+  "scientificStatus": "formal-non-affine-three-grid-mms",
+  "status": "accepted",
+  "upstreamGate": {
+    "allChecksPassed": true,
+    "path": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v29-affine-grid-invariance/artifacts/affine-grid-invariance.json",
+    "schema": "flowlab.open-boundary-affine-grid-invariance.v1",
+    "sha256": "f1e9362669076e652f5118355981e7d78a6c261439baa4d5fd64e26f825ab920",
+    "status": "accepted"
+  },
+  "validated": false
+}

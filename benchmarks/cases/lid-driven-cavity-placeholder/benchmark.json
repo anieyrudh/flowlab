@@ -1,0 +1,39 @@
+{
+  "schema": "flowlab.benchmark_fixture.v1",
+  "id": "lid-driven-cavity-placeholder",
+  "name": "Lid-Driven Cavity Placeholder",
+  "status": "pending-real-run",
+  "caseType": "lid-driven-cavity",
+  "advancedMode": "incompressible-navier-stokes",
+  "solverTargets": ["openfoam", "su2"],
+  "expectedInputs": {
+    "geometry": "closed square cavity with moving lid",
+    "fluid": ["density", "dynamicViscosity"],
+    "boundaryConditions": ["moving lid velocity", "stationary no-slip walls"],
+    "meshControls": ["structured cavity mesh", "quality thresholds"]
+  },
+  "requiredPatches": [
+    { "name": "movingLid", "role": "moving-wall", "required": true },
+    { "name": "stationaryWalls", "role": "no-slip-wall", "required": true }
+  ],
+  "requiredFields": ["pressure", "velocity"],
+  "requiredDiagnostics": ["solverLog", "residualHistory", "centerlineVelocityProfiles", "meshQuality"],
+  "acceptanceCriteria": [
+    {
+      "id": "centerline-profile-evidence",
+      "description": "Horizontal and vertical centerline velocity profiles are captured from real solver fields.",
+      "evidenceRequired": ["velocity field", "centerline profile extraction"],
+      "status": "pending-real-run"
+    }
+  ],
+  "realOutputs": {
+    "status": "pending-real-run",
+    "track": "Track A",
+    "files": [],
+    "blockingReason": "FlowLab does not yet generate this benchmark as a real solver fixture."
+  },
+  "promotion": {
+    "requiredEvidence": ["case manifest", "solver logs", "velocity field", "profile extraction", "mesh quality evidence"],
+    "forbiddenUntilCaptured": ["validated status", "passed acceptance criteria", "numeric observed CFD values"]
+  }
+}

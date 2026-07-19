@@ -1,0 +1,31 @@
+{
+  "schema": "flowlab.benchmark_registry.v1",
+  "description": "Track C benchmark fixture registry. Entries are scaffolds until Track A promotes real solver outputs.",
+  "cases": [
+    {
+      "id": "straight-pipe",
+      "path": "cases/straight-pipe/benchmark.json",
+      "status": "pending-real-run"
+    },
+    {
+      "id": "venturi",
+      "path": "cases/venturi/benchmark.json",
+      "status": "pending-real-run"
+    },
+    {
+      "id": "heated-channel",
+      "path": "cases/heated-channel/benchmark.json",
+      "status": "pending-real-run"
+    },
+    {
+      "id": "lid-driven-cavity-placeholder",
+      "path": "cases/lid-driven-cavity-placeholder/benchmark.json",
+      "status": "pending-real-run"
+    },
+    {
+      "id": "nozzle-placeholder",
+      "path": "cases/nozzle-placeholder/benchmark.json",
+      "status": "pending-real-run"
+    }
+  ]
+}

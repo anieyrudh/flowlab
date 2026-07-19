@@ -1,0 +1,98 @@
+{
+  "checks": {
+    "allGridMetricsFinite": true,
+    "authorizedCoarseStabilityGate": true,
+    "everyLevelPassesEveryExistingGate": true,
+    "resolutionSequence12_24_48": true
+  },
+  "contract": {
+    "coarseStabilityEvidenceIterations": 100,
+    "inletPressure": "exact fixedValue",
+    "inletVelocity": "pressureInletOutletVelocity with exact tangential velocity and zero-gradient normal component",
+    "iterationsPerGrid": 1,
+    "linearSolverTolerance": 1e-14,
+    "outletPressure": "exact fixedValue",
+    "solver": "incompressibleFluid/PBiCGStab/DILU"
+  },
+  "evidence": [
+    {
+      "level": "coarse",
+      "path": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v29-affine-grid-invariance/coarse/artifacts/affine-grid-invariance-level.json",
+      "sha256": "21a5689164045a4454023952cb36c4ca82f98477d3a4a9d68f64430b6bab1832"
+    },
+    {
+      "level": "medium",
+      "path": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v29-affine-grid-invariance/medium/artifacts/affine-grid-invariance-level.json",
+      "sha256": "c813942f51aab1bcda636e65397f5732441c6a62394d41785b65601b69e9fe1a"
+    },
+    {
+      "level": "fine",
+      "path": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v29-affine-grid-invariance/fine/artifacts/affine-grid-invariance-level.json",
+      "sha256": "def4717e344ce6f9c4d8b935a8ba0ca5b50eca855e1c5eada950d68f732d2d01"
+    }
+  ],
+  "failedChecks": [],
+  "interpretation": "Exact-state invariance across refinement; observed order and GCI are intentionally not reported because the affine fields are exactly representable and round-off dominated.",
+  "levels": [
+    {
+      "allChecksPassed": true,
+      "cellsPerAxis": 12,
+      "effectiveSpacing": 0.08333333333333333,
+      "finalLinearResidual": 7.115284518912037e-15,
+      "level": "coarse",
+      "massRelativeImbalance": 2.654881145842765e-16,
+      "maxAbsoluteBoundaryPressureError": 5.413421447220124e-16,
+      "maxAbsoluteCorrectionMismatch": 1.465076889965505e-16,
+      "maxAbsoluteNormalPressureGradientError": 1.1082714607146826e-14,
+      "pressureEquationExactStateResidualMax": 5.81297535876945e-18,
+      "pressureRelativeL2Error": 1.7386855996814716e-13,
+      "status": "authorized",
+      "velocityRelativeL2Error": 3.917588761986068e-16
+    },
+    {
+      "allChecksPassed": true,
+      "cellsPerAxis": 24,
+      "effectiveSpacing": 0.041666666666666664,
+      "finalLinearResidual": 7.351778893192288e-15,
+      "level": "medium",
+      "massRelativeImbalance": 1.68946982008176e-16,
+      "maxAbsoluteBoundaryPressureError": 8.374377580278036e-16,
+      "maxAbsoluteCorrectionMismatch": 1.9069019807475569e-16,
+      "maxAbsoluteNormalPressureGradientError": 4.0191808214906644e-14,
+      "pressureEquationExactStateResidualMax": 1.039706472975052e-17,
+      "pressureRelativeL2Error": 2.0232267797922744e-13,
+      "status": "authorized",
+      "velocityRelativeL2Error": 3.901794923774602e-16
+    },
+    {
+      "allChecksPassed": true,
+      "cellsPerAxis": 48,
+      "effectiveSpacing": 0.020833333333333332,
+      "finalLinearResidual": 3.623654078886288e-15,
+      "level": "fine",
+      "massRelativeImbalance": 3.861645303044013e-16,
+      "maxAbsoluteBoundaryPressureError": 1.408920723144913e-15,
+      "maxAbsoluteCorrectionMismatch": 1.5897675513396265e-16,
+      "maxAbsoluteNormalPressureGradientError": 1.3281585033164678e-13,
+      "pressureEquationExactStateResidualMax": 2.653061046394404e-18,
+      "pressureRelativeL2Error": 8.545425692513659e-13,
+      "status": "authorized",
+      "velocityRelativeL2Error": 3.9960515604520957e-16
+    }
+  ],
+  "nextStage": {
+    "executed": false,
+    "nonAffineMms": "authorized"
+  },
+  "schema": "flowlab.open-boundary-affine-grid-invariance.v1",
+  "scientificStatus": "discrete-affine-grid-invariance-regression",
+  "status": "accepted",
+  "upstreamGate": {
+    "allChecksPassed": true,
+    "path": "/workspace/benchmarks/cases/open-boundary/runs/2026-07-16-forced-mms-v28-affine-pressure-tangential-final-coarse/artifacts/affine-pressure-tangential-coarse.json",
+    "schema": "flowlab.open-boundary-affine-pressure-tangential-coarse.v1",
+    "sha256": "c8082f4fc585653319f42da060d884ee8dc6d1f6cad5f60397d671c3745b27f0",
+    "status": "authorized"
+  },
+  "validated": false
+}

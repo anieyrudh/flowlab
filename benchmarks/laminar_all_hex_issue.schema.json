@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowlab.local/schemas/laminar-all-hex-issue.v1.json",
+  "title": "FlowLab laminar all-hex campaign issue",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "issueId",
+    "kind",
+    "severity",
+    "status",
+    "summary",
+    "affectedClaims",
+    "affectedGates",
+    "evidence",
+    "suspectedCauses",
+    "falsifiedCauses",
+    "conflictsWith",
+    "interactingFactors",
+    "nextDiagnostic"
+  ],
+  "properties": {
+    "schema": {"const": "flowlab.laminar-all-hex-issue.v1"},
+    "issueId": {"type": "string", "minLength": 1},
+    "recordedAt": {"type": "string"},
+    "campaignId": {"const": "laminar-all-hex-v2"},
+    "lane": {"type": ["string", "null"]},
+    "cellId": {"type": ["string", "null"]},
+    "kind": {
+      "enum": [
+        "error",
+        "conflict",
+        "interference",
+        "infrastructure",
+        "provenance",
+        "known-limitation"
+      ]
+    },
+    "severity": {"enum": ["P0", "P1", "P2", "P3"]},
+    "status": {"enum": ["open", "investigating", "resolved", "accepted-limitation"]},
+    "summary": {"type": "string", "minLength": 1},
+    "observed": {},
+    "limit": {},
+    "affectedClaims": {"type": "array", "items": {"type": "string"}},
+    "affectedGates": {"type": "array", "items": {"type": "string"}},
+    "evidence": {"type": "array", "items": {"type": "object"}},
+    "suspectedCauses": {"type": "array", "items": {"type": "object"}},
+    "falsifiedCauses": {"type": "array", "items": {"type": "string"}},
+    "conflictsWith": {"type": "array", "items": {"type": "string"}},
+    "interactingFactors": {"type": "array", "items": {"type": "string"}},
+    "minimalReproducer": {"type": ["string", "null"]},
+    "blockedWork": {"type": "array", "items": {"type": "string"}},
+    "nextDiagnostic": {"type": ["string", "null"]},
+    "resolutionEvidence": {"type": "array", "items": {"type": "object"}}
+  }
+}

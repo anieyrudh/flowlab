@@ -1,0 +1,36 @@
+{
+  "caseId": "straight-pipe",
+  "independentReviewRequired": true,
+  "meshGeometry": "3D five-block full-pipe O-grid with a fixed inscribed polygonal wall (64 wall facets); no collapsed axis; not CAD-exact geometry",
+  "meshRecipe": "full-pipe-ogrid-v1",
+  "nextRequiredAction": "Submit this mesh family for independent review.  Exact-input MPI QoI evidence may then be captured at 2 and 4 ranks; portable performance claims require a separate native repeated-trial protocol.",
+  "parallelEquivalenceRelativeTolerance": 1e-06,
+  "parallelRunPermitted": true,
+  "schema": "flowlab.straight-pipe-runtime-run.v1",
+  "scientificStatus": "analysis-only",
+  "selectedMesh": "fine",
+  "serialGates": {
+    "analyticalPressureDropError": {
+      "limit": 0.05,
+      "passed": true,
+      "value": 0.0025042385363708876
+    },
+    "fineGridGciPercent": {
+      "limit": 1.0,
+      "passed": true,
+      "value": 0.2832664480262958
+    },
+    "flowRateTarget": {
+      "limit": 1e-06,
+      "passed": true,
+      "value": 0.0
+    },
+    "massBalance": {
+      "limit": 0.001,
+      "passed": true,
+      "value": 0.0
+    }
+  },
+  "status": "serial-gates-passed",
+  "validated": false
+}

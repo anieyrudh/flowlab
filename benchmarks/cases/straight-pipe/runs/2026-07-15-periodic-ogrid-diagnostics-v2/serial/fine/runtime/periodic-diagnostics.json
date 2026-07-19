@@ -1,0 +1,29 @@
+{
+  "boundaryCondition": "cyclic periodic pressure-gradient; meanVelocityForce",
+  "schema": "flowlab.periodic-structured-diagnostics.v1",
+  "transverseMomentumResiduals": {
+    "interpretation": "Periodic pressure has a gauge null space; component initial residuals are diagnostic only. Acceptance remains controller-tail, continuity, and final linear-residual gates.",
+    "lastInitialResiduals": {
+      "Ux": 8.733291986949e-11,
+      "Uy": 0.2807292547464,
+      "Uz": 0.2842250382967
+    },
+    "source": "postProcessing/transverseMomentumResiduals/0/residuals.dat",
+    "transverseComponents": {
+      "Uy": 0.2807292547464,
+      "Uz": 0.2842250382967
+    }
+  },
+  "wallShearBalance": {
+    "expectedSectorAxialWallForceN": 5.33810459066216e-05,
+    "kinematicPressureGradientMPerS2": 0.0196979635844,
+    "observedSectorViscousForceN": [
+      5.338104609299e-05,
+      1.595576554696e-17,
+      3.297239530122e-18
+    ],
+    "relativeAxialForceImbalance": 3.491284232550393e-09,
+    "wallForceSource": "postProcessing/wallForces/0/forces.dat",
+    "wallShearSource": "postProcessing/wallShearStress/0/wallShearStress.dat"
+  }
+}
