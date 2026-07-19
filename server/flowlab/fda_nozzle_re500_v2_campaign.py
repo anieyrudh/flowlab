@@ -408,6 +408,8 @@ def launch_fine_recovery(
         raise ValueError("recovery container name already exists")
     workspace = Path(__file__).resolve().parents[2]
     case = output / "cases" / "fine"
+    container_workspace = Path("/flowlab-workspace")
+    container_case = container_workspace / case.relative_to(workspace)
     command = [
         "docker",
         "create",
@@ -418,9 +420,9 @@ def launch_fine_recovery(
         "--label",
         "flowlab.recovery=fine-from-750",
         "-v",
-        f"{workspace}:{workspace}",
+        f"{workspace}:{container_workspace}",
         "-w",
-        str(case),
+        str(container_case),
         image,
         "bash",
         "-lc",

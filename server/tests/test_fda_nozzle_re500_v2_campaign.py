@@ -8,6 +8,7 @@ import re
 import pytest
 
 from server.flowlab.fda_nozzle_re500 import PRIMARY_PROFILE_STATIONS_M
+from server.flowlab.fda_nozzle_re500 import _container_command
 from server.flowlab.fda_nozzle_re500_v2_campaign import (
     EXPECTED_CELLS,
     FROZEN_CONTRACT_SHA256,
@@ -147,6 +148,27 @@ def test_recovery_completion_is_fail_closed(
     exit_code: int, latest: str, log: str, expected: bool
 ) -> None:
     assert _recovery_completed(exit_code, latest, log) is expected
+
+
+def test_container_command_uses_space_safe_container_paths() -> None:
+    workspace = Path("/Users/example/Active Projects/FlowLab")
+    case = workspace / "benchmarks/cases/fda/campaigns/recovery/cases/fine"
+    host_output = workspace / "benchmarks/cases/fda/output.csv"
+    command = _container_command(
+        "flowlab/test:latest",
+        workspace,
+        case,
+        f"audit -output {host_output}",
+    )
+    assert command[command.index("-v") + 1] == (
+        "/Users/example/Active Projects/FlowLab:/flowlab-workspace"
+    )
+    assert command[command.index("-w") + 1] == (
+        "/flowlab-workspace/benchmarks/cases/fda/campaigns/recovery/cases/fine"
+    )
+    assert command[-1].endswith(
+        "audit -output /flowlab-workspace/benchmarks/cases/fda/output.csv"
+    )
 
 
 def test_piv_plan_includes_radial_profiles_as_nonpromotional_observations() -> None:

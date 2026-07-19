@@ -2026,21 +2026,30 @@ def _container_command(
     workdir: Path,
     command: str,
 ) -> list[str]:
+    host_root = mount_root.resolve()
+    host_workdir = workdir.resolve()
+    try:
+        relative_workdir = host_workdir.relative_to(host_root)
+    except ValueError as error:
+        raise ValueError("container workdir must be inside the mounted workspace") from error
+    container_root = Path("/flowlab-workspace")
+    container_workdir = container_root / relative_workdir
+    container_command = command.replace(str(host_root), str(container_root))
     return [
         "docker",
         "run",
         "--rm",
         "-v",
-        f"{mount_root}:{mount_root}",
+        f"{host_root}:{container_root}",
         "-w",
-        str(workdir),
+        str(container_workdir),
         image,
         "bash",
         "-lc",
         "if [ -f /opt/openfoam11/etc/bashrc ]; then "
         "source /opt/openfoam11/etc/bashrc; else "
         "source /opt/OpenFOAM/OpenFOAM-11/etc/bashrc; fi; "
-        + command,
+        + container_command,
     ]
 
 
