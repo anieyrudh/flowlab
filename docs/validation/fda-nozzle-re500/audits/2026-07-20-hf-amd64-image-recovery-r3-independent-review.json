@@ -1,0 +1,63 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-hf-amd64-image-recovery-independent-review.v1",
+  "reviewedAt": "2026-07-20T07:54:54Z",
+  "reviewMode": "independent-read-only-agent-plus-local-read-only-validator",
+  "verdict": "pass-image-recovery-only-no-p0",
+  "reviewedContract": {
+    "path": "docs/validation/fda-nozzle-re500/HF_AMD64_IMAGE_RECOVERY_R3_CONTRACT.json",
+    "sha256": "49ea1c787594b8afd695b77ef749421941de2082df17eb53cee9d753bbcd6a79"
+  },
+  "reviewedAssessment": {
+    "path": "docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-amd64-image-recovery-r3.json",
+    "sha256": "20dfc476f9eaa8c4c1cd501e40aac43dc330fb95e666f8c7e5323ca0e19b1690"
+  },
+  "validator": {
+    "path": "server/flowlab/fda_nozzle_re500_hf_image_recovery_r3.py",
+    "sha256": "c97da92304ff2a2348b343a809f18646124e1b19371aa327cd512addb1e27542",
+    "status": "verified-image-recovery-only"
+  },
+  "verifiedEvidence": {
+    "localRecordSha256": "f21c517f18be2ecf940727aeb923efb5ee899cf30d669a2287f2f131810df849",
+    "remoteRecordSha256": "463a5ed41567649e9a214b6208bf9165e0bae4c1b0b121541669d00f66c763d6",
+    "buildLogSha256": "d89a0efde6a76556fbc7450799ae6d7a62661b6b02b82c3640236f6bff7e05e5",
+    "spaceCommit": "4c8572ab13354f21bb8d5b182b01be99a6a49c62",
+    "commitPrefixedRegistryTag": "cpu-4c8572a",
+    "registryDigest": "sha256:874672331dbaf7107d1f37903b2e0652f451dafaf37bc9471b1149e1579a615a",
+    "exactRemoteSourcesMatchFrozenLocalSources": true,
+    "freezePrecededBuildAndAssessment": true,
+    "localRuntimeIdentityReexecuted": true,
+    "r2JobFailuresIndependentlyReinspected": true
+  },
+  "findings": [
+    {
+      "priority": "P1-closed-for-current-record",
+      "finding": "The original focused test trusted compact booleans and did not rehash raw evidence.",
+      "disposition": "Added a read-only validator that rehashes raw local/remote records and the build log, verifies chronology, exact source hashes, commit equality, registry binding, identities, and nonpromotion. Added positive and tamper tests."
+    },
+    {
+      "priority": "P1-future-contract-requirement",
+      "finding": "The commit-prefixed registry tag remains mutable or rebuildable.",
+      "disposition": "Future Jobs must use the registry repository at the observed OCI digest, never latest or a tag alone. No Job is authorized by R3."
+    },
+    {
+      "priority": "P2-closed-documentation",
+      "finding": "The R3 source directory references the R2 runner and did not record the exact build context.",
+      "disposition": "The runbook now records the exact cross-directory Docker build command. Frozen source and evidence were not edited."
+    },
+    {
+      "priority": "P2-retained-risk",
+      "finding": "OpenFOAM apt transitive dependencies are not all independently version-pinned.",
+      "disposition": "Retained as an infrastructure reproducibility limitation; exact local and remote OCI digests contain it."
+    }
+  ],
+  "p0Count": 0,
+  "imageRecoveryPassed": true,
+  "hfInfrastructureQualified": false,
+  "durableArtifactAndVolumeQualified": false,
+  "coarsePilotsAuthorized": false,
+  "sixCaseExecutionContractMayBeFrozen": false,
+  "sixCaseExecutionAuthorized": false,
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

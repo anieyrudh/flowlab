@@ -1,0 +1,74 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-hf-infrastructure-attempt-audit.v2",
+  "auditedAt": "2026-07-20T07:42:35Z",
+  "status": "blocked-before-volume-or-solver-connector-credential-mismatch",
+  "contract": {
+    "path": "docs/validation/fda-nozzle-re500/HF_INFRASTRUCTURE_QUALIFICATION_R2_CONTRACT.json",
+    "sha256": "918adec257b77e985a1357c54d5ef045a04717778418a75f07f8570bc34d5f62"
+  },
+  "localCredential": {
+    "activeTokenName": "fluidmech",
+    "account": "Anieyrudh",
+    "privateDatasetCreated": "Anieyrudh/flowlab-fda-hf-qualification-20260720",
+    "privateSpaceCreated": "Anieyrudh/flowlab-openfoam11-gmsh415-amd64-r2",
+    "mainCommitWriteVerified": true,
+    "tokenValueRecorded": false
+  },
+  "jobsConnectorCredential": {
+    "account": "Anieyrudh",
+    "sameCredentialAsLocalFluidmech": false,
+    "inferenceBasis": "The connector could neither create the private dataset nor commit to its main branch after the local fluidmech credential performed both operations successfully.",
+    "observedCapabilities": ["submit Jobs", "read Job metadata and logs", "propose repository pull requests"],
+    "missingCapabilities": ["create private dataset", "commit to private dataset main"],
+    "secretValueRecorded": false
+  },
+  "architectureProbeAttempts": [
+    {
+      "jobId": "6a5dcb4dd216bd6f3a202f33",
+      "status": "ERROR",
+      "architecture": "amd64",
+      "runningSeconds": 3,
+      "failureClass": "connector-token-private-dataset-create-authorization",
+      "httpStatus": 403,
+      "rawRecordSha256": "2961b32b2f57c8045a9f895091433eb188f32c467f2449892214b282fad01796"
+    },
+    {
+      "jobId": "6a5dcbd5d216bd6f3a202f40",
+      "status": "ERROR",
+      "architecture": "amd64",
+      "runningSeconds": 4,
+      "failureClass": "connector-token-main-commit-authorization",
+      "httpStatus": 403,
+      "pullRequestFallbackUsed": false,
+      "rawRecordSha256": "17499b70e91229fb4dea2e11f1beb23711a8d95528a28e82f09fea4f6eece84b"
+    }
+  ],
+  "retainedR2SpaceBuild": {
+    "spaceId": "Anieyrudh/flowlab-openfoam11-gmsh415-amd64-r2",
+    "spaceCommit": "8b8608f01a3f0b80ee555d41fe5f0570b65607b0",
+    "status": "BUILD_ERROR",
+    "failureClass": "rootless-builder-subordinate-id-range",
+    "observedError": "failed to Lchown /home/openfoam for UID 98765, GID 98765: invalid argument",
+    "solverInvoked": false,
+    "scientificFailure": false,
+    "supersededBySeparateImageRecoveryContract": "docs/validation/fda-nozzle-re500/HF_AMD64_IMAGE_RECOVERY_R3_CONTRACT.json"
+  },
+  "gates": {
+    "hfJobsReachable": true,
+    "hfArchitectureAmd64": true,
+    "durablePrivateArtifactWriteFromJobs": false,
+    "revisionPinnedVolumeRead": false,
+    "r2RemoteImageBuild": false,
+    "cpuUpgradeCoarsePilot": false,
+    "cpuXlCoarsePilot": false,
+    "artifactRecoveryAndRehash": false,
+    "independentQualificationReview": false
+  },
+  "requiredRemediation": "Reconnect or reauthorize the Hugging Face Jobs connector with the active write-capable fluidmech credential. Do not paste or store the token value. A subsequent qualification must use a new contract because the frozen R2 image identity failed and was replaced under the separate R3 image-recovery hypothesis.",
+  "hfInfrastructureQualified": false,
+  "sixCaseExecutionContractMayBeFrozen": false,
+  "sixCaseExecutionAuthorized": false,
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

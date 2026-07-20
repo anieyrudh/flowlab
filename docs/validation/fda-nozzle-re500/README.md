@@ -162,6 +162,24 @@ probe, atomic three-file lane commits, recovered manifests, all four terminal
 residual fields, cgroup/process-tree memory, and OOM events. Its output path is
 new and absent. It still authorizes qualification only, never the six cases.
 
+Two r2 Jobs then confirmed AMD64 but stopped before artifact or solver work.
+The Jobs connector credential first could not create the private dataset and,
+after the locally active `fluidmech` credential created it, could only propose
+a pull request rather than commit to main. The frozen atomic evidence rule was
+not weakened. The local credential also created and populated the private
+Docker Space, proving the credentials are not equivalent.
+
+The retained r2 Space build independently failed because its official
+OpenFOAM base owns `/home/openfoam` as UID/GID 98765, outside the rootless
+builder's subordinate-ID range. A separate prospective R3 image-recovery
+contract replaced only that base with pinned Ubuntu AMD64 plus exact
+`openfoam11=20240612`, using UID/GID 1000. The local image passed every frozen
+identity gate. Private Space commit `4c8572ab13354f21bb8d5b182b01be99a6a49c62`
+built and reached `RUNNING`; commit-prefixed registry tag `cpu-4c8572a` binds
+digest `sha256:874672331dbaf7107d1f37903b2e0652f451dafaf37bc9471b1149e1579a615a`.
+This passes image recovery only. HF Jobs, volumes, artifacts, both coarse
+pilots, and the six-case execution contract remain blocked.
+
 ## Evidence paths
 
 - Frozen contract: `benchmarks/cases/fda-nozzle/campaigns/2026-07-17-re500-v1/campaign-contract.json`
@@ -189,6 +207,10 @@ new and absent. It still authorizes qualification only, never the six cases.
 - Independent r1 review: `docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-infrastructure-qualification-independent-review-r1.json` and `.md`
 - Superseding HF qualification contract: `docs/validation/fda-nozzle-re500/HF_INFRASTRUCTURE_QUALIFICATION_R2_CONTRACT.json`
 - Independent r2 pre-execution review: `docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-infrastructure-qualification-r2-preexecution-review.json` and `.md`
+- Blocked r2 execution attempt: `docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-infrastructure-qualification-attempt-r2.json` and `.md`
+- Frozen R3 AMD64 image recovery: `docs/validation/fda-nozzle-re500/HF_AMD64_IMAGE_RECOVERY_R3_CONTRACT.json`
+- Passing nonpromotional R3 image assessment: `docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-amd64-image-recovery-r3.json` and `.md`
+- Independent R3 image review: `docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-amd64-image-recovery-r3-independent-review.json` and `.md`
 
 ## Authoritative sources
 

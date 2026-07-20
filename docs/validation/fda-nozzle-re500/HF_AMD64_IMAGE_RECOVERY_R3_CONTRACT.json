@@ -1,0 +1,123 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-hf-amd64-image-recovery.v1",
+  "contractId": "fda-nozzle-re500-v3-hf-amd64-image-recovery-r3-2026-07-20",
+  "frozenAt": "2026-07-20T07:25:10Z",
+  "status": "frozen-nonpromotional-image-recovery-authorized",
+  "purpose": "Test one prospectively declared, builder-safe Linux/AMD64 OpenFOAM image hypothesis after the retained R2 private Space build failed on the official image base UID/GID 98765.",
+  "scope": {
+    "inScope": [
+      "build the declared image locally for linux/amd64",
+      "verify immutable inputs, runtime identity, package identity, architecture, user identity, and embedded runner hash",
+      "publish the exact source to the existing private R2 qualification Space",
+      "capture the immutable Space commit, build status, build log, and registry digest when available"
+    ],
+    "outOfScope": [
+      "Hugging Face Jobs probes",
+      "volume qualification",
+      "coarse or six-case solver execution",
+      "scientific assessment",
+      "scientific promotion",
+      "desktop promotion"
+    ]
+  },
+  "predecessorFailure": {
+    "qualificationContract": {
+      "path": "docs/validation/fda-nozzle-re500/HF_INFRASTRUCTURE_QUALIFICATION_R2_CONTRACT.json",
+      "sha256": "918adec257b77e985a1357c54d5ef045a04717778418a75f07f8570bc34d5f62"
+    },
+    "spaceId": "Anieyrudh/flowlab-openfoam11-gmsh415-amd64-r2",
+    "spaceCommit": "8b8608f01a3f0b80ee555d41fe5f0570b65607b0",
+    "failureClass": "rootless-builder-subordinate-id-range",
+    "failedIdentity": {"uid": 98765, "gid": 98765},
+    "observedError": "failed to Lchown /home/openfoam for UID 98765, GID 98765: invalid argument",
+    "solverInvoked": false,
+    "scientificFailure": false
+  },
+  "sourceEvidence": [
+    {
+      "path": "docker/openfoam11-gmsh415-immutable-amd64-hf-r3/Dockerfile",
+      "sha256": "2b68f10860ab45b1d372fda537c9780321876241a2db9ba467ba97d0c6398131"
+    },
+    {
+      "path": "docker/openfoam11-gmsh415-immutable-amd64-hf-r3/SPACE_README.md",
+      "sha256": "49312b1763baf7a31f6a58f1c3b916c5c62d54e8ad63be7b7bf3afdd1845896c"
+    },
+    {
+      "path": "docker/openfoam11-gmsh415-immutable-amd64-hf-r2/remote_runner.py",
+      "sha256": "90c306778ccd9dfbeb817660d825fde64bd5ba7f56907f1c24dca29acb01a95e"
+    }
+  ],
+  "imageHypothesis": {
+    "localTag": "flowlab/openfoam11-gmsh415-immutable:2026-07-20-amd64-hf-image-recovery-r3",
+    "platform": "linux/amd64",
+    "baseImage": "ubuntu:20.04",
+    "baseAmd64ManifestDigest": "sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a",
+    "openFoamAptRepository": "http://dl.openfoam.org/ubuntu focal main",
+    "openFoamSigningKeySha256": "fbaacfe37e704494f6e65ab424e67b031191769e84c31185acb701f9e74fe0a9",
+    "openFoamPackage": "openfoam11",
+    "openFoamPackageVersion": "20240612",
+    "expectedFoamVersion": "OpenFOAM-11",
+    "gmshVersion": "4.15.2",
+    "gmshArchiveSha256": "2f81d19efb0dd94426bdab010131da59b7dac1939a3073890dc32c86ecbaa8db",
+    "runtimeUid": 1000,
+    "runtimeGid": 1000,
+    "runnerPath": "/opt/flowlab-hf/remote_runner.py",
+    "runnerSha256": "90c306778ccd9dfbeb817660d825fde64bd5ba7f56907f1c24dca29acb01a95e"
+  },
+  "remotePublication": {
+    "spaceId": "Anieyrudh/flowlab-openfoam11-gmsh415-amd64-r2",
+    "visibility": "private",
+    "sourceFiles": ["Dockerfile", "README.md", "remote_runner.py"],
+    "immutableSpaceCommitRequired": true,
+    "successfulRemoteBuildRequired": true,
+    "commitBoundRegistryDigestRequired": true,
+    "mutableLatestTagMayQualify": false
+  },
+  "evidence": {
+    "localDirectory": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-hf-amd64-image-recovery-r3",
+    "rawTrackedByGit": false,
+    "compactAssessmentTrackedByGit": true,
+    "localOverwriteAllowed": false,
+    "remoteEvidenceOverwriteAllowed": false,
+    "sourceAndRecordHashesRequired": true
+  },
+  "gates": {
+    "localBuildExitZero": true,
+    "architectureExact": "amd64",
+    "operatingSystemExact": "linux",
+    "runtimeUidExact": 1000,
+    "runtimeGidExact": 1000,
+    "foamVersionExact": "OpenFOAM-11",
+    "openFoamPackageVersionExact": "20240612",
+    "gmshVersionExact": "4.15.2",
+    "embeddedRunnerHashExact": true,
+    "spaceCommitCaptured": true,
+    "remoteBuildSuccessful": true,
+    "registryDigestCapturedAndCommitBound": true,
+    "anyMissingEvidence": "block"
+  },
+  "failClosed": {
+    "postHocSourceOrGateChangeAllowed": false,
+    "retryIntoSameEvidenceDirectoryAllowed": false,
+    "failedSpaceCommitMayBeRewritten": false,
+    "newHypothesisRequiresNewContractAndOutput": true,
+    "imageRecoveryMayQualifyHfJobs": false,
+    "imageRecoveryMayAuthorizeSolver": false
+  },
+  "authorization": {
+    "buildLocalImage": true,
+    "publishPrivateSpaceSource": true,
+    "observePrivateSpaceBuild": true,
+    "runHfJobsProbe": false,
+    "runSolver": false,
+    "freezeSixCaseExecutionContract": false,
+    "runSixCaseCampaign": false,
+    "scientificPromotion": false,
+    "desktopPromotion": false
+  },
+  "hfInfrastructureQualified": false,
+  "sixCaseExecutionContractMayBeFrozen": false,
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

@@ -145,17 +145,18 @@ pass; it does not reuse the historical 90% aggregate. Its six intended cases
 have a 12.87-hour planning estimate, but no campaign directory exists and every
 execution authorization remains false.
 
-The next work is completion of the frozen nonpromotional Hugging Face
-infrastructure qualification. Its first Job confirmed AMD64 but failed before
-any solver or artifact write because the connected token lacked permission to
-create the required private dataset. The equivalent local AMD64 image and
-44,256-cell input bundle passed local checks; remote image pinning,
-revision-pinned volume recovery, `cpu-upgrade`/`cpu-xl` coarse pilots, and the
-separate six-case execution contract remain blocked. Independent review
-confirmed the stop and required a superseding r2 qualification that exactly
-binds policy, image/Job identities, complete terminal residuals, memory/OOM
-telemetry, atomic artifacts, recovery hashes, and review hashes. R2 is frozen
-under a new output identity but has not run. Stationary-fine,
+The next work is completion of a nonpromotional Hugging Face infrastructure
+qualification. Two r2 Jobs confirmed AMD64 but failed before solver or
+artifact work because the connector credential could neither create the
+private dataset nor commit to main after the local `fluidmech` credential
+created it. The retained r2 Space image separately failed its rootless build
+on UID/GID 98765. A prospectively frozen R3 image recovery at UID/GID 1000 now
+passes local identity, private Space build/runtime, source rehash, immutable
+commit, and commit-prefixed registry-digest gates. This qualifies only the
+image path. Revision-pinned volume recovery, `cpu-upgrade`/`cpu-xl` coarse
+pilots, full HF qualification, and the separate six-case execution contract
+remain blocked. A new qualification contract must bind the R3 image evidence
+after the Jobs connector is reauthorized. Stationary-fine,
 independent-solver, full-solver, scientific promotion, and desktop work remain
 blocked. The
 historical 90% point-pass threshold is retained for v1/v2

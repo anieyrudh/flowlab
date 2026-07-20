@@ -303,6 +303,47 @@ telemetry, Space/commit/registry/Job-image binding, local artifact-manifest
 rehashing, and an evidence-hash-bound independent review. A successful r2
 assessment remains nonpromotional and does not itself launch six cases.
 
+The attempted r2 resume is retained in
+`2026-07-20-hf-infrastructure-qualification-attempt-r2.json`. The locally
+active `fluidmech` credential can create and write the declared private
+dataset and Space, but the Jobs connector uses a different effective
+credential: its two AMD64 probes received HTTP 403 on repository creation and
+main-branch commit. Do not accept its suggested pull-request fallback because
+that would change the frozen atomic evidence workflow.
+
+The r2 Space source at commit `8b8608f01a3f0b80ee555d41fe5f0570b65607b0`
+also failed before runtime because the rootless builder could not `lchown`
+UID/GID 98765 from the official OpenFOAM base. Preserve that failure. The
+separate `HF_AMD64_IMAGE_RECOVERY_R3_CONTRACT.json` authorized only a pinned
+Ubuntu AMD64 plus exact OpenFOAM-package image at UID/GID 1000. Its local and
+private-Space gates passed at commit
+`4c8572ab13354f21bb8d5b182b01be99a6a49c62`, registry tag `cpu-4c8572a`, and
+digest `sha256:874672331dbaf7107d1f37903b2e0652f451dafaf37bc9471b1149e1579a615a`.
+Do not treat image recovery as Jobs, volume, artifact, coarse-pilot, or
+scientific qualification.
+
+The exact local R3 build used the frozen R2 directory as context because it
+contains the referenced runner; the R3 directory supplies the new Dockerfile:
+
+```bash
+docker build --platform linux/amd64 \
+  -f docker/openfoam11-gmsh415-immutable-amd64-hf-r3/Dockerfile \
+  -t flowlab/openfoam11-gmsh415-immutable:2026-07-20-amd64-hf-image-recovery-r3 \
+  docker/openfoam11-gmsh415-immutable-amd64-hf-r2
+```
+
+For any future Job, use the remote image by digest
+`registry.hf.space/anieyrudh-flowlab-openfoam11-gmsh415-amd64-r2@sha256:874672331dbaf7107d1f37903b2e0652f451dafaf37bc9471b1149e1579a615a`.
+The tag `cpu-4c8572a` is only a commit-correlated discovery aid and `latest` is
+never an evidence or execution identity.
+
+Resume only after reconnecting the Jobs connector with the write-capable
+credential without pasting or storing its value. Because the frozen r2 image
+identity failed and was superseded, first freeze a new qualification contract
+bound to the R3 image evidence and a new absent output path. No six-case
+execution contract may be frozen until that qualification and its independent
+review pass.
+
 A stationary cloned-fine diagnostic, independent-solver run, or new full
 campaign requires a separate prospective contract and the applicable earlier
 stage in `V3_DIAGNOSTIC_CONTRACT.json` to pass. Never weaken the r3 gates or

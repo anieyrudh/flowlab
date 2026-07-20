@@ -16,20 +16,24 @@ corrected preparer in a new directory and passed every mesh and geometry gate.
 The observed domain-measure error sequence was approximately 2.5505%, 0.6413%,
 and 0.1606%, with exact 8x refinement and strict all-hex meshes. The successor
 velocity-verification design is now frozen and its offline validator passes all
-22 checks. A nonpromotional Hugging Face infrastructure contract has now been
-frozen. Its first tiny Job confirmed AMD64, then stopped before any solver with
-HTTP 403 because the connected token could not create the required private
-artifact dataset. The equivalent local AMD64 image and mesh-only coarse input
-bundle passed local checks. Independent review confirmed the stop and found
-positive-path gaps in r1. A hardened r2 qualification now supersedes it with a
-new output identity and exact policy, image/Job, terminal-residual,
-memory/OOM, atomic-upload, recovery, and review bindings. Next:
+22 checks. Two r2 Hugging Face Jobs confirmed AMD64, then stopped before any
+artifact or solver because the connector credential could neither create the
+private dataset nor commit to main. The local `fluidmech` credential proved it
+can do both. The retained r2 Space image separately failed its rootless build
+on UID/GID 98765. A prospectively frozen R3 image recovery using UID/GID 1000
+now passes local identity, private Space build/runtime, immutable commit, and
+commit-prefixed registry-digest gates. This qualifies only the image path; HF
+Jobs, volume, artifact, and coarse-pilot qualification remains blocked. Next:
 
-1. reconnect Hugging Face with private dataset and private Space create/write
-   permission plus Jobs access; rerun the probes under new unique Job IDs;
-2. publish the equivalent AMD64 image privately and capture both the exact
-   Space commit and commit-tagged registry digest;
-3. run the isolated serial coarse pilot on `cpu-upgrade` and `cpu-xl`, recover
+1. reconnect the Hugging Face Jobs connector to the locally verified,
+   write-capable credential; its present credential can submit Jobs but cannot
+   create or commit main-branch private evidence;
+2. bind a new qualification contract to the passing R3 image recovery: private
+   Space commit `4c8572ab...`, commit-prefixed tag `cpu-4c8572a`, and registry
+   digest `sha256:87467233...`; do not reuse the failed frozen r2 image identity;
+3. rerun the architecture and revision-pinned volume probes under new unique
+   Job IDs, then run the isolated serial coarse pilot on `cpu-upgrade` and
+   `cpu-xl`, recover
    and independently rehash every artifact, and compare the predeclared field
    invariants within `1e-10`;
 4. independently review the qualification and all six intended cases, 18
