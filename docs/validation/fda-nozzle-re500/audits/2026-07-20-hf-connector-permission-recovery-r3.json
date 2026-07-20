@@ -1,0 +1,89 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-hf-connector-permission-recovery-audit.v1",
+  "assessedAt": "2026-07-20T08:13:44Z",
+  "contract": {
+    "path": "docs/validation/fda-nozzle-re500/HF_CONNECTOR_PERMISSION_RECOVERY_R3_CONTRACT.json",
+    "sha256": "12cff9ee46cdc7236c293f2393dde6d6566b1f3c9eae13440006862be487a87e",
+    "status": "frozen-nonpromotional-permission-probe-authorized"
+  },
+  "source": {
+    "path": "server/flowlab/hf_jobs/fda_nozzle_re500_probe_r2.py",
+    "sha256": "fb79fa30aa7fe2298d1a0f5f36911ec898882e908c2376c4552cf9dd0e21c476"
+  },
+  "execution": {
+    "jobId": "6a5dd875bee6ee1cf4ed21e8",
+    "jobUrl": "https://huggingface.co/jobs/Anieyrudh/6a5dd875bee6ee1cf4ed21e8",
+    "createdBy": "Anieyrudh",
+    "flavor": "cpu-basic",
+    "architecture": "amd64",
+    "stage": "ERROR",
+    "exitCode": 1,
+    "runningSeconds": 4,
+    "totalSeconds": 9,
+    "repository": "Anieyrudh/flowlab-fda-hf-qualification-20260720",
+    "repositoryVisibility": "private"
+  },
+  "failure": {
+    "class": "connector-credential-direct-main-write-forbidden",
+    "httpStatus": 403,
+    "message": "The connector credential may create a pull request but may not commit directly to the private dataset main branch.",
+    "sameFailureAsPredecessorJob": "6a5dcbd5d216bd6f3a202f40",
+    "infrastructureFailure": true,
+    "scientificFailure": false
+  },
+  "gates": {
+    "connectorIdentityExact": true,
+    "jobCompleted": false,
+    "jobArchitectureExact": null,
+    "atomicCommitCreated": false,
+    "bothFilesExistAtCapturedCommit": false,
+    "payloadHashExact": false,
+    "recordContractIdExact": false,
+    "recordJobIdExact": false,
+    "recordNonpromotionalTrue": false,
+    "recordSolverInvokedFalse": false,
+    "recordPromotionAuthorizedFalse": false,
+    "allPassed": false
+  },
+  "evidence": {
+    "rawDirectory": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-hf-connector-permission-recovery-r3",
+    "rawTrackedByGit": false,
+    "jobInspect": {
+      "path": "job-inspect.json",
+      "sha256": "3bdff6513eaff899c88839c8c4741d34c3bb11f348d6bebd15bf2fb83206fcdf"
+    },
+    "jobLog": {
+      "path": "job.log",
+      "sha256": "4be4b18c414f8f5ad2c0ada4628a25aec14e3dedb091b8463547cd7d1c7c98aa"
+    },
+    "outcome": {
+      "path": "outcome.json",
+      "sha256": "8770ba97ae3fedecb1b59c12a611125579606bece9d18ff8e9c47e8634eaf917"
+    },
+    "remoteCommitCreated": false,
+    "remoteRecoveryPossible": false
+  },
+  "assessment": {
+    "status": "completed-fail-closed",
+    "outcome": "connector-write-not-qualified",
+    "retryPerformed": false,
+    "solverInvoked": false,
+    "hfConnectorWriteQualified": false,
+    "hfInfrastructureQualified": false,
+    "sixCaseExecutionContractMayBeFrozen": false,
+    "scientificPromotionAuthorized": false,
+    "desktopPromotionAuthorized": false,
+    "promotionAuthorized": false
+  },
+  "nextAction": {
+    "preferred": "Grant the connector credential direct write access to the private dataset main branch, then freeze a new permission-recovery contract and unique evidence directory.",
+    "alternative": "Prospectively design and review a pull-request-based artifact protocol; do not reinterpret this failed direct-write contract as passing.",
+    "blocked": [
+      "revision-pinned volume qualification",
+      "coarse cross-flavor pilot",
+      "full HF infrastructure qualification",
+      "six-case execution contract",
+      "six-case campaign"
+    ]
+  }
+}

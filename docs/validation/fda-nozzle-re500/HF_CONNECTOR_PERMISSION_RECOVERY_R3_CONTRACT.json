@@ -1,0 +1,103 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-hf-connector-permission-recovery.v1",
+  "contractId": "fda-nozzle-re500-v3-hf-connector-permission-recovery-r3-2026-07-20",
+  "frozenAt": "2026-07-20T08:11:37Z",
+  "status": "frozen-nonpromotional-permission-probe-authorized",
+  "purpose": "Determine whether the updated Hugging Face Jobs connector credential can execute one AMD64 CPU job and atomically persist uniquely named, recoverable evidence to the existing private qualification dataset.",
+  "predecessorFailures": [
+    {
+      "jobId": "6a5dcb4dd216bd6f3a202f33",
+      "failureClass": "connector-credential-private-dataset-create-forbidden",
+      "scientificFailure": false
+    },
+    {
+      "jobId": "6a5dcbd5d216bd6f3a202f40",
+      "failureClass": "connector-credential-direct-main-write-forbidden",
+      "scientificFailure": false
+    }
+  ],
+  "scope": {
+    "inScope": [
+      "submit exactly one cpu-basic Hugging Face UV job",
+      "capture the remote machine architecture and declared resource metadata",
+      "commit one payload and one JSON record atomically under a unique job-id prefix",
+      "recover both files at the immutable Hub commit and rehash them locally"
+    ],
+    "outOfScope": [
+      "Docker image execution",
+      "revision-pinned volume qualification",
+      "OpenFOAM or any other solver invocation",
+      "coarse-pilot execution",
+      "six-case campaign execution",
+      "scientific or desktop promotion"
+    ]
+  },
+  "connector": {
+    "expectedIdentity": "Anieyrudh",
+    "tokenAlias": "fluidmech",
+    "tokenValueMayBeRecorded": false,
+    "jobFlavor": "cpu-basic",
+    "jobTimeout": "10m",
+    "expectedArchitecture": "x86_64"
+  },
+  "sourceEvidence": [
+    {
+      "path": "server/flowlab/hf_jobs/fda_nozzle_re500_probe_r2.py",
+      "sha256": "fb79fa30aa7fe2298d1a0f5f36911ec898882e908c2376c4552cf9dd0e21c476"
+    }
+  ],
+  "artifact": {
+    "repository": "Anieyrudh/flowlab-fda-hf-qualification-20260720",
+    "repositoryType": "dataset",
+    "repositoryVisibility": "private",
+    "prefixTemplate": "probes/fda-nozzle-re500-v3-hf-connector-permission-recovery-r3-2026-07-20/{JOB_ID}",
+    "payload": "flowlab-hf-volume-probe-v2\n",
+    "payloadSha256": "b7df74bc3df84500d9745a1e233734f8b835a12ad80388c566c04989184695f6",
+    "atomicTwoFileCommitRequired": true,
+    "immutableCommitRecoveryRequired": true,
+    "remoteOverwriteAllowed": false,
+    "localEvidenceDirectory": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-hf-connector-permission-recovery-r3",
+    "localOverwriteAllowed": false,
+    "rawTrackedByGit": false,
+    "compactAuditTrackedByGit": true
+  },
+  "gates": {
+    "connectorIdentityExact": true,
+    "jobCompleted": true,
+    "jobArchitectureExact": true,
+    "atomicCommitCreated": true,
+    "bothFilesExistAtCapturedCommit": true,
+    "payloadHashExact": true,
+    "recordContractIdExact": true,
+    "recordJobIdExact": true,
+    "recordNonpromotionalTrue": true,
+    "recordSolverInvokedFalse": true,
+    "recordPromotionAuthorizedFalse": true,
+    "anyMissingEvidence": "block"
+  },
+  "failClosed": {
+    "postHocGateChangeAllowed": false,
+    "retryIntoSameEvidenceDirectoryAllowed": false,
+    "retryUnderSameContractAllowed": false,
+    "newAttemptRequiresNewContractAndOutput": true,
+    "permissionRecoveryMayQualifyVolumes": false,
+    "permissionRecoveryMayAuthorizeSolver": false
+  },
+  "authorization": {
+    "runOneAtomicPermissionProbe": true,
+    "runRevisionPinnedVolumeProbe": false,
+    "runImage": false,
+    "runSolver": false,
+    "runCoarsePilot": false,
+    "freezeSixCaseExecutionContract": false,
+    "runSixCaseCampaign": false,
+    "scientificPromotion": false,
+    "desktopPromotion": false
+  },
+  "hfConnectorWriteQualified": false,
+  "hfInfrastructureQualified": false,
+  "sixCaseExecutionContractMayBeFrozen": false,
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}
