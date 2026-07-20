@@ -223,15 +223,28 @@ PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 \
   --compact-report docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.md
 ```
 
-These commands are a historical record, not rerun instructions. The attempt
+Those commands are a historical record, not rerun instructions. The attempt
 returned exit 3 at coarse `blockMesh` because the prepared case lacked the
 required `system/controlDict`. No mesh was constructed, medium/fine were not
 started, no solver command was invoked, and the compact assessment records an
 infrastructure-preparation failure. Preserve that raw directory. The runner now
-generates a minimal mesh-only `controlDict`, but exercising the correction
-requires a new prospective contract and new output path.
+generates a minimal mesh-only `controlDict`.
 
-A stationary
-cloned-fine diagnostic, independent-solver run, or new full campaign requires
-the applicable earlier stage in `V3_DIAGNOSTIC_CONTRACT.json` to pass. Never
-weaken the r3 gates or rerun from time zero to make the retained outcome pass.
+The correction was exercised once under the separately frozen
+`V3_MESH_PREFLIGHT_R2_CONTRACT.json` and new
+`2026-07-20-re500-v3-mesh-preflight-r2` output. It passed all mesh and geometry
+gates: exact 44,256 / 354,048 / 2,832,384 all-hex cells, 8x cell ratios, full
+topology/geometry checks, monotonic domain-measure convergence, and 0.1606%
+fine-grid errors against the 1% contract. Preserve that campaign unchanged.
+Its compact tracked result is
+`audits/2026-07-20-v3-mesh-preflight-r2.json` and `.md`.
+
+The pass authorizes only design of a prospectively frozen velocity-focused
+numerical-verification campaign. It does not authorize running a solver, a full
+successor campaign, or any scientific/desktop promotion. Later GCI must be
+labelled combined geometry-and-solution discretization uncertainty.
+
+A stationary cloned-fine diagnostic, independent-solver run, or new full
+campaign requires a separate prospective contract and the applicable earlier
+stage in `V3_DIAGNOSTIC_CONTRACT.json` to pass. Never weaken the r3 gates or
+rerun from time zero to make the retained outcome pass.

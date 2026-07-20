@@ -1,0 +1,187 @@
+{
+  "assessedAt": "2026-07-20T05:40:32.737365+00:00",
+  "assessmentSourceSha256": "06be36c7a9a815e3b04265d49b34c5707e976799cf4d97ae5752b238ff571369",
+  "authorization": {
+    "desktopPromotion": false,
+    "nextNumericalVerificationCampaignDesign": true,
+    "runFullSuccessorCampaign": false,
+    "runSolver": false,
+    "scientificPromotion": false
+  },
+  "campaignId": "2026-07-20-re500-v3-mesh-preflight-r2",
+  "cellRatios": [
+    8.0,
+    8.0
+  ],
+  "desktopPromotionAuthorized": false,
+  "evidenceSha256": {
+    "coarseBlockMeshDict": "e32f258e268a286f623641ecced96e99159d4809bcc3a6720bcb65962e48ce97",
+    "coarseBlockMeshLog": "51bae109eaddb7c531b00d7ab396c7c75631f04ec44abe4cf6d92ef38ac0c609",
+    "coarseCaseReport": "a973bd0c117d410056e34b79c4b78693634b02444a3627523b6630b6c5084a38",
+    "coarseCheckMeshLog": "3eea3e306662ce48afa84470cb362ff533afac0494198facb128141185d5200a",
+    "contract": "85d5166a38eb0a5e94519259439d812f2238ceab21dfb6464f14a53969b33e5f",
+    "fineBlockMeshDict": "150d9cda5800f4d1b3e7762f1676f9c847b4d5edd08a3fd1f666b4241d84a6e2",
+    "fineBlockMeshLog": "71b954e509de3e95f60a4cbfafe7f562cab3ad1b0f86bb3bc9fe6ec7ba6f62ed",
+    "fineCaseReport": "7b78952e91ad2b99ba920a3cd602897a70b8920b840cb15439a491173ae311f3",
+    "fineCheckMeshLog": "a447182e43e690adc64aaee761ed8b03165d5a183e8cb6618ae98ad8edf48cde",
+    "manifest": "ada897d28e911f6502dbe9d3e4aaa329cb3e5ad76538aea655ceedec08ce56e1",
+    "mediumBlockMeshDict": "2aba83641d6717ac6e47302bd0dfaeda99560676b5ddc2784a14d7fb7a922947",
+    "mediumBlockMeshLog": "d91b799747c231242ef1b4833a11400a927459464a36666c140ff15bc8120df5",
+    "mediumCaseReport": "016f1f9628b41b4f1a2c37bbfdb286a83c27d91ae29a896b73fe6d5f06e396f7",
+    "mediumCheckMeshLog": "56c7799acc2e17659ebbd681c833fa63e5eb549642b8457fc3991feb9459d27e",
+    "meshExecution": "556d89a7b63e7dc5218952f529374b1d4e0085a886cce866402790762edee29b",
+    "pressureDisposition": "96c390c95583fcdbb15e8cc41a31cd520c4d86e33cdb463c9a53a23150f09734",
+    "source": "06be36c7a9a815e3b04265d49b34c5707e976799cf4d97ae5752b238ff571369"
+  },
+  "failure": null,
+  "fineGeometryWithinTolerance": {
+    "inletCrossSectionArea": true,
+    "outletCrossSectionArea": true,
+    "throatCrossSectionArea": true,
+    "totalDomainVolume": true
+  },
+  "gates": {
+    "allExpectedCellCountsExact": true,
+    "allFineGeometryErrorsWithinOnePercent": true,
+    "allGeometryQuantitiesConvergeMonotonically": true,
+    "allMeshCommandsComplete": true,
+    "allMeshesOpenFoamOk": true,
+    "allMeshesStrictHex": true,
+    "frozenContractIntegrity": true,
+    "onlyMeshCommandsInvoked": true,
+    "pressureDispositionResolvedNonpromotional": true,
+    "volumetricCellRatioEight": true
+  },
+  "geometryMonotonic": {
+    "inletCrossSectionArea": true,
+    "outletCrossSectionArea": true,
+    "throatCrossSectionArea": true,
+    "totalDomainVolume": true
+  },
+  "geometryTolerance": 0.01,
+  "geometryUncertaintyLabel": "combined-geometry-and-solution-discretization",
+  "levels": {
+    "coarse": {
+      "caseChecks": {
+        "commandsComplete": true,
+        "expectedCellCount": true,
+        "geometryMetricsComplete": true,
+        "meshOk": true,
+        "strictAllHex": true
+      },
+      "cells": 44256,
+      "circumferentialBoundarySegments": 16,
+      "geometry": {
+        "inletCrossSectionArea": {
+          "actual": 0.00011021282852114585,
+          "nominal": 0.00011309733552923255,
+          "relativeError": -0.025504641595567312
+        },
+        "outletCrossSectionArea": {
+          "actual": 0.00011021282852114586,
+          "nominal": 0.00011309733552923255,
+          "relativeError": -0.0255046415955672
+        },
+        "throatCrossSectionArea": {
+          "actual": 1.2245869835682871e-05,
+          "nominal": 1.2566370614359172e-05,
+          "relativeError": -0.025504641595567423
+        },
+        "totalDomainVolume": {
+          "actual": 2.123600462365442e-05,
+          "nominal": 2.17917965852834e-05,
+          "relativeError": -0.02550464159546728
+        }
+      },
+      "hexahedra": 44256,
+      "maximumNonOrthogonalityDegrees": 15.80862064371675,
+      "status": "passed"
+    },
+    "fine": {
+      "caseChecks": {
+        "commandsComplete": true,
+        "expectedCellCount": true,
+        "geometryMetricsComplete": true,
+        "meshOk": true,
+        "strictAllHex": true
+      },
+      "cells": 2832384,
+      "circumferentialBoundarySegments": 64,
+      "geometry": {
+        "inletCrossSectionArea": {
+          "actual": 0.00011291574565965381,
+          "nominal": 0.00011309733552923255,
+          "relativeError": -0.0016056069643816118
+        },
+        "outletCrossSectionArea": {
+          "actual": 0.00011291574565965381,
+          "nominal": 0.00011309733552923255,
+          "relativeError": -0.0016056069643816118
+        },
+        "throatCrossSectionArea": {
+          "actual": 1.2546193962183755e-05,
+          "nominal": 1.2566370614359172e-05,
+          "relativeError": -0.0016056069643816118
+        },
+        "totalDomainVolume": {
+          "actual": 2.175680752517159e-05,
+          "nominal": 2.17917965852834e-05,
+          "relativeError": -0.0016056069528219696
+        }
+      },
+      "hexahedra": 2832384,
+      "maximumNonOrthogonalityDegrees": 28.90013826355941,
+      "status": "passed"
+    },
+    "medium": {
+      "caseChecks": {
+        "commandsComplete": true,
+        "expectedCellCount": true,
+        "geometryMetricsComplete": true,
+        "meshOk": true,
+        "strictAllHex": true
+      },
+      "cells": 354048,
+      "circumferentialBoundarySegments": 32,
+      "geometry": {
+        "inletCrossSectionArea": {
+          "actual": 0.00011237202548128988,
+          "nominal": 0.00011309733552923255,
+          "relativeError": -0.006413148855794248
+        },
+        "outletCrossSectionArea": {
+          "actual": 0.00011237202548128988,
+          "nominal": 0.00011309733552923255,
+          "relativeError": -0.006413148855794248
+        },
+        "throatCrossSectionArea": {
+          "actual": 1.2485780609032204e-05,
+          "nominal": 1.2566370614359172e-05,
+          "relativeError": -0.0064131488557945815
+        },
+        "totalDomainVolume": {
+          "actual": 2.165204254998538e-05,
+          "nominal": 2.17917965852834e-05,
+          "relativeError": -0.006413148854023332
+        }
+      },
+      "hexahedra": 354048,
+      "maximumNonOrthogonalityDegrees": 19.96177745635641,
+      "status": "passed"
+    }
+  },
+  "preparedSourceSha256": {
+    "baseFdaSource": "ed581be5aef02f6103740452dbcf5adc612cff7be9d356ec4414036fe14fc0eb",
+    "meshPreflightSource": "06be36c7a9a815e3b04265d49b34c5707e976799cf4d97ae5752b238ff571369",
+    "meshRendererSource": "ebb1305e5f3bbe73b4db99b1541685e097d6814b73ae861a661f44e040bff7e5",
+    "recoveryLauncherSource": "dca12f65632eb3baeeb76897c41ec10703179d3edd12f887f4cfa1beca325b74",
+    "successorAuditSource": "3dfd44febf559268ebb675ed77d97aca023773e396d13e118455cb7d7d228649"
+  },
+  "pressureReferenceStatus": "not-qualified-nonpromotional",
+  "promotionAuthorized": false,
+  "schema": "flowlab.fda-nozzle-re500-v3-mesh-preflight.v1",
+  "scientificPromotionAuthorized": false,
+  "solverExecutionAuthorized": false,
+  "status": "mesh-preflight-passed",
+  "successorContextOfUse": "Mesh-only numerical-verification preparation for prospectively assessed axial-velocity-field agreement in the bounded FDA nozzle Re=500 configuration. Pressure remains a mandatory reported diagnostic and is not promotion eligible."
+}

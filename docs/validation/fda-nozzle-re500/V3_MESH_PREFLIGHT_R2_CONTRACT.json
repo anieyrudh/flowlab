@@ -1,0 +1,112 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-v3-mesh-preflight-recovery-contract.v1",
+  "contractId": "fda-nozzle-re500-v3-mesh-preflight-r2-2026-07-20",
+  "frozenAt": "2026-07-20T05:32:31Z",
+  "status": "frozen-authorized-mesh-only-infrastructure-recovery",
+  "recoveryOf": {
+    "contract": "docs/validation/fda-nozzle-re500/V3_MESH_PREFLIGHT_CONTRACT.json",
+    "contractSha256": "8775ca7ce86ef22d8172bbec346adae21b3301dec20558d8ec6e9e66e20a1d34",
+    "assessment": "docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.json",
+    "assessmentSha256": "388c76aa05c32f04ffaf6dd653339835983433f4f2062ca2991397e5fe4458b9",
+    "failureClassification": "infrastructure-preparation-failure",
+    "failureReason": "missing-required-controlDict",
+    "scientificGateEvaluated": false,
+    "retainedEvidenceMayBeEdited": false
+  },
+  "correctedRunner": {
+    "path": "server/flowlab/fda_nozzle_re500_v3_mesh_preflight.py",
+    "sha256": "06be36c7a9a815e3b04265d49b34c5707e976799cf4d97ae5752b238ff571369",
+    "correction": "Prepare every mesh-only case with a minimal system/controlDict whose application is blockMesh.",
+    "scientificContractChanged": false
+  },
+  "pressureDisposition": {
+    "path": "docs/validation/fda-nozzle-re500/PRESSURE_REFERENCE_DISPOSITION.json",
+    "sha256": "96c390c95583fcdbb15e8cc41a31cd520c4d86e33cdb463c9a53a23150f09734",
+    "status": "not-qualified-nonpromotional"
+  },
+  "contextOfUse": "Mesh-only numerical-verification preparation for prospectively assessed axial-velocity-field agreement in the bounded FDA nozzle Re=500 configuration. Pressure remains a mandatory reported diagnostic and is not promotion eligible.",
+  "candidateFamily": {
+    "geometry": "The unchanged analytic FDA nozzle definition rendered by the existing four-quadrant all-hex O-grid topology.",
+    "linearRefinementRatio": 2,
+    "volumetricCellRatio": 8,
+    "levels": {
+      "coarse": {
+        "expectedCells": 44256,
+        "circumferentialBoundarySegments": 16,
+        "cellScale": 1
+      },
+      "medium": {
+        "expectedCells": 354048,
+        "circumferentialBoundarySegments": 32,
+        "cellScale": 2
+      },
+      "fine": {
+        "expectedCells": 2832384,
+        "circumferentialBoundarySegments": 64,
+        "cellScale": 4
+      }
+    },
+    "expectedChordGeometryErrors": {
+      "coarse": -0.025504641595567312,
+      "medium": -0.006413148855794248,
+      "fine": -0.0016056069643816118
+    }
+  },
+  "geometryAcceptance": {
+    "fineMaximumAbsoluteRelativeError": 0.01,
+    "quantities": [
+      "totalDomainVolume",
+      "inletCrossSectionArea",
+      "outletCrossSectionArea",
+      "throatCrossSectionArea"
+    ],
+    "everyQuantityMustConvergeMonotonically": true,
+    "geometryAndSolutionDiscretizationSeparated": false,
+    "laterNumericalUncertaintyLabel": "combined-geometry-and-solution-discretization",
+    "rationale": "The recovery preserves the original prospective one-percent bound exactly. No observed result may change this tolerance."
+  },
+  "meshAcceptance": {
+    "strictAllHex": true,
+    "checkMeshAllTopologyAndGeometry": true,
+    "exactExpectedCellCounts": true,
+    "exactLinearRefinementRatio": 2,
+    "exactVolumetricCellRatio": 8,
+    "openFoamMeshOkRequired": true
+  },
+  "execution": {
+    "image": "flowlab/openfoam11-gmsh415-immutable:2026-07-14-arm64-v1",
+    "imageDigest": "sha256:6a6ac1898cb482ae16ff65cb538f458f9ff86941ac9f7e435088a3c54357ce36",
+    "architecture": "arm64",
+    "maximumMeshWorkers": 1,
+    "allowedCommands": [
+      "blockMesh",
+      "checkMesh -allTopology -allGeometry"
+    ],
+    "prohibitedCommands": [
+      "foamRun",
+      "postprocessing",
+      "scientific campaign assessment"
+    ],
+    "refuseNonemptyOutput": true,
+    "overwriteExistingEvidence": false
+  },
+  "outputPolicy": {
+    "rawCampaign": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-mesh-preflight-r2",
+    "rawCampaignTrackedByGit": false,
+    "compactAssessment": "docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight-r2.json",
+    "compactReport": "docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight-r2.md",
+    "newHypothesisRequiresNewOutputDirectory": true
+  },
+  "authorization": {
+    "prepareMeshCases": true,
+    "runMeshOnlyCommands": true,
+    "assessMeshPreflight": true,
+    "runSolver": false,
+    "runFullSuccessorCampaign": false,
+    "scientificPromotion": false,
+    "desktopPromotion": false
+  },
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

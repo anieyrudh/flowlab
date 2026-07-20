@@ -114,6 +114,20 @@ failure is classified as infrastructure preparation, not scientific evidence.
 The retained directory must not be reused; another attempt requires a new
 contract and output directory. Promotion remains false.
 
+The separately frozen r2 infrastructure recovery used the corrected runner and
+passed every mesh-preflight gate. The three meshes contained exactly 44,256 /
+354,048 / 2,832,384 hexahedra; both cell-count ratios were 8.0; and full
+`checkMesh -allTopology -allGeometry` passed. Volume, inlet, outlet, and throat
+geometry errors all decreased monotonically from approximately 2.5505% to
+0.6413% to 0.1606%. Every fine-grid magnitude is below 1%. Only `blockMesh` and
+`checkMesh` were invoked in the pinned arm64 image with one worker.
+
+Status is `mesh-preflight-passed`, but `promotionAuthorized=false`. The result
+authorizes only design of the next numerical-verification campaign. Solver
+execution, a full successor campaign, scientific promotion, and desktop
+promotion remain blocked. Any later GCI must be described as combined
+geometry-and-solution discretization uncertainty.
+
 ## Evidence paths
 
 - Frozen contract: `benchmarks/cases/fda-nozzle/campaigns/2026-07-17-re500-v1/campaign-contract.json`
@@ -131,6 +145,8 @@ contract and output directory. Promotion remains false.
 - Pressure disposition: `docs/validation/fda-nozzle-re500/PRESSURE_REFERENCE_DISPOSITION.json`
 - Frozen V3 mesh-only contract: `docs/validation/fda-nozzle-re500/V3_MESH_PREFLIGHT_CONTRACT.json`
 - Compact blocked mesh assessment: `docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.json` and `.md`
+- Frozen V3 mesh recovery contract: `docs/validation/fda-nozzle-re500/V3_MESH_PREFLIGHT_R2_CONTRACT.json`
+- Passing V3 mesh recovery assessment: `docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight-r2.json` and `.md`
 
 ## Authoritative sources
 

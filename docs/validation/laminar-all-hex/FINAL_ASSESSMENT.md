@@ -131,10 +131,17 @@ missing `controlDict`, medium/fine were not run, and the failure is classified
 as infrastructure preparation. Its assessment is
 `docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.json`.
 
-The next work is limited to a new prospective mesh-only recovery contract and
-separate output directory. Numerical-verification campaign design is not yet
-authorized. Stationary-fine, independent-solver, and full-solver work remains
-blocked. The historical 90% point-pass threshold is retained for v1/v2
+The separately frozen r2 mesh-only recovery corrected that infrastructure
+defect and passed every prospective gate: exact 44,256 / 354,048 / 2,832,384
+all-hex cells, 8x refinement, full topology/geometry checks, monotonic geometry
+convergence, and approximately 0.1606% fine-grid volume/inlet/outlet/throat
+errors against the 1% limit. The compact assessment is
+`docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight-r2.json`.
+
+Only design of the next velocity-focused numerical-verification campaign is
+now authorized. Stationary-fine, independent-solver, full-solver, scientific
+promotion, and desktop work remain blocked pending separate prospective
+contracts and gates. The historical 90% point-pass threshold is retained for v1/v2
 reproduction but is not represented as an FDA or ASME-prescribed universal
 figure. The desktop pointer remains unchanged until a later prospectively
 frozen campaign passes every gate.

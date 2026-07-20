@@ -2,7 +2,7 @@
 
 Status: **v4 numerical/product gates accepted; FDA v2 completed and blocked; successor full campaign not authorized**
 
-## P0 — Recover the mesh-only preflight in a new prospective directory
+## P0 — Design the velocity-focused numerical-verification campaign
 
 The v2 campaign completed through the retained r3 fine-grid recovery, but its
 assessment is `validated-blocked`. Pressure has been formally demoted to a
@@ -11,21 +11,24 @@ axial-velocity-field agreement. Do not rerun v2 or tune its gates.
 
 The first frozen 1% V3 mesh preflight failed before mesh construction because
 the preparer omitted `system/controlDict`. Its retained evidence and compact
-assessment are immutable. The source correction now emits a minimal mesh-only
-dictionary, but it has not been exercised. Next:
+assessment are immutable. The separately frozen r2 recovery exercised the
+corrected preparer in a new directory and passed every mesh and geometry gate.
+The observed domain-measure error sequence was approximately 2.5505%, 0.6413%,
+and 0.1606%, with exact 8x refinement and strict all-hex meshes. Next:
 
-1. freeze a new infrastructure-recovery contract with a new output path and
-   hashes for the corrected runner;
-2. rerun only `blockMesh` and `checkMesh -allTopology -allGeometry`, sequentially
-   with one worker in the pinned native-arm64 image;
-3. assess the unchanged 44,256 / 354,048 / 2,832,384 family against the frozen
-   monotonic and 1% fine-grid volume/inlet/outlet/throat gates;
-4. only if every mesh gate passes, design the next numerical-verification
-   campaign; later GCI must be labelled combined geometry-and-solution
-   discretization uncertainty;
-5. after those gates pass, run the predeclared stationary cloned-fine and
+1. prospectively define velocity-only critical quantities, station/region
+   functionals, correlation-aware error measures, and complete numerical-
+   uncertainty requirements without reusing the historical 90% aggregate;
+2. preserve the passing 44,256 / 354,048 / 2,832,384 family and label later GCI
+   as combined geometry-and-solution discretization uncertainty;
+3. freeze resource, convergence, observation-operator, and stop/go rules before
+   any solver execution;
+4. use a separate output directory and retain pressure/pressure-drop as
+   mandatory nonpromotional diagnostics;
+5. only after a new execution contract is reviewed, run the predeclared
+   stationary cloned-fine and
    independent-solver discriminators;
-6. freeze a separate full-campaign contract only after the diagnostic evidence
+6. freeze a separate full-campaign contract only after the numerical evidence
    supports it.
 
 The old 90% point-pass figure remains part of the immutable v1/v2 history. It
@@ -100,3 +103,6 @@ Mobile remains out of scope.
 - pressure was formally demoted to nonpromotional and the claim narrowed to
   axial velocity; the first 1% mesh-only attempt then stopped fail-closed on a
   missing `controlDict` before any mesh or scientific gate was evaluated.
+- the r2 mesh-only infrastructure recovery passed all frozen gates with exact
+  all-hex refinement and 0.1606% fine-grid geometry error; it authorizes only
+  design of the next numerical-verification campaign.
