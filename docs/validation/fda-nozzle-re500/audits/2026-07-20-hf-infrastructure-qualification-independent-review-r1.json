@@ -1,0 +1,46 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-hf-infrastructure-independent-review.v1",
+  "reviewedAt": "2026-07-20T06:45:00Z",
+  "reviewMode": "independent-read-only-agent",
+  "attemptAudit": {
+    "path": "docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-infrastructure-qualification-attempt-r1.json",
+    "sha256": "357278fe2f745605bb1d378ba8d0a60ccfdff50c98dafbaea671fbc49f655e22"
+  },
+  "ignoredRawEvidence": [
+    {
+      "path": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-hf-infrastructure-qualification/hf-probe-failure.json",
+      "sha256": "a523f9f438d75aa2ab8ef9190b07df1a2637c3a072f10fe1198bb90596b04002"
+    },
+    {
+      "path": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-hf-infrastructure-qualification/hf-probe-failure.log",
+      "sha256": "346f8105c99c52dd2d2f08f646d41d1eeccfd104573c585a685943daa22f8347"
+    }
+  ],
+  "confirmedFacts": {
+    "jobReportedAmd64": true,
+    "jobFailedArtifactCreateHttp403": true,
+    "jobRunningSeconds": 3,
+    "solverInvoked": false,
+    "remoteArtifactWritten": false,
+    "localImageIdentityPassed": true,
+    "localMeshStrictAllHex44256Passed": true,
+    "attemptHashesConsistent": true,
+    "stopBeforeCoarsePilotsJustified": true
+  },
+  "hardeningFindings": [
+    "The r1 validator does not bind all frozen tolerances, image identities, paths, and concurrency fields.",
+    "The r1 assessor accepts unbound boolean-only synthetic records.",
+    "The r1 remote runner preflights only result.json and can overwrite a partial archive or checksum on retry.",
+    "The r1 residual parser does not require terminal Ux, Uy, Uz, and p residuals as a complete set.",
+    "The r1 telemetry lacks cgroup current, limit, peak, process RSS, and OOM-event evidence.",
+    "The r1 input archive contains duplicate tar member paths.",
+    "The original compact audit did not bind the ignored probe records by hash."
+  ],
+  "disposition": "preserve-r1-and-supersede-before-resume",
+  "hfInfrastructureQualified": false,
+  "sixCaseExecutionContractMayBeFrozen": false,
+  "sixCaseExecutionAuthorized": false,
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

@@ -145,9 +145,19 @@ pass; it does not reuse the historical 90% aggregate. Its six intended cases
 have a 12.87-hour planning estimate, but no campaign directory exists and every
 execution authorization remains false.
 
-The next work is independent design review and, only after that review, a
-separate execution-authorizing contract. Stationary-fine, independent-solver,
-full-solver, scientific promotion, and desktop work remain blocked. The
+The next work is completion of the frozen nonpromotional Hugging Face
+infrastructure qualification. Its first Job confirmed AMD64 but failed before
+any solver or artifact write because the connected token lacked permission to
+create the required private dataset. The equivalent local AMD64 image and
+44,256-cell input bundle passed local checks; remote image pinning,
+revision-pinned volume recovery, `cpu-upgrade`/`cpu-xl` coarse pilots, and the
+separate six-case execution contract remain blocked. Independent review
+confirmed the stop and required a superseding r2 qualification that exactly
+binds policy, image/Job identities, complete terminal residuals, memory/OOM
+telemetry, atomic artifacts, recovery hashes, and review hashes. R2 is frozen
+under a new output identity but has not run. Stationary-fine,
+independent-solver, full-solver, scientific promotion, and desktop work remain
+blocked. The
 historical 90% point-pass threshold is retained for v1/v2
 reproduction but is not represented as an FDA or ASME-prescribed universal
 figure. The desktop pointer remains unchanged until a later prospectively

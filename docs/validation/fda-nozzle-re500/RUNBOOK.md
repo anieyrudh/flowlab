@@ -269,6 +269,40 @@ final runner/assessment hashes, a separate execution contract, explicit user
 authorization, verified resources, and an absent output path are all required
 before preparation.
 
+## Hugging Face infrastructure qualification
+
+`HF_INFRASTRUCTURE_QUALIFICATION_CONTRACT.json` prospectively permits only the
+nonpromotional qualification sequence: tiny architecture and revision-pinned
+volume probes, build and immutable pinning of the equivalent AMD64 image, one
+coarse serial pilot on each of `cpu-upgrade` and `cpu-xl`, local recovery and
+rehashing, assessment, and independent review. It explicitly denies the
+six-case campaign and automatic phase progression.
+
+The first architecture probe is retained as Job
+`6a5dbfbdd216bd6f3a202dfe`. It reported `amd64` but failed before artifact
+creation with HTTP 403 because the connected credential lacked private-dataset
+creation rights. No solver was invoked. The local AMD64 image and mesh-only
+coarse input bundle were prepared, but this does not satisfy remote image,
+volume, solver, or recovery gates. Do not launch either coarse pilot until a
+new unique probe demonstrates a durable write, revision-pinned read-only mount,
+and write-back under the frozen repository and path contract.
+
+Resume by reconnecting Hugging Face with a credential that can create and write
+private dataset and private Space repositories under `Anieyrudh`, while
+retaining Jobs permission. Never put the token in a file or command line. The
+failed Job and current local raw directory are append-only; do not reuse a Job
+ID, evidence prefix, or remote result path.
+
+Independent review found that r1 could not safely accept a positive result.
+Preserve it unchanged. Any resume must use
+`HF_INFRASTRUCTURE_QUALIFICATION_R2_CONTRACT.json` and the r2 module, image,
+probe scripts, and new raw output directory. R2 requires an exact non-source
+policy hash, complete source hashes, unique tar members, atomic lane uploads,
+all four terminal residuals from the final time block, cgroup/process-tree/OOM
+telemetry, Space/commit/registry/Job-image binding, local artifact-manifest
+rehashing, and an evidence-hash-bound independent review. A successful r2
+assessment remains nonpromotional and does not itself launch six cases.
+
 A stationary cloned-fine diagnostic, independent-solver run, or new full
 campaign requires a separate prospective contract and the applicable earlier
 stage in `V3_DIAGNOSTIC_CONTRACT.json` to pass. Never weaken the r3 gates or

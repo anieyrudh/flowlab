@@ -1,0 +1,171 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-hf-infrastructure-qualification.v2",
+  "contractId": "fda-nozzle-re500-v3-hf-infrastructure-qualification-r2-2026-07-20",
+  "frozenAt": "2026-07-20T06:50:00Z",
+  "status": "frozen-nonpromotional-qualification-authorized",
+  "supersedes": {
+    "contract": "docs/validation/fda-nozzle-re500/HF_INFRASTRUCTURE_QUALIFICATION_CONTRACT.json",
+    "attemptAudit": "docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-infrastructure-qualification-attempt-r1.json",
+    "independentReview": "docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-infrastructure-qualification-independent-review-r1.json",
+    "reason": "R1 stopped correctly on artifact authorization, and independent review found validator, assessment binding, upload atomicity, residual completeness, telemetry, and archive-uniqueness gaps."
+  },
+  "purpose": "Qualify Hugging Face Jobs, a pinned Linux/AMD64 OpenFOAM runtime, immutable volume mounting, complete memory/OOM telemetry, atomic append-only evidence recovery, and one coarse cross-flavor reproducibility pilot before a six-case execution contract may be designed.",
+  "contextOfUse": {
+    "claim": "Infrastructure and cross-hardware reproducibility qualification only.",
+    "scientificValidationClaimAllowed": false,
+    "desktopClaimAllowed": false,
+    "pressureRole": "mandatory-diagnostic-nonpromotional"
+  },
+  "predecessors": {
+    "pressureDisposition": {
+      "path": "docs/validation/fda-nozzle-re500/PRESSURE_REFERENCE_DISPOSITION.json",
+      "sha256": "96c390c95583fcdbb15e8cc41a31cd520c4d86e33cdb463c9a53a23150f09734",
+      "status": "not-qualified-nonpromotional"
+    },
+    "meshPreflightAssessment": {
+      "path": "docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight-r2.json",
+      "sha256": "c5693f80e632726f0ea51a959e2b429a65e721ad07671324ea35b5e8dba1228a",
+      "status": "mesh-preflight-passed"
+    },
+    "velocityDesign": {
+      "path": "docs/validation/fda-nozzle-re500/V3_VELOCITY_VERIFICATION_DESIGN_CONTRACT.json",
+      "sha256": "1b22eab7a2d84fc32bff2863f9e66754aedda0895b51c3ad4aa6322a5fbdaeb4",
+      "status": "frozen-design-complete-execution-not-authorized"
+    }
+  },
+  "sourceEvidence": [
+    {
+      "path": "server/flowlab/fda_nozzle_re500_hf_qualification.py",
+      "sha256": "0e3f5eeee9705faf4481eda98b7166a0cca4611ac5f910e252d8405a87ce4fef"
+    },
+    {
+      "path": "server/flowlab/fda_nozzle_re500_hf_qualification_r2.py",
+      "sha256": "5f4b919a22187c0cf54b0d7d2670ce94baf19a2a4861011254957142871fd45c"
+    },
+    {
+      "path": "server/flowlab/hf_jobs/fda_nozzle_re500_probe_r2.py",
+      "sha256": "fb79fa30aa7fe2298d1a0f5f36911ec898882e908c2376c4552cf9dd0e21c476"
+    },
+    {
+      "path": "server/flowlab/hf_jobs/fda_nozzle_re500_volume_probe_r2.py",
+      "sha256": "8808e1a1c3f9b68b5ef62ab77328426b9ac90f35dc89f7b488d51774134516f8"
+    },
+    {
+      "path": "docker/openfoam11-gmsh415-immutable-amd64-hf-r2/Dockerfile",
+      "sha256": "a76825705c657fae24a55491a2606731d772852707049ab3e9d2df5248877c93"
+    },
+    {
+      "path": "docker/openfoam11-gmsh415-immutable-amd64-hf-r2/remote_runner.py",
+      "sha256": "90c306778ccd9dfbeb817660d825fde64bd5ba7f56907f1c24dca29acb01a95e"
+    },
+    {
+      "path": "docker/openfoam11-gmsh415-immutable-amd64-hf-r2/SPACE_README.md",
+      "sha256": "f19e2877206a271c983784a752efff849e298e841bd9d693ef725934c9a9c688"
+    }
+  ],
+  "probe": {
+    "flavor": "cpu-basic",
+    "timeout": "10m",
+    "expectedArchitecture": "x86_64",
+    "artifactRepository": "Anieyrudh/flowlab-fda-hf-qualification-20260720",
+    "artifactRepositoryType": "private-dataset",
+    "payload": "flowlab-hf-volume-probe-v2\n",
+    "payloadSha256": "b7df74bc3df84500d9745a1e233734f8b835a12ad80388c566c04989184695f6",
+    "revisionPinnedReadOnlyVolumeRequired": true,
+    "atomicUniqueJobIdWriteBackRequired": true
+  },
+  "amd64Image": {
+    "spaceId": "Anieyrudh/flowlab-openfoam11-gmsh415-amd64-r2",
+    "spaceVisibility": "private",
+    "expectedArchitecture": "amd64",
+    "openFoamVersion": "11",
+    "openFoamBaseDigest": "sha256:573afef69e3f91a634f7e4caadb6617616d9e713f6ce5656efd70fd0cfdca7b3",
+    "gmshVersion": "4.15.2",
+    "gmshArchiveSha256": "2f81d19efb0dd94426bdab010131da59b7dac1939a3073890dc32c86ecbaa8db",
+    "localOciDigest": "sha256:6b95dec7192e5f843f888ac5c27ea474d4b0a07d8bb569c37686840e5dab45e6",
+    "requireSpaceCommit": true,
+    "requireCommitTaggedRegistryDigest": true,
+    "requireJobMetadataBinding": true,
+    "mutableLatestTagMayAuthorize": false
+  },
+  "coarsePilot": {
+    "inputBundleHubPath": "inputs/fda-nozzle-re500-v3-hf-infrastructure-qualification-r2-2026-07-20/qualification-input.tar.gz",
+    "meshLevel": "coarse",
+    "flowScale": 1.0,
+    "expectedCells": 44256,
+    "expectedCircumferentialBoundarySegments": 16,
+    "maximumIteration": 800,
+    "requiredFinalTime": 800,
+    "terminalEndRequired": true,
+    "allTerminalResidualFieldsRequired": ["Ux", "Uy", "Uz", "p"],
+    "maximumFinalLinearResidual": 1e-10,
+    "maximumAbsoluteContinuitySumLocal": 1e-9,
+    "maximumCrossFlavorRelativeDifference": 1e-10,
+    "mandatoryFlavors": ["cpu-upgrade", "cpu-xl"],
+    "timeouts": {"cpu-upgrade": "30m", "cpu-xl": "30m"},
+    "oneSerialSolverPerJob": true,
+    "gpuAllowed": false,
+    "scientificPromotionRole": "none"
+  },
+  "telemetry": {
+    "intervalSeconds": 2,
+    "cgroupCurrentRequired": true,
+    "cgroupLimitRequired": true,
+    "cgroupPeakRequired": true,
+    "processRssAndHighWaterRequired": true,
+    "oomEventsRequired": true,
+    "anyOomEvent": "block"
+  },
+  "artifacts": {
+    "localQualificationDirectory": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-hf-infrastructure-qualification-r2",
+    "rawTrackedByGit": false,
+    "remoteRepository": "Anieyrudh/flowlab-fda-hf-qualification-20260720",
+    "remoteRepositoryVisibility": "private",
+    "uniqueJobIdPrefixesRequired": true,
+    "atomicThreeFileLaneCommitRequired": true,
+    "duplicateArchiveMembersAllowed": false,
+    "remoteOverwriteAllowed": false,
+    "localOverwriteAllowed": false,
+    "artifactArchiveSha256Required": true,
+    "localRecoveryManifestRehashRequired": true,
+    "compactAssessmentTrackedByGit": true
+  },
+  "futureConcurrencyDesign": {
+    "userAuthorizedMultipleIndependentCasesAt": "2026-07-20T06:19:56Z",
+    "solverWithinEachCase": "serial",
+    "phase1IndependentJobs": ["fine-stationarity-a", "fine-stationarity-b"],
+    "maximumConcurrentPhase1Jobs": 2,
+    "phase1MustPassBeforePhase2": true,
+    "automaticProgressionBetweenPhases": false,
+    "phase2IndependentJobs": ["coarse-nominal", "medium-nominal", "input-minus-5pct-medium", "input-plus-5pct-medium"],
+    "maximumConcurrentPhase2Jobs": 4,
+    "sharedMutableCaseDirectoryAllowed": false,
+    "sharedMutableEvidencePrefixAllowed": false,
+    "sixCaseLaunchRequiresLaterExplicitInstruction": true
+  },
+  "failClosed": {
+    "anyProbeFailure": "block",
+    "anyImageIdentityOrDigestFailure": "block",
+    "anyVolumeOrArtifactRecoveryFailure": "block",
+    "anyCoarseLaneFailure": "block",
+    "anyCrossFlavorMismatch": "block",
+    "missingIndependentReview": "block",
+    "postHocToleranceChangeAllowed": false,
+    "newHypothesisRequiresNewContractAndOutput": true
+  },
+  "authorization": {
+    "runArchitectureProbe": true,
+    "runRevisionPinnedVolumeProbe": true,
+    "buildAmd64Image": true,
+    "runCpuUpgradeCoarsePilot": true,
+    "runCpuXlCoarseComparison": true,
+    "assessQualification": true,
+    "runSixCaseCampaign": false,
+    "automaticPhaseProgression": false,
+    "scientificPromotion": false,
+    "desktopPromotion": false
+  },
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

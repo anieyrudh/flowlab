@@ -2,7 +2,7 @@
 
 Status: **v4 numerical/product gates accepted; FDA v2 completed and blocked; successor full campaign not authorized**
 
-## P0 — Independently review the velocity-verification design
+## P0 — Complete the HF infrastructure qualification
 
 The v2 campaign completed through the retained r3 fine-grid recovery, but its
 assessment is `validated-blocked`. Pressure has been formally demoted to a
@@ -16,21 +16,32 @@ corrected preparer in a new directory and passed every mesh and geometry gate.
 The observed domain-measure error sequence was approximately 2.5505%, 0.6413%,
 and 0.1606%, with exact 8x refinement and strict all-hex meshes. The successor
 velocity-verification design is now frozen and its offline validator passes all
-22 checks. No campaign has been prepared. Next:
+22 checks. A nonpromotional Hugging Face infrastructure contract has now been
+frozen. Its first tiny Job confirmed AMD64, then stopped before any solver with
+HTTP 403 because the connected token could not create the required private
+artifact dataset. The equivalent local AMD64 image and mesh-only coarse input
+bundle passed local checks. Independent review confirmed the stop and found
+positive-path gaps in r1. A hardened r2 qualification now supersedes it with a
+new output identity and exact policy, image/Job, terminal-residual,
+memory/OOM, atomic-upload, recovery, and review bindings. Next:
 
-1. independently review all six intended cases, 18 station functionals,
-   centreline requirements, uncertainty rules, convergence thresholds, and
-   phase stop/go conditions;
-2. verify the 7.15-hour baseline and 12.87-hour planning estimate against
-   available 16 GiB memory, 4 GiB swap, 20 GiB disk, and a 16-hour window;
-3. implement and hash a separate campaign runner and assessment path without
-   changing the frozen design thresholds;
-4. freeze an execution-authorizing contract only after the review, with a new
-   absent raw output directory and explicit user authorization;
-5. run phase 1 fine-grid stationarity/cold-repeat diagnostics first, and stop
+1. reconnect Hugging Face with private dataset and private Space create/write
+   permission plus Jobs access; rerun the probes under new unique Job IDs;
+2. publish the equivalent AMD64 image privately and capture both the exact
+   Space commit and commit-tagged registry digest;
+3. run the isolated serial coarse pilot on `cpu-upgrade` and `cpu-xl`, recover
+   and independently rehash every artifact, and compare the predeclared field
+   invariants within `1e-10`;
+4. independently review the qualification and all six intended cases, 18
+   station functionals, centreline requirements, uncertainty rules,
+   convergence thresholds, and phase stop/go conditions;
+5. freeze a separate execution-authorizing contract only if every
+   infrastructure gate and the review pass, with a new absent raw output
+   directory and explicit user authorization;
+6. run phase 1 fine-grid stationarity/cold-repeat diagnostics first, and stop
    unless every residual, QoI-drift, repeat, telemetry, and terminal-state gate
    passes;
-6. run phase 2 only after separate stop/go review, and freeze a later full-
+7. run phase 2 only after separate stop/go review, and freeze a later full-
    campaign contract only after the numerical evidence
    supports it.
 

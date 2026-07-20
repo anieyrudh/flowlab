@@ -1,0 +1,72 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-hf-infrastructure-attempt-audit.v1",
+  "auditedAt": "2026-07-20T06:37:19Z",
+  "status": "blocked-before-solver-artifact-authorization",
+  "contract": {
+    "path": "docs/validation/fda-nozzle-re500/HF_INFRASTRUCTURE_QUALIFICATION_CONTRACT.json",
+    "sha256": "29ff426bbb71a79f3a6b50187f5cd283194f48bfb7ddf35c663f1c81f6db4507"
+  },
+  "architectureProbe": {
+    "jobId": "6a5dbfbdd216bd6f3a202dfe",
+    "jobUrl": "https://huggingface.co/jobs/Anieyrudh/6a5dbfbdd216bd6f3a202dfe",
+    "flavor": "cpu-basic",
+    "reportedArchitecture": "amd64",
+    "runningSeconds": 3,
+    "status": "ERROR",
+    "exitCode": 1,
+    "failureClass": "artifact-repository-write-authorization",
+    "httpStatus": 403,
+    "solverInvoked": false,
+    "artifactWritten": false
+  },
+  "localAmd64Image": {
+    "tag": "flowlab/openfoam11-gmsh415-immutable:2026-07-20-amd64-hf-qual-v1",
+    "ociDigest": "sha256:c95a0e413cb06422c6e5b4c8810b87279131944b5dc2d1ddcf65d2fb0dfe93bb",
+    "architecture": "amd64",
+    "os": "linux",
+    "sizeBytes": 691735035,
+    "openFoamVersion": "OpenFOAM-11",
+    "gmshVersionRaw": "4.15.2-nox",
+    "gmshVersionNormalized": "4.15.2",
+    "baseImageDigest": "sha256:573afef69e3f91a634f7e4caadb6617616d9e713f6ce5656efd70fd0cfdca7b3",
+    "gmshArchiveSha256": "2f81d19efb0dd94426bdab010131da59b7dac1939a3073890dc32c86ecbaa8db",
+    "runnerSha256": "8ce992bc4011be4b5b41f8cb7560a5be4fe211dbe91d50cc875d0946a3b1004d",
+    "remoteSpaceCommit": null,
+    "remoteRegistryDigest": null,
+    "passesLocalImageChecks": true,
+    "passesRemoteImageQualification": false
+  },
+  "coarseInputBundle": {
+    "localPath": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-hf-infrastructure-qualification/qualification-input.tar.gz",
+    "archiveSha256": "caf7e5e8105cd10fce7cdffb5165900106251cd095f31c1b91cd3a07921899c9",
+    "inputRecordSha256": "b3b51beeae92f226e9ea7072019ee8ab804482b33d3fc612fe48e510aa2c0e56",
+    "expectedCells": 44256,
+    "localPreparationExitCodes": {
+      "blockMesh": 0,
+      "checkMesh": 0,
+      "writeCellCentres": 0
+    },
+    "solverInvoked": false,
+    "promotionAuthorized": false
+  },
+  "gates": {
+    "hfJobsReachable": true,
+    "hfArchitectureAmd64": true,
+    "durablePrivateArtifactWrite": false,
+    "revisionPinnedVolumeRead": false,
+    "localAmd64ImageBuilt": true,
+    "remoteImageCommitAndDigestPinned": false,
+    "coarseInputPrepared": true,
+    "cpuUpgradeCoarsePilot": false,
+    "cpuXlCoarsePilot": false,
+    "artifactRecoveryAndRehash": false,
+    "independentReview": false
+  },
+  "requiredRemediation": "Reconnect the Hugging Face integration with a token that can create and write private dataset and private Space repositories under Anieyrudh while retaining Jobs access, then start a new unique probe Job.",
+  "hfInfrastructureQualified": false,
+  "sixCaseExecutionContractMayBeFrozen": false,
+  "sixCaseExecutionAuthorized": false,
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

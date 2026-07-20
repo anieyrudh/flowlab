@@ -140,10 +140,27 @@ pointwise profiles remain mandatory nonpromotional diagnostics.
 
 The baseline solver estimate is 7.15 hours; the planning estimate is 12.87
 hours with a 16-hour reserved window, 16 GiB Docker memory, 4 GiB swap, 20 GiB
-free disk, and one concurrent case. This estimate is not execution
-authorization. The next allowed action is independent review and preparation
-of a separate execution-authorizing contract. No campaign directory has been
-created.
+free disk, and one concurrent local case. This estimate is not execution
+authorization.
+
+A prospective nonpromotional Hugging Face infrastructure qualification is now
+frozen. Its first tiny `cpu-basic` Job confirmed `amd64`, then failed after
+three running seconds with HTTP 403 because the connected token could not
+create the required private artifact dataset. No solver ran. The equivalent
+local AMD64 image passed OpenFOAM/Gmsh/architecture checks, and the 44,256-cell
+coarse input archive was prepared mesh-only. The fail-closed contract therefore
+blocked the volume probe, remote image publication, `cpu-upgrade` and `cpu-xl`
+pilots, and evidence recovery. HF is not qualified, and no six-case execution
+contract exists. Resume only with private dataset and private Space write
+permission, using new append-only Job IDs.
+
+Independent review confirmed that stop and found r1 positive-path hardening
+gaps. `HF_INFRASTRUCTURE_QUALIFICATION_R2_CONTRACT.json` supersedes r1 for any
+resume. It binds the complete frozen policy, source hashes, exact local OCI
+identity, Space commit and registry digest, Job metadata, revision-mounted
+probe, atomic three-file lane commits, recovered manifests, all four terminal
+residual fields, cgroup/process-tree memory, and OOM events. Its output path is
+new and absent. It still authorizes qualification only, never the six cases.
 
 ## Evidence paths
 
@@ -167,6 +184,11 @@ created.
 - Frozen velocity-verification design: `docs/validation/fda-nozzle-re500/V3_VELOCITY_VERIFICATION_DESIGN_CONTRACT.json`
 - Compute estimate: `docs/validation/fda-nozzle-re500/V3_VELOCITY_VERIFICATION_COMPUTE_ESTIMATE.md`
 - Offline design assessment: `docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-velocity-design-validation.json` and `.md`
+- Frozen HF infrastructure qualification: `docs/validation/fda-nozzle-re500/HF_INFRASTRUCTURE_QUALIFICATION_CONTRACT.json`
+- Blocked HF qualification attempt: `docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-infrastructure-qualification-attempt-r1.json` and `.md`
+- Independent r1 review: `docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-infrastructure-qualification-independent-review-r1.json` and `.md`
+- Superseding HF qualification contract: `docs/validation/fda-nozzle-re500/HF_INFRASTRUCTURE_QUALIFICATION_R2_CONTRACT.json`
+- Independent r2 pre-execution review: `docs/validation/fda-nozzle-re500/audits/2026-07-20-hf-infrastructure-qualification-r2-preexecution-review.json` and `.md`
 
 ## Authoritative sources
 
