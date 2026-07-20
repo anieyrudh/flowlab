@@ -128,6 +128,23 @@ execution, a full successor campaign, scientific promotion, and desktop
 promotion remain blocked. Any later GCI must be described as combined
 geometry-and-solution discretization uncertainty.
 
+That design is now frozen in
+`V3_VELOCITY_VERIFICATION_DESIGN_CONTRACT.json` and passes all 22 checks in the
+offline design validator. It declares six intended serial cases: two cold fine-
+grid stationarity/reproducibility lanes, nominal coarse and medium lanes, and
+medium-grid ±5% input lanes. Six profile stations each contribute three trial-
+level scalar velocity functionals, and every eligible centreline point is
+critical. Every critical scalar must have complete uncertainty, qualify, and
+pass `abs(E) <= U_val`; the historical 90% aggregate is not reused. Dense
+pointwise profiles remain mandatory nonpromotional diagnostics.
+
+The baseline solver estimate is 7.15 hours; the planning estimate is 12.87
+hours with a 16-hour reserved window, 16 GiB Docker memory, 4 GiB swap, 20 GiB
+free disk, and one concurrent case. This estimate is not execution
+authorization. The next allowed action is independent review and preparation
+of a separate execution-authorizing contract. No campaign directory has been
+created.
+
 ## Evidence paths
 
 - Frozen contract: `benchmarks/cases/fda-nozzle/campaigns/2026-07-17-re500-v1/campaign-contract.json`
@@ -147,6 +164,9 @@ geometry-and-solution discretization uncertainty.
 - Compact blocked mesh assessment: `docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.json` and `.md`
 - Frozen V3 mesh recovery contract: `docs/validation/fda-nozzle-re500/V3_MESH_PREFLIGHT_R2_CONTRACT.json`
 - Passing V3 mesh recovery assessment: `docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight-r2.json` and `.md`
+- Frozen velocity-verification design: `docs/validation/fda-nozzle-re500/V3_VELOCITY_VERIFICATION_DESIGN_CONTRACT.json`
+- Compute estimate: `docs/validation/fda-nozzle-re500/V3_VELOCITY_VERIFICATION_COMPUTE_ESTIMATE.md`
+- Offline design assessment: `docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-velocity-design-validation.json` and `.md`
 
 ## Authoritative sources
 

@@ -2,7 +2,7 @@
 
 Status: **v4 numerical/product gates accepted; FDA v2 completed and blocked; successor full campaign not authorized**
 
-## P0 — Design the velocity-focused numerical-verification campaign
+## P0 — Independently review the velocity-verification design
 
 The v2 campaign completed through the retained r3 fine-grid recovery, but its
 assessment is `validated-blocked`. Pressure has been formally demoted to a
@@ -14,21 +14,24 @@ the preparer omitted `system/controlDict`. Its retained evidence and compact
 assessment are immutable. The separately frozen r2 recovery exercised the
 corrected preparer in a new directory and passed every mesh and geometry gate.
 The observed domain-measure error sequence was approximately 2.5505%, 0.6413%,
-and 0.1606%, with exact 8x refinement and strict all-hex meshes. Next:
+and 0.1606%, with exact 8x refinement and strict all-hex meshes. The successor
+velocity-verification design is now frozen and its offline validator passes all
+22 checks. No campaign has been prepared. Next:
 
-1. prospectively define velocity-only critical quantities, station/region
-   functionals, correlation-aware error measures, and complete numerical-
-   uncertainty requirements without reusing the historical 90% aggregate;
-2. preserve the passing 44,256 / 354,048 / 2,832,384 family and label later GCI
-   as combined geometry-and-solution discretization uncertainty;
-3. freeze resource, convergence, observation-operator, and stop/go rules before
-   any solver execution;
-4. use a separate output directory and retain pressure/pressure-drop as
-   mandatory nonpromotional diagnostics;
-5. only after a new execution contract is reviewed, run the predeclared
-   stationary cloned-fine and
-   independent-solver discriminators;
-6. freeze a separate full-campaign contract only after the numerical evidence
+1. independently review all six intended cases, 18 station functionals,
+   centreline requirements, uncertainty rules, convergence thresholds, and
+   phase stop/go conditions;
+2. verify the 7.15-hour baseline and 12.87-hour planning estimate against
+   available 16 GiB memory, 4 GiB swap, 20 GiB disk, and a 16-hour window;
+3. implement and hash a separate campaign runner and assessment path without
+   changing the frozen design thresholds;
+4. freeze an execution-authorizing contract only after the review, with a new
+   absent raw output directory and explicit user authorization;
+5. run phase 1 fine-grid stationarity/cold-repeat diagnostics first, and stop
+   unless every residual, QoI-drift, repeat, telemetry, and terminal-state gate
+   passes;
+6. run phase 2 only after separate stop/go review, and freeze a later full-
+   campaign contract only after the numerical evidence
    supports it.
 
 The old 90% point-pass figure remains part of the immutable v1/v2 history. It
@@ -106,3 +109,6 @@ Mobile remains out of scope.
 - the r2 mesh-only infrastructure recovery passed all frozen gates with exact
   all-hex refinement and 0.1606% fine-grid geometry error; it authorizes only
   design of the next numerical-verification campaign.
+- the velocity-focused numerical-verification design passed its offline
+  validator with six intended cases and all execution/promotion flags false;
+  independent review and a separate execution contract are now required.

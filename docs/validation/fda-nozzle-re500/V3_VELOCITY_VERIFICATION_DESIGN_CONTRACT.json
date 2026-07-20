@@ -1,0 +1,324 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-v3-velocity-verification-design.v1",
+  "contractId": "fda-nozzle-re500-v3-velocity-verification-design-2026-07-20",
+  "frozenAt": "2026-07-20T05:54:53Z",
+  "status": "frozen-design-complete-execution-not-authorized",
+  "contextOfUse": {
+    "claim": "FlowLab's selected laminar OpenFOAM implementation demonstrates prospectively assessed axial-velocity-field agreement for the bounded FDA nozzle Re=500 configuration.",
+    "promotionEligibleQuantities": [
+      "axialVelocityProfiles",
+      "centrelineAxialVelocity"
+    ],
+    "prohibitedBroaderClaims": [
+      "general CFD validation",
+      "pressure validation",
+      "medical-device performance validation",
+      "arbitrary-geometry validation",
+      "production CFD readiness"
+    ]
+  },
+  "predecessors": {
+    "pressureDisposition": {
+      "path": "docs/validation/fda-nozzle-re500/PRESSURE_REFERENCE_DISPOSITION.json",
+      "sha256": "96c390c95583fcdbb15e8cc41a31cd520c4d86e33cdb463c9a53a23150f09734",
+      "status": "not-qualified-nonpromotional"
+    },
+    "meshPreflightAssessment": {
+      "path": "docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight-r2.json",
+      "sha256": "c5693f80e632726f0ea51a959e2b429a65e721ad07671324ea35b5e8dba1228a",
+      "status": "mesh-preflight-passed"
+    }
+  },
+  "sourceEvidence": [
+    {
+      "path": "docs/validation/fda-nozzle-re500/PRESSURE_REFERENCE_DISPOSITION.json",
+      "sha256": "96c390c95583fcdbb15e8cc41a31cd520c4d86e33cdb463c9a53a23150f09734"
+    },
+    {
+      "path": "docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight-r2.json",
+      "sha256": "c5693f80e632726f0ea51a959e2b429a65e721ad07671324ea35b5e8dba1228a"
+    },
+    {
+      "path": "server/flowlab/fda_nozzle_re500.py",
+      "sha256": "ed581be5aef02f6103740452dbcf5adc612cff7be9d356ec4414036fe14fc0eb"
+    },
+    {
+      "path": "server/flowlab/fda_nozzle_re500_v2_campaign.py",
+      "sha256": "d6080c4dd2fc1d143f686b81812475ed31198374b4ce8d490d2054750803cc09"
+    },
+    {
+      "path": "server/flowlab/fda_nozzle_re500_v3_velocity_design.py",
+      "sha256": "d5c558cc36786420092c1165ae08c2731e3cbffa74cdd0a6605f1d8f0a474b79"
+    }
+  ],
+  "computeEstimateDocument": {
+    "path": "docs/validation/fda-nozzle-re500/V3_VELOCITY_VERIFICATION_COMPUTE_ESTIMATE.md",
+    "sha256": "5037b6403ce71232b1503f8f3b5aa03c217a030051159beb9246ace4df92e442"
+  },
+  "pressurePolicy": {
+    "status": "mandatory-diagnostic-nonpromotional",
+    "reportedQuantities": [
+      "wallOffsetFreePressureDifferences",
+      "pressureDrop",
+      "centrelineOffsetFreePressureDifferences"
+    ],
+    "mayAuthorizePromotion": false,
+    "mayRescueVelocityPromotion": false,
+    "mayDefeatVelocityPromotion": false,
+    "postHocOffsetOrUncertaintyAllowanceAllowed": false
+  },
+  "acceptedMeshFamily": {
+    "sourceAssessmentSha256": "c5693f80e632726f0ea51a959e2b429a65e721ad07671324ea35b5e8dba1228a",
+    "cells": {
+      "coarse": 44256,
+      "medium": 354048,
+      "fine": 2832384
+    },
+    "circumferentialBoundarySegments": {
+      "coarse": 16,
+      "medium": 32,
+      "fine": 64
+    },
+    "linearRefinementRatio": 2.0,
+    "volumetricCellRatios": [
+      8.0,
+      8.0
+    ],
+    "geometryPreflightPassed": true,
+    "fineMaximumAbsoluteGeometryError": 0.0016056069643816118,
+    "laterUncertaintyLabel": "combined-geometry-and-solution-discretization"
+  },
+  "intendedCases": [
+    {
+      "label": "fine-stationarity-a",
+      "meshLevel": "fine",
+      "flowScale": 1.0,
+      "phase": "phase-1",
+      "role": "stationarity-primary-and-fine-gci-value"
+    },
+    {
+      "label": "fine-stationarity-b",
+      "meshLevel": "fine",
+      "flowScale": 1.0,
+      "phase": "phase-1",
+      "role": "independent-cold-repeat"
+    },
+    {
+      "label": "coarse-nominal",
+      "meshLevel": "coarse",
+      "flowScale": 1.0,
+      "phase": "phase-2",
+      "role": "coarse-gci-value"
+    },
+    {
+      "label": "medium-nominal",
+      "meshLevel": "medium",
+      "flowScale": 1.0,
+      "phase": "phase-2",
+      "role": "medium-gci-and-input-centre-value"
+    },
+    {
+      "label": "input-minus-5pct-medium",
+      "meshLevel": "medium",
+      "flowScale": 0.95,
+      "phase": "phase-2",
+      "role": "symmetric-input-uncertainty"
+    },
+    {
+      "label": "input-plus-5pct-medium",
+      "meshLevel": "medium",
+      "flowScale": 1.05,
+      "phase": "phase-2",
+      "role": "symmetric-input-uncertainty"
+    }
+  ],
+  "phaseControl": {
+    "phase1MustPassBeforePhase2": true,
+    "phase1StopConditions": [
+      "missing time-800 terminal state",
+      "critical-QoI drift above threshold",
+      "final linear residual above threshold",
+      "cold-repeat difference above threshold",
+      "OOM or incomplete resource telemetry"
+    ],
+    "phase2StopConditions": [
+      "any case incomplete",
+      "any mesh or boundary invariant differs from contract",
+      "any critical functional has unqualified three-grid convergence",
+      "any source or image hash drift"
+    ],
+    "automaticProgressionBetweenPhases": false
+  },
+  "solverDesign": {
+    "image": "flowlab/openfoam11-gmsh415-immutable:2026-07-14-arm64-v1",
+    "imageDigest": "sha256:6a6ac1898cb482ae16ff65cb538f458f9ff86941ac9f7e435088a3c54357ce36",
+    "architecture": "arm64",
+    "application": "foamRun",
+    "model": "steady incompressible laminar",
+    "densityKgM3": 1056.0,
+    "dynamicViscosityPaS": 0.0035,
+    "nominalFlowM3PerS": 5.20624e-06,
+    "boundaryConditions": {
+      "inletVelocity": "fixed-parabolic-discrete-flux-normalized",
+      "inletPressure": "fixedFluxPressure",
+      "outletVelocity": "zeroGradient",
+      "outletPressure": "fixed-zero-gauge",
+      "wallVelocity": "no-slip",
+      "wallPressure": "fixedFluxPressure"
+    },
+    "spatialScheme": {
+      "gradient": "Gauss linear",
+      "velocityDivergence": "bounded Gauss linearUpwind grad(U)",
+      "laplacian": "Gauss linear corrected",
+      "surfaceNormalGradient": "corrected"
+    },
+    "maximumIteration": 800,
+    "writeInterval": 50,
+    "retainedSnapshots": [
+      700,
+      750,
+      800
+    ],
+    "runTimeModifiable": false,
+    "serialOnly": true
+  },
+  "observationDesign": {
+    "operator": "source-backed PIV interrogation-window pooling with support checks and operator half-range uncertainty",
+    "axialProfileStationsM": [
+      -0.088,
+      -0.048,
+      -0.008,
+      0.008,
+      0.024,
+      0.08
+    ],
+    "criticalStationFunctionals": [
+      "chordMeanAxialVelocity",
+      "chordRmsAxialVelocity",
+      "peakAxialVelocity"
+    ],
+    "trialLevelScalarizationBeforeAggregation": true,
+    "stationFunctionalCount": 18,
+    "centrelineAxialVelocity": {
+      "role": "critical",
+      "rule": "every experimentally eligible centreline location must qualify and pass"
+    },
+    "densePointwiseProfiles": {
+      "promotionRole": "mandatory-diagnostic-nonpromotional",
+      "requiredDiagnostics": [
+        "normalizedRmseByExperimentalPeak",
+        "maximumStandardizedExceedance",
+        "longestContiguousExceedanceRun"
+      ],
+      "rationale": "Trial-level scalar functionals preserve within-profile correlation; dense points are not counted as independent votes."
+    }
+  },
+  "acceptance": {
+    "experimentalEligibility": "at least three official trials, finite mean, and finite two-sided 95-percent Student-t uncertainty",
+    "scalarFunctionalRule": "abs(comparisonError) <= validationUncertainty",
+    "everyCriticalFunctionalMustQualify": true,
+    "everyCriticalFunctionalMustPass": true,
+    "everyEligibleCentrelinePointMustQualify": true,
+    "everyEligibleCentrelinePointMustPass": true,
+    "historicalAggregatePassFractionGate": null,
+    "pointwisePassFractionMayAuthorize": false,
+    "attractiveAggregateMayRescueFailure": false,
+    "missingCriticalEvidenceAction": "block"
+  },
+  "uncertainty": {
+    "requiredComponents": [
+      "experimental95",
+      "input",
+      "iterative",
+      "combinedGeometryAndSolutionDiscretization",
+      "observationOperator"
+    ],
+    "combination": "root-sum-square",
+    "gciSafetyFactor": 1.25,
+    "linearRefinementRatio": 2.0,
+    "geometryAndSolutionDiscretizationSeparated": false,
+    "gciLabel": "combined-geometry-and-solution-discretization",
+    "qualifiedThreeGridSequence": "strict monotonic convergence with finite positive observed order",
+    "unqualifiedThreeGridAction": "block-and-design-fourth-grid-under-new-contract",
+    "inputUncertainty": "half absolute difference between plus/minus five-percent medium-grid functionals",
+    "iterativeUncertainty": "absolute fine-grid change between iterations 750 and 800",
+    "observationOperatorUncertainty": "half-range across prospectively fixed PIV pooling variants"
+  },
+  "iterativeConvergence": {
+    "snapshots": [
+      700,
+      750,
+      800
+    ],
+    "maximumCriticalQoiRelativeDrift750To800": 0.0025,
+    "relativeDriftScale": "max(abs(qoiAt800), 0.01 * nominalThroatBulkVelocity)",
+    "maximumFinalLinearResidual": {
+      "velocity": 1e-10,
+      "pressure": 1e-10
+    },
+    "pressureIterationCapIsAutomaticFailure": false,
+    "pressureCapPolicy": "report as performance risk; gate final residual, continuity, and critical-QoI drift instead",
+    "maximumAbsoluteContinuitySumLocal": 1e-09,
+    "coldFineRepeatRequired": true,
+    "maximumCriticalQoiRepeatRelativeDifference": 1e-10,
+    "repeatRelativeScale": "max(abs(qoiA), abs(qoiB), 0.01 * nominalThroatBulkVelocity)"
+  },
+  "computeEstimate": {
+    "basis": "retained-v2-serial-wall-time-scaled-linearly-by-cell-count",
+    "cellCountScale": 2.165590135055784,
+    "retainedV2Seconds": {
+      "coarse-nominal": 43.875743,
+      "medium-nominal": 515.044606,
+      "fine-stationarity-a": 5151.812454,
+      "fine-stationarity-b": 5151.812454,
+      "input-minus-5pct-medium": 503.364664,
+      "input-plus-5pct-medium": 521.957564
+    },
+    "estimatedCaseSeconds": {
+      "coarse-nominal": 95.01687620904286,
+      "medium-nominal": 1115.375517867293,
+      "fine-stationarity-a": 11156.71422803993,
+      "fine-stationarity-b": 11156.71422803993,
+      "input-minus-5pct-medium": 1090.0815506940692,
+      "input-plus-5pct-medium": 1130.346151516148
+    },
+    "baselineSolverHours": 7.1511801534351145,
+    "planningMultiplier": 1.8,
+    "plannedWallClockHours": 12.872124276183206,
+    "reservedRunWindowHours": 16.0,
+    "minimumDockerMemoryGiB": 16.0,
+    "minimumDockerSwapGiB": 4.0,
+    "minimumFreeDiskGiB": 20.0,
+    "maximumConcurrentSolverCases": 1,
+    "estimateIsAuthorization": false,
+    "uncertainty": "Planning estimate only; pressure-solver cost and I/O need not scale linearly with cells."
+  },
+  "outputPolicy": {
+    "prospectiveRawCampaign": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-velocity-verification",
+    "rawCampaignTrackedByGit": false,
+    "refuseNonemptyOutput": true,
+    "overwriteExistingEvidence": false,
+    "appendOnlyResourceTelemetryRequired": true,
+    "newHypothesisRequiresNewOutputDirectory": true
+  },
+  "reviewRequirementsBeforeAnyExecution": [
+    "independent review of every threshold, operator, case, and stop/go gate",
+    "new execution-authorizing contract with hashes of the final runner and assessment code",
+    "explicit user authorization to prepare and execute the campaign",
+    "verified native-arm64 image identity and minimum resource allocation",
+    "verified prospective output path is absent"
+  ],
+  "authorization": {
+    "designComplete": true,
+    "prepareCampaign": false,
+    "runSolver": false,
+    "runStationarityDiagnostic": false,
+    "runIndependentSolver": false,
+    "runFullSuccessorCampaign": false,
+    "scientificPromotion": false,
+    "desktopPromotion": false
+  },
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

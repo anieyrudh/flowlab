@@ -244,6 +244,31 @@ numerical-verification campaign. It does not authorize running a solver, a full
 successor campaign, or any scientific/desktop promotion. Later GCI must be
 labelled combined geometry-and-solution discretization uncertainty.
 
+## Velocity-verification design validation
+
+The design-only contract is
+`V3_VELOCITY_VERIFICATION_DESIGN_CONTRACT.json`. Validate it offline with:
+
+```bash
+PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m server.flowlab.fda_nozzle_re500_v3_velocity_design \
+  --contract docs/validation/fda-nozzle-re500/V3_VELOCITY_VERIFICATION_DESIGN_CONTRACT.json \
+  --output docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-velocity-design-validation.json \
+  --report docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-velocity-design-validation.md
+```
+
+The retained assessment is `design-valid-execution-blocked`: all 22 design
+checks pass, while every execution and promotion authorization remains false.
+The validator has no campaign-preparation, Docker, solver, or postprocessing
+surface and refuses to overwrite its outputs.
+
+The intended design has six serial cases and a 12.87-hour planning estimate,
+but no raw campaign directory has been prepared. Do not interpret the contract,
+estimate, or offline validation as permission to run it. Independent review,
+final runner/assessment hashes, a separate execution contract, explicit user
+authorization, verified resources, and an absent output path are all required
+before preparation.
+
 A stationary cloned-fine diagnostic, independent-solver run, or new full
 campaign requires a separate prospective contract and the applicable earlier
 stage in `V3_DIAGNOSTIC_CONTRACT.json` to pass. Never weaken the r3 gates or

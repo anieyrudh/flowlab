@@ -138,10 +138,17 @@ convergence, and approximately 0.1606% fine-grid volume/inlet/outlet/throat
 errors against the 1% limit. The compact assessment is
 `docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight-r2.json`.
 
-Only design of the next velocity-focused numerical-verification campaign is
-now authorized. Stationary-fine, independent-solver, full-solver, scientific
-promotion, and desktop work remain blocked pending separate prospective
-contracts and gates. The historical 90% point-pass threshold is retained for v1/v2
+The velocity-focused numerical-verification design is now frozen and passes
+its offline fail-closed validator. It uses trial-level station functionals and
+requires every critical scalar and eligible centreline point to qualify and
+pass; it does not reuse the historical 90% aggregate. Its six intended cases
+have a 12.87-hour planning estimate, but no campaign directory exists and every
+execution authorization remains false.
+
+The next work is independent design review and, only after that review, a
+separate execution-authorizing contract. Stationary-fine, independent-solver,
+full-solver, scientific promotion, and desktop work remain blocked. The
+historical 90% point-pass threshold is retained for v1/v2
 reproduction but is not represented as an FDA or ASME-prescribed universal
 figure. The desktop pointer remains unchanged until a later prospectively
 frozen campaign passes every gate.
