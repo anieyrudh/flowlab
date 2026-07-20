@@ -1,0 +1,82 @@
+{
+  "authorization": {
+    "desktopPromotion": false,
+    "mayPrepareAndRunOneRecovery": true,
+    "scientificPromotion": false
+  },
+  "completionContract": {
+    "assessmentRequiresAllOriginalGates": true,
+    "containerExitCode": 0,
+    "latestTimeAtLeast": 800,
+    "logMustContain": [
+      "Time = 800s",
+      "End"
+    ],
+    "postprocessOnlyAfterSolverCompletion": true
+  },
+  "executionContract": {
+    "allowedMutation": {
+      "after": "startFrom latestTime;",
+      "before": "startFrom startTime;",
+      "path": "system/controlDict"
+    },
+    "containerAutoRemove": false,
+    "containerMustBeNamed": true,
+    "endTime": 800,
+    "failedCampaignRemainsImmutable": true,
+    "newOutputDirectoryRequired": true,
+    "oneShot": true,
+    "serialExecutionRequired": true,
+    "solverConfigurationChangesAllowed": false,
+    "sourceCheckpoint": 750
+  },
+  "infrastructureContract": {
+    "configuredDockerMemoryMiB": 16384,
+    "configuredDockerSwapMiB": 4096,
+    "minimumDockerCpus": 16,
+    "minimumObservedDockerMemoryBytes": 16106127360,
+    "minimumObservedDockerSwapBytes": 4026531840,
+    "resourceTelemetryIntervalSeconds": 5,
+    "resourceTelemetryRequired": true,
+    "unrelatedHeavyDockerWorkloadsAllowed": false,
+    "virtualMachineManager": "apple-virtualization-framework",
+    "fileSharing": "virtiofs"
+  },
+  "priorRecoveryEvidence": {
+    "r1": {
+      "container": "flowlab-fda-v2-fine-recovery-20260720",
+      "exitCode": 133,
+      "failureClass": "container-path-preflight",
+      "reachedSolverTime": false
+    },
+    "r2": {
+      "container": "flowlab-fda-v2-fine-recovery-20260720-r2",
+      "exitCode": 137,
+      "failureClass": "docker-vm-oom",
+      "finishStatusSha256": "d8b2b9c041d11cb3400ddac16af5ed67ec566e39c234774543ec8a9ba16e7cf1",
+      "oomKilled": true,
+      "solverLogSha256": "f4245b541ba0a076ad20abc959e27fa6ddbc4d6c93bee4ac211f50ce690b2259"
+    }
+  },
+  "promotionAuthorized": false,
+  "rationale": "The first authorized recovery was exhausted by a path-launch failure and the corrected attempt was OOM-killed by the 7.9 GB Docker VM after reaching time 773. The user prospectively authorized one new serial attempt with increased Docker memory and swap, no competing heavy workload, the same pinned native-arm64 image, unchanged solver configuration, and append-only resource telemetry. The original campaign and both failed recovery directories remain immutable.",
+  "runtime": {
+    "image": "flowlab/openfoam11-gmsh415-immutable:2026-07-14-arm64-v1",
+    "imageDigest": "sha256:6a6ac1898cb482ae16ff65cb538f458f9ff86941ac9f7e435088a3c54357ce36",
+    "platform": "linux/arm64"
+  },
+  "schema": "flowlab.fda-nozzle-re500-v2-fine-recovery-contract.v2",
+  "sourceEvidence": {
+    "campaignContractSha256": "99e2e481fbfad65836b4ae311b72a2db4f7d575c40beb9689ae575aa824bb904",
+    "campaignId": "2026-07-19-re500-v2-full",
+    "campaignManifestSha256": "ece05513431bcd071f50cba4f54991bc4832bf8ab634a6a97a5b93b4ed9ca7c4",
+    "fineExecutionSha256": "a25468bf591029ac8e12a9fc5075e6b36b045828f69183b8ec6788c5e460f5e8",
+    "fineSnapshotSha256": "0545dc11b75372ba990fb3d53eba39a7b9d4f8835be3d3cc3a09cf40f3f09e05",
+    "finishStatusSha256": "3af0c80af9e83842451000d03e696df7061aca72014c5f5f262fe58792d5fe26",
+    "meshPreflightSha256": "a329d58b3b35bf444dbe80a8c73d999c565e4866ab8e19966f10332cd734ce4e",
+    "rescueLog": "logs/fine/foamRun.rescue-20260720T0152.log.tmp",
+    "rescueLogSha256": "ac9137f066aa1dc490c27ed9fc40cbac956cc57a5aa9219c6f9d0e70404c1926"
+  },
+  "status": "prospectively-authorized-r3-infrastructure-recovery",
+  "supersedesContractSha256": "9313f3a05202a1385980d218530331ca05272be29f2730083164b010d11642e3"
+}

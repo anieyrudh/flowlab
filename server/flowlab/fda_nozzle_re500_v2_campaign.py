@@ -17,6 +17,7 @@ from pathlib import Path
 import shutil
 import statistics
 import subprocess
+import threading
 import time
 from typing import Any, Callable, Iterable, Sequence
 
@@ -66,11 +67,11 @@ SCHEMA = "flowlab.fda-nozzle-re500-v2-full-campaign.v1"
 CASE_SCHEMA = "flowlab.fda-nozzle-re500-v2-full-case.v1"
 CAMPAIGN_ID = "2026-07-19-re500-v2-full"
 RECOVERY_SCHEMA = "flowlab.fda-nozzle-re500-v2-fine-recovery.v1"
-RECOVERY_CONTRACT_SCHEMA = "flowlab.fda-nozzle-re500-v2-fine-recovery-contract.v1"
+RECOVERY_CONTRACT_SCHEMA = "flowlab.fda-nozzle-re500-v2-fine-recovery-contract.v2"
 RECOVERY_START_TIME = "750"
 RECOVERY_END_TIME = "800"
 RECOVERY_CONTRACT_SHA256 = (
-    "9313f3a05202a1385980d218530331ca05272be29f2730083164b010d11642e3"
+    "f4cbac7c3bddd0352698329a0b4c6e1d133cad252c14f0fe6760f53e281fa5a2"
 )
 FROZEN_CONTRACT_SHA256 = (
     "99e2e481fbfad65836b4ae311b72a2db4f7d575c40beb9689ae575aa824bb904"
@@ -372,6 +373,129 @@ def _docker_image_id(image: str) -> str:
     return inspection.stdout.strip()
 
 
+def _parse_meminfo(text: str) -> dict[str, int]:
+    values: dict[str, int] = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] in {"MemTotal:", "SwapTotal:"}:
+            values[fields[0][:-1]] = int(fields[1]) * 1024
+    if set(values) != {"MemTotal", "SwapTotal"}:
+        raise ValueError("Docker VM memory probe did not return MemTotal and SwapTotal")
+    return values
+
+
+def _docker_vm_resources(image: str) -> dict[str, Any]:
+    info = subprocess.run(
+        ["docker", "info", "--format", "{{.NCPU}} {{.Architecture}}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+        text=True,
+    )
+    fields = info.stdout.strip().split()
+    if info.returncode != 0 or len(fields) != 2:
+        raise ValueError(f"unable to inspect Docker VM resources: {info.stdout.strip()}")
+    probe = subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "bash",
+            image,
+            "-lc",
+            "awk '/^(MemTotal|SwapTotal):/ { print }' /proc/meminfo",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+        text=True,
+    )
+    if probe.returncode != 0:
+        raise ValueError(f"unable to probe Docker VM memory: {probe.stdout.strip()}")
+    memory = _parse_meminfo(probe.stdout)
+    return {
+        "cpus": int(fields[0]),
+        "architecture": fields[1],
+        "memoryBytes": memory["MemTotal"],
+        "swapBytes": memory["SwapTotal"],
+    }
+
+
+def _validate_recovery_infrastructure(
+    contract: dict[str, Any], resources: dict[str, Any]
+) -> None:
+    required = contract["infrastructureContract"]
+    if resources["cpus"] < required["minimumDockerCpus"]:
+        raise ValueError("Docker VM CPU allocation is below the recovery contract")
+    if resources["memoryBytes"] < required["minimumObservedDockerMemoryBytes"]:
+        raise ValueError("Docker VM memory allocation is below the recovery contract")
+    if resources["swapBytes"] < required["minimumObservedDockerSwapBytes"]:
+        raise ValueError("Docker VM swap allocation is below the recovery contract")
+    if resources["architecture"] not in {"aarch64", "arm64"}:
+        raise ValueError("Docker VM is not using the frozen native-arm64 platform")
+
+
+def _capture_recovery_telemetry(
+    container_name: str,
+    path: Path,
+    stop: threading.Event,
+    interval_seconds: float,
+    errors: list[str],
+) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            while True:
+                state_probe = subprocess.run(
+                    ["docker", "inspect", container_name, "--format", "{{json .State}}"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                    text=True,
+                )
+                stats_probe = subprocess.run(
+                    [
+                        "docker",
+                        "stats",
+                        "--no-stream",
+                        "--format",
+                        "{{json .}}",
+                        container_name,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                    text=True,
+                )
+                state: dict[str, Any] = {}
+                stats: dict[str, Any] = {}
+                if state_probe.returncode == 0:
+                    state = json.loads(state_probe.stdout)
+                if stats_probe.returncode == 0 and stats_probe.stdout.strip():
+                    stats = json.loads(stats_probe.stdout)
+                row = {
+                    "recordedAt": _now(),
+                    "containerName": container_name,
+                    "state": state,
+                    "stats": stats,
+                    "exitCodes": {
+                        "dockerInspect": state_probe.returncode,
+                        "dockerStats": stats_probe.returncode,
+                    },
+                }
+                handle.write(
+                    json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n"
+                )
+                handle.flush()
+                if state and not state.get("Running"):
+                    break
+                if stop.wait(interval_seconds):
+                    break
+    except Exception as exc:
+        errors.append(f"{type(exc).__name__}: {exc}")
+
+
 def launch_fine_recovery(
     output: Path,
     container_name: str,
@@ -392,6 +516,8 @@ def launch_fine_recovery(
     image_id = _docker_image_id(image)
     if image_id != contract["runtime"]["imageDigest"]:
         raise ValueError("recovery image digest differs from the frozen contract")
+    docker_resources = _docker_vm_resources(image)
+    _validate_recovery_infrastructure(contract, docker_resources)
     current_snapshot = _snapshot_manifest(output / "cases" / "fine")
     if current_snapshot["snapshotSha256"] != preflight["recoverySnapshotSha256"]:
         raise ValueError("recovery case drifted after preflight")
@@ -457,6 +583,11 @@ def launch_fine_recovery(
         "containerAutoRemove": False,
         "image": image,
         "imageDigest": image_id,
+        "dockerResources": docker_resources,
+        "executionMode": "serial",
+        "resourceTelemetryIntervalSeconds": contract["infrastructureContract"][
+            "resourceTelemetryIntervalSeconds"
+        ],
         "sourceCheckpoint": RECOVERY_START_TIME,
         "targetEndTime": RECOVERY_END_TIME,
         "exitCodes": {"dockerCreate": created.returncode, "dockerStart": started.returncode},
@@ -505,13 +636,45 @@ def finalize_fine_recovery(
     contract = _validate_recovery_contract(output / "recovery-contract.json")
     if image != contract["runtime"]["image"]:
         raise ValueError("recovery finalize image differs from the frozen contract")
-    wait = subprocess.run(
-        ["docker", "wait", container_name],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-        text=True,
+    telemetry_path = output / "logs" / "fine" / "resource-telemetry.jsonl"
+    telemetry_stop = threading.Event()
+    telemetry_errors: list[str] = []
+    telemetry_thread = threading.Thread(
+        target=_capture_recovery_telemetry,
+        args=(
+            container_name,
+            telemetry_path,
+            telemetry_stop,
+            float(
+                contract["infrastructureContract"][
+                    "resourceTelemetryIntervalSeconds"
+                ]
+            ),
+            telemetry_errors,
+        ),
+        daemon=True,
+        name=f"{container_name}-resource-telemetry",
     )
+    telemetry_thread.start()
+    try:
+        wait = subprocess.run(
+            ["docker", "wait", container_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            text=True,
+        )
+    finally:
+        telemetry_stop.set()
+        telemetry_thread.join(timeout=15.0)
+    if telemetry_thread.is_alive():
+        raise RuntimeError("recovery resource telemetry did not stop cleanly")
+    if telemetry_errors:
+        raise RuntimeError(
+            "recovery resource telemetry failed: " + "; ".join(telemetry_errors)
+        )
+    if not telemetry_path.is_file() or telemetry_path.stat().st_size == 0:
+        raise RuntimeError("recovery resource telemetry is missing or empty")
     try:
         container_exit = int(wait.stdout.strip()) if wait.returncode == 0 else -1
     except ValueError:
@@ -554,6 +717,15 @@ def finalize_fine_recovery(
         "sourceCheckpoint": RECOVERY_START_TIME,
         "latestTime": latest,
         "solverLogSha256": _sha256(log),
+        "resourceTelemetry": {
+            "path": telemetry_path.relative_to(output).as_posix(),
+            "sha256": _sha256(telemetry_path),
+            "records": sum(
+                1
+                for line in telemetry_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ),
+        },
         "mesh": mesh_report["mesh"],
         "status": "solver-complete" if complete else "solver-failed",
         "promotionAuthorized": False,
@@ -569,6 +741,7 @@ def finalize_fine_recovery(
             "latestTime": latest,
             "solverLogSha256": execution["solverLogSha256"],
             "containerState": state,
+            "resourceTelemetry": execution["resourceTelemetry"],
         }
     )
     _write_json(output / "campaign-manifest.json", manifest)
@@ -1616,6 +1789,9 @@ def assess_campaign(output: Path) -> dict[str, Any]:
             "containerId": recovery_launch["containerId"],
             "containerAutoRemove": False,
             "containerState": fine_execution["containerState"],
+            "dockerResources": recovery_launch["dockerResources"],
+            "executionMode": recovery_launch["executionMode"],
+            "resourceTelemetry": fine_execution["resourceTelemetry"],
         }
         assessment["evidenceHashesSha256"]["recovery"] = {
             "contract": _sha256(output / "recovery-contract.json"),
@@ -1624,6 +1800,7 @@ def assess_campaign(output: Path) -> dict[str, Any]:
             "sourceSnapshot": recovery_preflight["sourceSnapshotSha256"],
             "recoverySnapshot": recovery_preflight["recoverySnapshotSha256"],
             "solverLog": fine_execution["solverLogSha256"],
+            "resourceTelemetry": fine_execution["resourceTelemetry"]["sha256"],
             "execution": _sha256(output / "results" / "fine" / "execution.json"),
         }
     _write_json(output / "assessment.json", assessment)

@@ -14,9 +14,11 @@ from server.flowlab.fda_nozzle_re500_v2_campaign import (
     FROZEN_CONTRACT_SHA256,
     LEVEL_CELLS,
     RECOVERY_CONTRACT_SHA256,
+    _parse_meminfo,
     _patch_recovery_control_dict,
     _recovery_completed,
     _snapshot_manifest,
+    _validate_recovery_infrastructure,
     _outlet_traction_audit,
     _pressure_validation,
     _with_operator_uncertainty,
@@ -89,9 +91,49 @@ def test_frozen_contract_hash_is_current() -> None:
 
 def test_recovery_contract_hash_is_current() -> None:
     contract = Path(
-        "docs/validation/fda-nozzle-re500/V2_FINE_RECOVERY_CONTRACT.json"
+        "docs/validation/fda-nozzle-re500/V2_FINE_RECOVERY_R3_CONTRACT.json"
     )
     assert hashlib.sha256(contract.read_bytes()).hexdigest() == RECOVERY_CONTRACT_SHA256
+
+
+def test_r3_recovery_contract_preserves_serial_numerics_and_requires_telemetry() -> None:
+    contract = json.loads(
+        Path(
+            "docs/validation/fda-nozzle-re500/V2_FINE_RECOVERY_R3_CONTRACT.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert contract["executionContract"]["serialExecutionRequired"] is True
+    assert contract["executionContract"]["solverConfigurationChangesAllowed"] is False
+    assert contract["infrastructureContract"]["configuredDockerMemoryMiB"] == 16384
+    assert contract["infrastructureContract"]["configuredDockerSwapMiB"] == 4096
+    assert contract["infrastructureContract"]["resourceTelemetryRequired"] is True
+    assert contract["promotionAuthorized"] is False
+
+
+def test_docker_resource_probe_is_fail_closed() -> None:
+    parsed = _parse_meminfo("MemTotal: 16000000 kB\nSwapTotal: 4000000 kB\n")
+    assert parsed == {
+        "MemTotal": 16_000_000 * 1024,
+        "SwapTotal": 4_000_000 * 1024,
+    }
+    contract = {
+        "infrastructureContract": {
+            "minimumDockerCpus": 16,
+            "minimumObservedDockerMemoryBytes": 16_000_000 * 1024,
+            "minimumObservedDockerSwapBytes": 4_000_000 * 1024,
+        }
+    }
+    resources = {
+        "cpus": 16,
+        "architecture": "aarch64",
+        "memoryBytes": 16_000_000 * 1024,
+        "swapBytes": 4_000_000 * 1024,
+    }
+    _validate_recovery_infrastructure(contract, resources)
+    with pytest.raises(ValueError, match="memory allocation"):
+        _validate_recovery_infrastructure(
+            contract, {**resources, "memoryBytes": resources["memoryBytes"] - 1}
+        )
 
 
 def test_recovery_snapshot_manifest_is_deterministic(tmp_path: Path) -> None:

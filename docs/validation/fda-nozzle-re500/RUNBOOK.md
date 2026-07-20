@@ -123,8 +123,19 @@ PYTHONPATH=. python3 -m server.flowlab.fda_nozzle_re500_v2_preflight compact \
 
 The original full-v2 fine solve in `2026-07-19-re500-v2-full` was interrupted
 after writing time 750. It did not reach time 800 and did not produce an
-assessment. Preserve that directory unchanged. The only authorized recovery is
-the one-shot continuation frozen in `V2_FINE_RECOVERY_CONTRACT.json`.
+assessment. Preserve that directory unchanged. The original one-shot contract
+in `V2_FINE_RECOVERY_CONTRACT.json` is exhausted: its first launch failed before
+solver time because of the space-bearing host path, and the corrected r2 launch
+was OOM-killed at time 773 by the 7.9 GB Docker VM. Preserve both failed
+recovery directories and retained containers unchanged.
+
+The user prospectively authorized one r3 infrastructure recovery in
+`V2_FINE_RECOVERY_R3_CONTRACT.json`. It retains the identical serial solver,
+pinned native-arm64 image, source checkpoint, end time, and scientific gates.
+Before launch it requires Docker Desktop to expose 16 CPUs, approximately 16 GB
+RAM, approximately 4 GB swap, and native arm64. It also requires append-only
+five-second resource telemetry. The infrastructure allocation and telemetry do
+not change or relax any numerical or scientific criterion.
 
 Materialize a separate recovery directory. Preparation verifies the exact
 failed-run records, rescue log, 23-file checkpoint snapshot, image digest, and
@@ -134,9 +145,9 @@ already completed lanes, then changes exactly one cloned line:
 
 ```bash
 export SOURCE="$PWD/benchmarks/cases/fda-nozzle/campaigns/2026-07-19-re500-v2-full"
-export RECOVERY="$PWD/benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v2-fine-recovery-from-750"
-export RECOVERY_CONTRACT="$PWD/docs/validation/fda-nozzle-re500/V2_FINE_RECOVERY_CONTRACT.json"
-export CONTAINER="flowlab-fda-v2-fine-recovery-20260720"
+export RECOVERY="$PWD/benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v2-fine-recovery-from-750-r3"
+export RECOVERY_CONTRACT="$PWD/docs/validation/fda-nozzle-re500/V2_FINE_RECOVERY_R3_CONTRACT.json"
+export CONTAINER="flowlab-fda-v2-fine-recovery-20260720-r3"
 
 PYTHONPATH=. python3 -m server.flowlab.fda_nozzle_re500_v2_campaign \
   prepare-fine-recovery --source "$SOURCE" --output "$RECOVERY" \
@@ -152,5 +163,7 @@ the retained container; do not create another solver container. Finalization
 requires container exit code 0, a written time-800 checkpoint, `Time = 800s`,
 and terminal `End` before it creates a successful fine execution record. Only
 then does it run the existing postprocessing and unchanged fail-closed
+assessment. Resource telemetry is retained at
+`logs/fine/resource-telemetry.jsonl` and hashed into the execution and final
 assessment. Recovery success is not scientific acceptance; every original gate
 still decides promotion.
