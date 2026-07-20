@@ -1,0 +1,106 @@
+{
+  "assessedAt": "2026-07-20T05:13:12.534718+00:00",
+  "assessmentSourceSha256": "06be36c7a9a815e3b04265d49b34c5707e976799cf4d97ae5752b238ff571369",
+  "authorization": {
+    "desktopPromotion": false,
+    "nextNumericalVerificationCampaignDesign": false,
+    "runFullSuccessorCampaign": false,
+    "runSolver": false,
+    "scientificPromotion": false
+  },
+  "campaignId": "2026-07-20-re500-v3-mesh-preflight",
+  "cellRatios": [],
+  "desktopPromotionAuthorized": false,
+  "evidenceSha256": {
+    "coarseBlockMeshDict": "e32f258e268a286f623641ecced96e99159d4809bcc3a6720bcb65962e48ce97",
+    "coarseBlockMeshLog": "a78a038564c74b5ce42ab9bde488a4e4a740c6108e214962d06876f86f5c7662",
+    "coarseCaseReport": "e141dd3aef2270cce4a69b343b5c3b70d27f2aeb85c9e0870a2ca579aa6521a2",
+    "contract": "8775ca7ce86ef22d8172bbec346adae21b3301dec20558d8ec6e9e66e20a1d34",
+    "fineBlockMeshDict": "150d9cda5800f4d1b3e7762f1676f9c847b4d5edd08a3fd1f666b4241d84a6e2",
+    "manifest": "56d595e719c7640890fa34109404ca7fc0784d6f7b7f048e53456a76798c7b2a",
+    "mediumBlockMeshDict": "2aba83641d6717ac6e47302bd0dfaeda99560676b5ddc2784a14d7fb7a922947",
+    "meshExecution": "6ffc87056489bf63037efabffbc1baeb0ecbf67c586051104e1a5a92b96a5dde",
+    "pressureDisposition": "96c390c95583fcdbb15e8cc41a31cd520c4d86e33cdb463c9a53a23150f09734",
+    "source": "06be36c7a9a815e3b04265d49b34c5707e976799cf4d97ae5752b238ff571369"
+  },
+  "failure": {
+    "classification": "infrastructure-preparation-failure",
+    "reason": "missing-required-controlDict",
+    "scientificGateEvaluated": false,
+    "stage": "coarse-blockMesh"
+  },
+  "fineGeometryWithinTolerance": {
+    "inletCrossSectionArea": false,
+    "outletCrossSectionArea": false,
+    "throatCrossSectionArea": false,
+    "totalDomainVolume": false
+  },
+  "gates": {
+    "allExpectedCellCountsExact": false,
+    "allFineGeometryErrorsWithinOnePercent": false,
+    "allGeometryQuantitiesConvergeMonotonically": false,
+    "allMeshCommandsComplete": false,
+    "allMeshesOpenFoamOk": false,
+    "allMeshesStrictHex": false,
+    "frozenContractIntegrity": true,
+    "onlyMeshCommandsInvoked": true,
+    "pressureDispositionResolvedNonpromotional": true,
+    "volumetricCellRatioEight": false
+  },
+  "geometryMonotonic": {
+    "inletCrossSectionArea": false,
+    "outletCrossSectionArea": false,
+    "throatCrossSectionArea": false,
+    "totalDomainVolume": false
+  },
+  "geometryTolerance": 0.01,
+  "geometryUncertaintyLabel": "combined-geometry-and-solution-discretization",
+  "levels": {
+    "coarse": {
+      "caseChecks": {
+        "commandsComplete": false,
+        "expectedCellCount": false,
+        "geometryMetricsComplete": false,
+        "meshOk": false,
+        "strictAllHex": false
+      },
+      "cells": null,
+      "circumferentialBoundarySegments": 16,
+      "geometry": {},
+      "hexahedra": null,
+      "maximumNonOrthogonalityDegrees": null,
+      "status": "failed"
+    },
+    "fine": {
+      "caseChecks": {},
+      "cells": null,
+      "circumferentialBoundarySegments": 64,
+      "geometry": {},
+      "hexahedra": null,
+      "maximumNonOrthogonalityDegrees": null,
+      "status": "not-run"
+    },
+    "medium": {
+      "caseChecks": {},
+      "cells": null,
+      "circumferentialBoundarySegments": 32,
+      "geometry": {},
+      "hexahedra": null,
+      "maximumNonOrthogonalityDegrees": null,
+      "status": "not-run"
+    }
+  },
+  "preparedSourceSha256": {
+    "baseFdaSource": "ed581be5aef02f6103740452dbcf5adc612cff7be9d356ec4414036fe14fc0eb",
+    "meshPreflightSource": "b477a60191fa7cc92e93998828871543d380751139aec36b306fe267405eb8cb",
+    "meshRendererSource": "ebb1305e5f3bbe73b4db99b1541685e097d6814b73ae861a661f44e040bff7e5",
+    "successorAuditSource": "3dfd44febf559268ebb675ed77d97aca023773e396d13e118455cb7d7d228649"
+  },
+  "pressureReferenceStatus": "not-qualified-nonpromotional",
+  "promotionAuthorized": false,
+  "schema": "flowlab.fda-nozzle-re500-v3-mesh-preflight.v1",
+  "scientificPromotionAuthorized": false,
+  "solverExecutionAuthorized": false,
+  "status": "mesh-preflight-blocked",
+  "successorContextOfUse": "Mesh-only numerical-verification preparation for prospectively assessed axial-velocity-field agreement in the bounded FDA nozzle Re=500 configuration. Pressure remains a mandatory reported diagnostic and is not promotion eligible."
+}

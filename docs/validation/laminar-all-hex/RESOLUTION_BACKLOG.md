@@ -1,30 +1,38 @@
 # Resolution backlog
 
-Status: **v4 numerical/product gates accepted; FDA v2 full campaign authorized, scientific promotion still blocked**
+Status: **v4 numerical/product gates accepted; FDA v2 completed and blocked; successor full campaign not authorized**
 
-## P0 — Execute the frozen FDA nozzle Re=500 v2 full campaign
+## P0 — Recover the mesh-only preflight in a new prospective directory
 
-The completed v1 evidence is under
-`benchmarks/cases/fda-nozzle/campaigns/2026-07-17-re500-v1`; the completed 2^3
-preflight and frozen next-campaign contract are under
-`benchmarks/cases/fda-nozzle/campaigns/2026-07-17-re500-v2-preflight`.
-The preflight selected short outlet, second-order scheme, and enhanced local
-resolution. Next:
+The v2 campaign completed through the retained r3 fine-grid recovery, but its
+assessment is `validated-blocked`. Pressure has been formally demoted to a
+mandatory nonpromotional diagnostic, narrowing the successor claim to bounded
+axial-velocity-field agreement. Do not rerun v2 or tune its gates.
 
-1. materialize the strict-all-hex coarse/medium/fine sequence exactly as frozen
-   in `v2-full-campaign-contract.json`;
-2. execute the three nominal grids plus the predeclared input-sensitivity and
-   iterative-uncertainty cases;
-3. apply the source-backed PIV-window operator and offset-free pressure
-   differences without fitted offsets;
-4. calculate pointwise GCI, experimental/input/iterative/grid/operator
-   uncertainty, comparison error, and ASME V&V 20 validation uncertainty;
-5. repeat flow, face-integration, force-object, traction, and negative gates;
-6. retain the UI block unless every frozen scientific and product gate passes.
+The first frozen 1% V3 mesh preflight failed before mesh construction because
+the preparer omitted `system/controlDict`. Its retained evidence and compact
+assessment are immutable. The source correction now emits a minimal mesh-only
+dictionary, but it has not been exercised. Next:
 
-Do not add the published 100-250 Pa pressure offset as a post-hoc allowance to
-v1. Its pressure-drop comparison passed, but wall-pressure profiles and axial
-pointwise coverage did not.
+1. freeze a new infrastructure-recovery contract with a new output path and
+   hashes for the corrected runner;
+2. rerun only `blockMesh` and `checkMesh -allTopology -allGeometry`, sequentially
+   with one worker in the pinned native-arm64 image;
+3. assess the unchanged 44,256 / 354,048 / 2,832,384 family against the frozen
+   monotonic and 1% fine-grid volume/inlet/outlet/throat gates;
+4. only if every mesh gate passes, design the next numerical-verification
+   campaign; later GCI must be labelled combined geometry-and-solution
+   discretization uncertainty;
+5. after those gates pass, run the predeclared stationary cloned-fine and
+   independent-solver discriminators;
+6. freeze a separate full-campaign contract only after the diagnostic evidence
+   supports it.
+
+The old 90% point-pass figure remains part of the immutable v1/v2 history. It
+was a conservative FlowLab aggregation policy, not an FDA or ASME universal
+acceptance value. A successor should use predeclared critical-QoI coverage and
+correlation-aware station/region metrics; any aggregate threshold needs
+independent calibration, not post-hoc tuning.
 
 ## P0 alternative — Obtain another independent dataset
 
@@ -83,3 +91,12 @@ Mobile remains out of scope.
   cases plus the prospective v1 observation reanalysis; it selected the short,
   second-order, enhanced contract and authorized the full v2 campaign, while
   correctly leaving scientific and desktop promotion blocked.
+- FDA nozzle Re=500 v2 completed through the r3 fine-grid recovery at time 800;
+  assessment remained correctly blocked at 246/315 axial, 13/15 centreline,
+  8/16 wall-adjacent pressure, and 316/347 mandatory GCI.
+- the read-only successor preflight reproduced the retained result and blocked
+  new full CFD because pressure covariance is rank-limited and a successor grid
+  family with bounded geometry discretization has not passed preflight.
+- pressure was formally demoted to nonpromotional and the claim narrowed to
+  axial velocity; the first 1% mesh-only attempt then stopped fail-closed on a
+  missing `controlDict` before any mesh or scientific gate was evaluated.

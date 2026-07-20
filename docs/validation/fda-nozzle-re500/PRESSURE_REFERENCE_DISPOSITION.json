@@ -1,0 +1,74 @@
+{
+  "schema": "flowlab.fda-nozzle-re500.pressure-reference-disposition.v1",
+  "decisionId": "fda-nozzle-re500-pressure-reference-2026-07-20",
+  "decidedAt": "2026-07-20T05:01:54Z",
+  "status": "not-qualified-nonpromotional",
+  "sourceCampaign": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v2-fine-recovery-from-750-r3",
+  "sourceEvidenceSha256": {
+    "assessment.json": "b5a16e0900aa998b970f81519364703d2502f9d5af87d43edfc4a07ead44238d",
+    "experiment/experimental-data.json": "d107e6d845f883156e630b73e4cd04ae6f319ac105231def33d863c58178d25c",
+    "pressure-validation.json": "cf2147aa356ad55cbe6998a258225dbfb0ef366c8d73a8a8e59224b692309b7e",
+    "successor-preflight-r3.json": "70e22a399f461177934352ef446244a17e994f110b8d2c896fac6436ed3ea084"
+  },
+  "qualificationAudit": {
+    "eligiblePressureDatasetCodes": [
+      243,
+      468,
+      763
+    ],
+    "pressureTraceCount": 3,
+    "adjacentDifferenceDimension": 16,
+    "centredTraceMatrixRank": 2,
+    "maximumPossibleSampleCovarianceRank": 2,
+    "requiredEvidenceNotAvailable": [
+      "trace-to-laboratory mapping",
+      "tap-specific calibration and bias model",
+      "full-rank tap covariance or enough independent traces to estimate it",
+      "as-built nozzle and pressure-tap metrology"
+    ]
+  },
+  "disposition": {
+    "wallPressure": "mandatory-reported-diagnostic-nonpromotional",
+    "pressureDrop": "mandatory-reported-diagnostic-nonpromotional",
+    "mayAuthorizePromotion": false,
+    "mayRescuePromotion": false,
+    "mayDefeatVelocityPromotion": false,
+    "postHocOffsetOrUncertaintyAllowanceAllowed": false
+  },
+  "successorContextOfUse": {
+    "claim": "FlowLab's selected laminar OpenFOAM implementation demonstrates prospectively assessed axial-velocity-field agreement for the bounded FDA nozzle Re=500 configuration.",
+    "promotionEligibleQuantities": [
+      "axialVelocityProfiles",
+      "centrelineAxialVelocity"
+    ],
+    "mandatoryNonpromotionalDiagnostics": [
+      "wallOffsetFreePressureDifferences",
+      "pressureDrop",
+      "centrelineOffsetFreePressureDifferences",
+      "radialVelocityProfiles",
+      "wallShearLegacy"
+    ],
+    "prohibitedBroaderClaims": [
+      "general CFD validation",
+      "pressure validation",
+      "medical-device performance validation",
+      "arbitrary-geometry validation",
+      "production CFD readiness"
+    ]
+  },
+  "futureRequalification": {
+    "allowed": true,
+    "requiresNewProspectiveContract": true,
+    "requiresSeparateOutputDirectory": true,
+    "requiredEvidence": [
+      "trace-to-laboratory mapping",
+      "tap-specific calibration and bias model",
+      "full-rank tap covariance or enough independent traces to estimate it",
+      "as-built nozzle and pressure-tap metrology"
+    ],
+    "retainedR3EvidenceMayBeEdited": false
+  },
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

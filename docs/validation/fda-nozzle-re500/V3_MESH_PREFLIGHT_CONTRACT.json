@@ -1,0 +1,101 @@
+{
+  "schema": "flowlab.fda-nozzle-re500-v3-mesh-preflight-contract.v1",
+  "contractId": "fda-nozzle-re500-v3-mesh-preflight-2026-07-20",
+  "frozenAt": "2026-07-20T05:01:54Z",
+  "status": "frozen-authorized-mesh-only",
+  "supersedes": {
+    "contract": "docs/validation/fda-nozzle-re500/V3_DIAGNOSTIC_CONTRACT.json",
+    "sha256": "8c4cd73ba60340e413edaec480ac1e0ccf6bb628aab747797c4418bdd6bd089a",
+    "scope": "Pressure-reference disposition and successor mesh-preflight authorization only; retained audits and r3 outcomes are unchanged."
+  },
+  "pressureDisposition": {
+    "path": "docs/validation/fda-nozzle-re500/PRESSURE_REFERENCE_DISPOSITION.json",
+    "sha256": "96c390c95583fcdbb15e8cc41a31cd520c4d86e33cdb463c9a53a23150f09734",
+    "status": "not-qualified-nonpromotional"
+  },
+  "contextOfUse": "Mesh-only numerical-verification preparation for prospectively assessed axial-velocity-field agreement in the bounded FDA nozzle Re=500 configuration. Pressure remains a mandatory reported diagnostic and is not promotion eligible.",
+  "candidateFamily": {
+    "geometry": "The unchanged analytic FDA nozzle definition rendered by the existing four-quadrant all-hex O-grid topology.",
+    "linearRefinementRatio": 2,
+    "volumetricCellRatio": 8,
+    "levels": {
+      "coarse": {
+        "expectedCells": 44256,
+        "circumferentialBoundarySegments": 16,
+        "cellScale": 1
+      },
+      "medium": {
+        "expectedCells": 354048,
+        "circumferentialBoundarySegments": 32,
+        "cellScale": 2
+      },
+      "fine": {
+        "expectedCells": 2832384,
+        "circumferentialBoundarySegments": 64,
+        "cellScale": 4
+      }
+    },
+    "expectedChordGeometryErrors": {
+      "coarse": -0.025504641595567312,
+      "medium": -0.006413148855794248,
+      "fine": -0.0016056069643816118
+    }
+  },
+  "geometryAcceptance": {
+    "fineMaximumAbsoluteRelativeError": 0.01,
+    "quantities": [
+      "totalDomainVolume",
+      "inletCrossSectionArea",
+      "outletCrossSectionArea",
+      "throatCrossSectionArea"
+    ],
+    "everyQuantityMustConvergeMonotonically": true,
+    "geometryAndSolutionDiscretizationSeparated": false,
+    "laterNumericalUncertaintyLabel": "combined-geometry-and-solution-discretization",
+    "rationale": "A one-percent fine-grid geometry bound is one fifth of the retained plus/minus five-percent input perturbation. It is prospectively declared for the new family and does not reassess or tune the retained v2 result."
+  },
+  "meshAcceptance": {
+    "strictAllHex": true,
+    "checkMeshAllTopologyAndGeometry": true,
+    "exactExpectedCellCounts": true,
+    "exactLinearRefinementRatio": 2,
+    "exactVolumetricCellRatio": 8,
+    "openFoamMeshOkRequired": true
+  },
+  "execution": {
+    "image": "flowlab/openfoam11-gmsh415-immutable:2026-07-14-arm64-v1",
+    "imageDigest": "sha256:6a6ac1898cb482ae16ff65cb538f458f9ff86941ac9f7e435088a3c54357ce36",
+    "architecture": "arm64",
+    "maximumMeshWorkers": 1,
+    "allowedCommands": [
+      "blockMesh",
+      "checkMesh -allTopology -allGeometry"
+    ],
+    "prohibitedCommands": [
+      "foamRun",
+      "postprocessing",
+      "scientific campaign assessment"
+    ],
+    "refuseNonemptyOutput": true,
+    "overwriteExistingEvidence": false
+  },
+  "outputPolicy": {
+    "rawCampaign": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-mesh-preflight",
+    "rawCampaignTrackedByGit": false,
+    "compactAssessment": "docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.json",
+    "compactReport": "docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.md",
+    "newHypothesisRequiresNewOutputDirectory": true
+  },
+  "authorization": {
+    "prepareMeshCases": true,
+    "runMeshOnlyCommands": true,
+    "assessMeshPreflight": true,
+    "runSolver": false,
+    "runFullSuccessorCampaign": false,
+    "scientificPromotion": false,
+    "desktopPromotion": false
+  },
+  "scientificPromotionAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}

@@ -1,0 +1,226 @@
+{
+  "contractId": "fda-nozzle-re500-successor-diagnostic-2026-07-20",
+  "evidenceSha256": {
+    "assessment": "b5a16e0900aa998b970f81519364703d2502f9d5af87d43edfc4a07ead44238d",
+    "coarseCheckMesh": "cf9e177a2cf950c88baaf5efc1f6f8f0e5ebc3fa633645f4823523135a6d9586",
+    "diagnosticContract": "f9200d8e911837fda4aaac7fe1703b370787e2187ee599e7f715aa9fa3e79eb9",
+    "experiment": "d107e6d845f883156e630b73e4cd04ae6f319ac105231def33d863c58178d25c",
+    "fineCheckMesh": "b6e342a3a88e0f3aff6e32842a574025b174f565c9c4c62564124690a4cc6e69",
+    "mediumCheckMesh": "f2a795b377145953787b6bf9e049373c0368591af855367a7d4b49dfa508651f",
+    "pressureValidation": "cf2147aa356ad55cbe6998a258225dbfb0ef366c8d73a8a8e59224b692309b7e",
+    "spatialValidation": "0eafe5a5999eb4f4c3d617d1c487f78142271222702dcdff998a951e4e9a9857"
+  },
+  "gates": {
+    "desktopPromotionAuthorized": false,
+    "fullSuccessorCampaignAuthorized": false,
+    "geometryInvariantGridFamily": false,
+    "referencePressurePromotionReady": false,
+    "retainedCampaignCompletedFailClosed": true
+  },
+  "gridFamilyAudit": {
+    "cellCountRatios": [
+      8.0,
+      8.0
+    ],
+    "domainVolumeRangeM3": 2.0325325258206815e-06,
+    "domainVolumeRelativeRange": 0.09387255364632453,
+    "exactThreeDimensionalCellRefinement": true,
+    "finding": "Cell count refines by 8x, but domain volume changes across the grid family; the present GCI therefore includes a geometry-representation effect and cannot isolate discretization uncertainty.",
+    "geometryInvariantGridFamily": false,
+    "meshes": {
+      "coarse": {
+        "cells": 20436,
+        "checkMeshPassed": true,
+        "hexahedra": 20436,
+        "inletFaces": 12,
+        "maximumNonOrthogonalityDegrees": 7.529458502389185,
+        "strictAllHex": true,
+        "totalVolumeM3": 1.9619510024108e-05
+      },
+      "fine": {
+        "cells": 1307904,
+        "checkMeshPassed": true,
+        "hexahedra": 1307904,
+        "inletFaces": 192,
+        "maximumNonOrthogonalityDegrees": 23.37988130764306,
+        "strictAllHex": true,
+        "totalVolumeM3": 2.165204254992868e-05
+      },
+      "medium": {
+        "cells": 163488,
+        "checkMeshPassed": true,
+        "hexahedra": 163488,
+        "inletFaces": 48,
+        "maximumNonOrthogonalityDegrees": 10.89949068631154,
+        "strictAllHex": true,
+        "totalVolumeM3": 2.123600462363808e-05
+      }
+    }
+  },
+  "hypotheses": [
+    {
+      "evidence": "Only three eligible pressure traces support sixteen adjacent differences, so centred sample covariance rank is at most two; tap bias and as-built metrology are absent.",
+      "id": "H1-reference-pressure-limited",
+      "likelihood": "high for the pressure gate; low explanatory power for velocity",
+      "nextDiscriminator": "Obtain laboratory mapping, calibration/bias records, tap covariance, and as-built geometry; otherwise keep pressure nonpromotional.",
+      "verifiable": true
+    },
+    {
+      "evidence": "checkMesh domain volume changes materially across the 8x cell-count sequence despite identical bounding boxes.",
+      "id": "H2-grid-family-changes-geometry",
+      "likelihood": "high for unresolved GCI; moderate for validation discrepancies",
+      "nextDiscriminator": "Generate a geometry-invariant three- or four-grid family and repeat numerical verification before experimental comparison.",
+      "verifiable": true
+    },
+    {
+      "evidence": "Downstream profile failures cluster while normalized profile RMSE remains small; observation-window and outlet-length studies did not remove them.",
+      "id": "H3-model-boundary-or-as-built-mismatch",
+      "likelihood": "moderate for downstream velocity and pressure shape",
+      "nextDiscriminator": "After H1 and H2, predeclare independent-solver and as-built/inlet/pressure-tap sensitivity studies in separate output directories.",
+      "verifiable": true
+    },
+    {
+      "evidence": "The fine solve capped 62 of 100 pressure solves, but retained iterative uncertainty is small relative to validation uncertainty.",
+      "id": "H4-fine-iterative-stall",
+      "likelihood": "low as the primary scientific cause; high as a performance problem",
+      "nextDiscriminator": "Use a stationary cloned-fine diagnostic with predeclared QoI-drift and linear-residual thresholds; do not rerun the campaign from time zero.",
+      "verifiable": true
+    }
+  ],
+  "nextAuthorizedWork": [
+    "Run the read-only successor preflight against retained r3 evidence.",
+    "Acquire or document the missing pressure-reference provenance; otherwise reclassify pressure as nonpromotional.",
+    "Design and mesh-preflight a geometry-invariant grid family in a new output directory.",
+    "Do not launch a full CFD campaign until both preflight blockers are cleared."
+  ],
+  "promotionAuthorized": false,
+  "referenceAudit": {
+    "adjacentPressureDimension": 16,
+    "archiveSha256": "c33d8d604c072edd0298890274e9b8d625bb39281e2b691c51dac639aaf95d58",
+    "availableDatasetCodes": [
+      243,
+      297,
+      468,
+      763,
+      999
+    ],
+    "centredTraceMatrixRank": 2,
+    "deletedPressureDatasetCodes": [
+      297
+    ],
+    "eligiblePressureCodes": [
+      243,
+      468,
+      763
+    ],
+    "exactZeroAdjacentTrialValues": 12,
+    "finding": "Three eligible pressure traces cannot identify a full 16-dimensional adjacent-tap covariance; the reference remains diagnostic, not promotion-grade.",
+    "maximumPossibleSampleCovarianceRank": 2,
+    "pressureReferencePromotionReady": false,
+    "pressureTraceCount": 3,
+    "publishedExcludedPressureDatasetCodes": [
+      999
+    ],
+    "repositoryCommit": "76cdd3423845a398fc75f8121be4130caca4de90",
+    "requiredReferenceArtifactsNotPresent": [
+      "trace-to-laboratory mapping",
+      "tap-specific calibration and bias model",
+      "full-rank tap covariance or enough independent traces to estimate it",
+      "as-built nozzle and pressure-tap metrology"
+    ]
+  },
+  "retainedValidationAudit": {
+    "axialVelocityProfiles": {
+      "eligible": 315,
+      "gciQualified": 291,
+      "gciQualifiedFraction": 0.9238095238095239,
+      "qualifiedOnlyPassFraction": 0.845360824742268,
+      "rawPassFraction": 0.780952380952381,
+      "vv20Passed": 246
+    },
+    "centrelineAxialVelocity": {
+      "eligible": 15,
+      "gciQualified": 13,
+      "gciQualifiedFraction": 0.8666666666666667,
+      "qualifiedOnlyPassFraction": 1.0,
+      "rawPassFraction": 0.8666666666666667,
+      "vv20Passed": 13
+    },
+    "failedGates": [
+      "axialVelocityValidation",
+      "pressureValidation",
+      "threeGridGciResolved"
+    ],
+    "fineSolver": {
+      "cappedPressureSolveCount": 62,
+      "cappedPressureSolveFraction": 0.62,
+      "executionTimeSeconds": 5151.812454,
+      "finalIterationMeetsConfiguredLinearTolerance": false,
+      "finalIterationPressureSolves": [
+        {
+          "finalResidual": 1.338049641853877e-12,
+          "initialResidual": 0.01733431480575568,
+          "iterations": 1000,
+          "time": 800
+        },
+        {
+          "finalResidual": 1.106423229998004e-12,
+          "initialResidual": 5.495846332685737e-05,
+          "iterations": 1000,
+          "time": 800
+        }
+      ],
+      "maximumCappedFinalResidual": 1.338049641853877e-12,
+      "pressureSolveCap": 1000,
+      "pressureSolveCount": 100
+    },
+    "iterativeHealth": {
+      "gateBehavior": "reported separately and included in U_val; it cannot be hidden or omitted, but no post-hoc stationarity threshold is introduced",
+      "hardThresholdProspectivelyDeclared": false,
+      "maximumAbsoluteIterativeUncertainty": 0.001349245630874206,
+      "maximumFractionOfValidationUncertainty": 0.21278771137649194
+    },
+    "mandatoryGci": {
+      "eligible": 347,
+      "qualified": 316
+    },
+    "ninetyPercentInterpretation": "FlowLab campaign policy retained as a historical diagnostic. It is not an FDA or ASME-prescribed universal acceptance figure and is not carried forward as a successor promotion gate without calibration.",
+    "retainedPromotionAuthorized": false,
+    "retainedStatus": "validated-blocked",
+    "stationsBelowHistoricalNinetyPercent": [
+      {
+        "normalizedRmseByExperimentalPeak": 0.07458211645298266,
+        "rawPassFraction": 0.7222222222222222,
+        "stationM": -0.048
+      },
+      {
+        "normalizedRmseByExperimentalPeak": 0.010673329831751574,
+        "rawPassFraction": 0.6376811594202898,
+        "stationM": 0.008
+      },
+      {
+        "normalizedRmseByExperimentalPeak": 0.021363462815882688,
+        "rawPassFraction": 0.7846153846153846,
+        "stationM": 0.024
+      },
+      {
+        "normalizedRmseByExperimentalPeak": 0.051151877001641734,
+        "rawPassFraction": 0.6721311475409836,
+        "stationM": 0.08
+      }
+    ],
+    "wallAdjacentPressure": {
+      "eligible": 16,
+      "gciQualified": 12,
+      "gciQualifiedFraction": 0.75,
+      "qualifiedOnlyPassFraction": 0.6666666666666666,
+      "rawPassFraction": 0.5,
+      "vv20Passed": 8
+    }
+  },
+  "schema": "flowlab.fda-nozzle-re500.successor-preflight.v1",
+  "scope": "Characterize FlowLab's selected laminar OpenFOAM implementation for predeclared FDA nozzle Re=500 velocity and offset-free pressure quantities. This is not validation of general CFD, arbitrary geometry, medical-device performance, turbulence, or external product readiness.",
+  "sourceCampaign": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v2-fine-recovery-from-750-r3",
+  "sourceCampaignImmutable": true,
+  "status": "blocked-before-new-cfd"
+}

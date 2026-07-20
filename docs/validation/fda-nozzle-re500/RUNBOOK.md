@@ -105,12 +105,10 @@ eight numerical gates and all four matched outlet checks, and wrote a
 are retained as iterative-risk evidence: every pressure solve reached its
 1,000-iteration cap and each run took roughly 25,500 seconds.
 
-The next authorized execution is the three-grid v2 campaign defined by
-`v2-full-campaign-contract.json`. It must retain the exact inlet velocity,
-fixed outlet pressure, strict-all-hex topology, source-backed PIV averaging,
-offset-free pressure differences, all uncertainty terms, direct integration,
-force reconciliation, and every existing promotion gate. Preflight success is
-not scientific validation and must not unlock the desktop UI.
+That preflight historically authorized the three-grid v2 campaign defined by
+`v2-full-campaign-contract.json`. The campaign has since completed through the
+r3 fine-grid recovery described below and was scientifically blocked. The old
+authorization is exhausted: do not use it to rerun v2 or unlock the desktop UI.
 
 After the assessment and report exist, compact only reproducible raw fields:
 
@@ -167,3 +165,73 @@ assessment. Resource telemetry is retained at
 `logs/fine/resource-telemetry.jsonl` and hashed into the execution and final
 assessment. Recovery success is not scientific acceptance; every original gate
 still decides promotion.
+
+The retained r3 solve completed at time 800 with terminal `End`, but the frozen
+assessment returned exit code 3 and status `validated-blocked`. Preserve the
+directory unchanged. The failed gates are axial velocity, pressure validation,
+and complete three-grid GCI.
+
+## Prospective successor preflight
+
+Before spending compute on another full campaign, reproduce the read-only
+reference and grid-family audit. It hashes every input, refuses to overwrite an
+existing output, and never writes into either retained campaign:
+
+```bash
+export R3="$PWD/benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v2-fine-recovery-from-750-r3"
+export V2_SOURCE="$PWD/benchmarks/cases/fda-nozzle/campaigns/2026-07-19-re500-v2-full"
+export V3_CONTRACT="$PWD/docs/validation/fda-nozzle-re500/V3_DIAGNOSTIC_CONTRACT.json"
+
+PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m server.flowlab.fda_nozzle_re500_successor \
+  --campaign "$R3" \
+  --fine-check-mesh "$V2_SOURCE/logs/fine/checkMesh.log" \
+  --contract "$V3_CONTRACT" \
+  --output /path/to/new/successor-preflight.json
+```
+
+Exit code 3 is the expected fail-closed result while either blocker remains:
+
+- pressure-reference provenance/covariance is insufficient for promotion; or
+- geometry discretization has not been prospectively bounded or separated from
+  solution discretization in a successor grid-family preflight.
+
+Pressure-reference qualification is now resolved prospectively by
+`PRESSURE_REFERENCE_DISPOSITION.json`: pressure is a mandatory diagnostic but
+is nonpromotional. The successor context of use is axial-velocity-field
+agreement for the bounded FDA Re=500 configuration.
+
+The first mesh-only attempt was frozen by `V3_MESH_PREFLIGHT_CONTRACT.json` and
+used these three commands:
+
+```bash
+PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m server.flowlab.fda_nozzle_re500_v3_mesh_preflight prepare \
+  --output benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-mesh-preflight \
+  --contract docs/validation/fda-nozzle-re500/V3_MESH_PREFLIGHT_CONTRACT.json \
+  --pressure-disposition docs/validation/fda-nozzle-re500/PRESSURE_REFERENCE_DISPOSITION.json
+
+PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m server.flowlab.fda_nozzle_re500_v3_mesh_preflight mesh-all \
+  --output benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-mesh-preflight \
+  --max-workers 1
+
+PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m server.flowlab.fda_nozzle_re500_v3_mesh_preflight assess \
+  --output benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v3-mesh-preflight \
+  --compact-output docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.json \
+  --compact-report docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.md
+```
+
+These commands are a historical record, not rerun instructions. The attempt
+returned exit 3 at coarse `blockMesh` because the prepared case lacked the
+required `system/controlDict`. No mesh was constructed, medium/fine were not
+started, no solver command was invoked, and the compact assessment records an
+infrastructure-preparation failure. Preserve that raw directory. The runner now
+generates a minimal mesh-only `controlDict`, but exercising the correction
+requires a new prospective contract and new output path.
+
+A stationary
+cloned-fine diagnostic, independent-solver run, or new full campaign requires
+the applicable earlier stage in `V3_DIAGNOSTIC_CONTRACT.json` to pass. Never
+weaken the r3 gates or rerun from time zero to make the retained outcome pass.

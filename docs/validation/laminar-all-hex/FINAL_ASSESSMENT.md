@@ -1,6 +1,6 @@
 # Final assessment
 
-Status: **numerically accepted; FDA empirical campaign completed but not accepted; desktop promotion blocked**
+Status: **numerically accepted; FDA v2 empirical campaign completed but not accepted; desktop promotion blocked**
 
 Campaign `laminar-all-hex-v4` completed all 78 primary scientific cells and all
 conditional numerical/product follow-ups. The authoritative result is
@@ -72,7 +72,7 @@ accepted, while the actual v4 report remains blocked.
 
 ## External validation result
 
-The FDA sudden-expansion nozzle Re=500 campaign is the first completed
+The FDA sudden-expansion nozzle Re=500 v1 campaign was the first completed
 independent experimental attempt. It used pinned official data, strict all-hex
 grids of 6,720/53,760/430,080 cells, fixed inlet velocity, fixed outlet
 pressure, direct face integration, and explicit experimental/input/iterative/
@@ -89,9 +89,28 @@ reconciliation, but promotion did not:
 
 The authoritative assessment is
 `benchmarks/cases/fda-nozzle/campaigns/2026-07-17-re500-v1/assessment.json`.
-The older Akbari rectangular-microchannel route remains an alternative, but its
-repeat-level uncertainty packet is still unavailable and its geometry does not
-match the current symmetry model.
+
+The prospectively defined v2 campaign then added the PIV observation operator,
+offset-free pressure differences, second-order spatial scheme, enhanced local
+resolution, and an outlet-length preflight. Its r3 recovery completed the fine
+solve at time 800, but the unchanged assessment also blocked promotion:
+
+- axial-profile V&V 20 coverage: 246/315 eligible points;
+- centreline axial velocity: 13/15;
+- wall-adjacent pressure: 8/16;
+- mandatory GCI qualification: 316/347;
+- failed gates: axial velocity, pressure validation, and complete three-grid
+  GCI.
+
+The authoritative v2 result is
+`benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v2-fine-recovery-from-750-r3/assessment.json`.
+The successor audit additionally finds that three eligible pressure traces
+cannot identify a full 16-dimensional adjacent-tap covariance, and that the
+coarse curved-boundary mesh is about 9.97% low in volume relative to the
+analytic nominal domain. The current GCI therefore contains both geometry and
+solution-discretization effects without separating them. That is a plausible
+source of non-asymptotic behavior, not proof that the retained GCI is invalid.
+Neither finding changes the retained v2 verdict.
 
 ## Desktop decision
 
@@ -104,7 +123,18 @@ match the current symmetry model.
 - Mobile: unchanged and out of scope
 - General production-CFD or native-performance claim: prohibited
 
-The next work is an FDA v2 campaign with prospectively defined offset-invariant
-pressure metrics, a refined nested grid sequence, a CFD-to-PIV spatial-
-averaging operator, and downstream-domain/spatial-scheme sensitivity. The
-desktop pointer remains unchanged until that campaign passes every gate.
+Pressure is now formally `not-qualified-nonpromotional`; it remains a mandatory
+diagnostic, while the successor context of use is narrowed to bounded FDA
+Re=500 axial-velocity-field agreement. The first prospectively frozen 1%
+mesh-only preflight did not construct a mesh: coarse `blockMesh` stopped on a
+missing `controlDict`, medium/fine were not run, and the failure is classified
+as infrastructure preparation. Its assessment is
+`docs/validation/fda-nozzle-re500/audits/2026-07-20-v3-mesh-preflight.json`.
+
+The next work is limited to a new prospective mesh-only recovery contract and
+separate output directory. Numerical-verification campaign design is not yet
+authorized. Stationary-fine, independent-solver, and full-solver work remains
+blocked. The historical 90% point-pass threshold is retained for v1/v2
+reproduction but is not represented as an FDA or ASME-prescribed universal
+figure. The desktop pointer remains unchanged until a later prospectively
+frozen campaign passes every gate.

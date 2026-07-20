@@ -1,0 +1,82 @@
+{
+  "schema": "flowlab.fda-nozzle-re500.successor-diagnostic-contract.v1",
+  "contractId": "fda-nozzle-re500-successor-diagnostic-2026-07-20",
+  "status": "prospective-diagnostic-authorized-full-campaign-blocked",
+  "sourceCampaign": "benchmarks/cases/fda-nozzle/campaigns/2026-07-20-re500-v2-fine-recovery-from-750-r3",
+  "immutability": {
+    "sourceCampaignMayBeEdited": false,
+    "sourceCampaignMayBeReassessed": false,
+    "newHypothesesRequireNewOutputDirectory": true,
+    "promotionFromThisDiagnostic": false
+  },
+  "contextOfUse": "Characterize FlowLab's selected laminar OpenFOAM implementation for predeclared FDA nozzle Re=500 velocity and offset-free pressure quantities. This is not validation of general CFD, arbitrary geometry, medical-device performance, turbulence, or external product readiness.",
+  "problemStatement": {
+    "retainedOutcome": "The completed v2 recovery r3 campaign is validated-blocked with promotionAuthorized=false.",
+    "failedGates": [
+      "axialVelocityValidation",
+      "pressureValidation",
+      "threeGridGciResolved"
+    ],
+    "historicalNinetyPercentRule": "Retained only for transparent reproduction of v2. It is a FlowLab campaign policy, not an FDA or ASME universal acceptance threshold, and is not a successor promotion gate until independently calibrated."
+  },
+  "preflightGates": {
+    "referencePressurePromotionReady": {
+      "required": true,
+      "evidence": [
+        "trace-to-laboratory mapping",
+        "tap-specific calibration and bias model",
+        "full-rank tap covariance or enough independent traces to estimate it",
+        "as-built nozzle and pressure-tap metrology"
+      ],
+      "onFailure": "Keep pressure nonpromotional and block the full successor campaign."
+    },
+    "successorGridFamilyPreflightComplete": {
+      "required": true,
+      "evidence": [
+        "one immutable analytic or CAD geometric model shared by all grids",
+        "prospectively declared geometry-discretization tolerance and analytic domain-measure audit",
+        "explicit separation or bounded propagation of geometry and solution discretization",
+        "three grids minimum; add a fourth when three-grid convergence is unqualified",
+        "mesh quality and exact refinement records"
+      ],
+      "onFailure": "Do not launch the successor solver matrix or describe GCI as isolating solution discretization."
+    }
+  },
+  "stages": [
+    {
+      "id": "A-reference-reproduction",
+      "authorization": "read-only audit",
+      "stopGo": "Stop unless source hashes, eligibility, uncertainty construction, laboratory mapping, and covariance sufficiency are reproducible."
+    },
+    {
+      "id": "B-stationary-cloned-fine",
+      "authorization": "new diagnostic directory only after stage A permits the affected QoIs",
+      "stopGo": "Stop unless predeclared residual and QoI-drift thresholds pass without changing solver physics or frozen r3 evidence."
+    },
+    {
+      "id": "C-geometry-invariant-numerical-verification",
+      "authorization": "new mesh-only preflight before solver execution",
+      "stopGo": "Stop unless geometry discretization is prospectively bounded or separately propagated; use classical GCI only where asymptotic convergence is qualified, otherwise add a grid or use a prospectively selected estimator."
+    },
+    {
+      "id": "D-independent-discriminators",
+      "authorization": "only after stages A-C",
+      "stopGo": "Run an independent solver and prospectively bounded as-built, inlet, and tap sensitivities; never tune against observed validation failures."
+    }
+  ],
+  "successorAcceptanceDesign": {
+    "criticalQuantities": "Every critical quantity requires resolved numerical uncertainty; no aggregate pass rate may hide an unqualified critical point.",
+    "denseProfiles": "Use predeclared station/region functionals, correlation-aware global error, maximum standardized exceedance, and contiguous-exceedance diagnostics rather than treating hundreds of correlated samples as independent votes.",
+    "pointwiseVv20": "Retain pointwise E and U_val characterization. Do not represent ASME V&V 20 as prescribing a universal campaign pass fraction.",
+    "promotion": "Requires every prospectively frozen gate true in a later full-campaign contract and a digest-checked final assessment with promotionAuthorized=true."
+  },
+  "nextAuthorizedWork": [
+    "Run the read-only successor preflight against retained r3 evidence.",
+    "Acquire or document the missing pressure-reference provenance; otherwise reclassify pressure as nonpromotional.",
+    "Design and mesh-preflight a grid family with prospectively bounded geometry discretization in a new output directory.",
+    "Do not launch a full CFD campaign until both preflight blockers are cleared."
+  ],
+  "fullSuccessorCampaignAuthorized": false,
+  "desktopPromotionAuthorized": false,
+  "promotionAuthorized": false
+}
