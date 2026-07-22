@@ -82,9 +82,12 @@ def _segments(project: dict[str, Any]) -> int:
 def _mesh_controls(project: dict[str, Any]) -> dict[str, Any]:
     solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
     controls = solver.get("meshControls") if isinstance(solver.get("meshControls"), dict) else {}
-    boundary_layers = _clamp_int(controls.get("boundaryLayerLayers"), 0, 8, 1)
+    boundary_layers = _clamp_int(controls.get("boundaryLayerLayers"), 0, 12, 1)
     longitudinal_refinement = _clamp_int(controls.get("longitudinalRefinement"), 1, 4, 1)
     growth_rate = _clamp_float(controls.get("boundaryLayerGrowthRate"), 1.0, 3.0, 1.25)
+    transverse_distribution = str(controls.get("transverseDistribution") or "boundary-layer")
+    if transverse_distribution not in {"boundary-layer", "uniform"}:
+        transverse_distribution = "boundary-layer"
     target_y_plus = _clamp_float(controls.get("targetYPlus"), 0.1, 500.0, 30.0)
     refinement_regions = []
     for item in controls.get("refinementRegions", []) if isinstance(controls.get("refinementRegions"), list) else []:
@@ -142,8 +145,9 @@ def _mesh_controls(project: dict[str, Any]) -> dict[str, Any]:
         "longitudinalRefinement": longitudinal_refinement,
         "boundaryLayerLayers": boundary_layers,
         "boundaryLayerGrowthRate": growth_rate,
+        "transverseDistribution": transverse_distribution,
         "targetYPlus": target_y_plus,
-        "transverseFractions": _transverse_fractions(boundary_layers, growth_rate),
+        "transverseFractions": _transverse_fractions(boundary_layers, growth_rate, transverse_distribution),
         "refinementRegions": refinement_regions,
         "featureRefinement": {
             "enabled": feature_enabled,
@@ -193,9 +197,20 @@ def _clamp_float(value: Any, minimum: float, maximum: float, fallback: float) ->
     return max(minimum, min(maximum, parsed))
 
 
-def _transverse_fractions(boundary_layers: int, growth_rate: float) -> list[float]:
+def _transverse_fractions(
+    boundary_layers: int, growth_rate: float, distribution: str = "boundary-layer"
+) -> list[float]:
     if boundary_layers <= 0:
         return [0.0, 1.0]
+    if distribution == "uniform":
+        # Evenly spaced cells across the gap. Unlike the wall-clustered
+        # boundary-layer distribution -- which leaves a single coarse core cell
+        # exactly where a laminar parabolic profile peaks -- uniform spacing
+        # resolves the core and its pressure gradient far more accurately for
+        # internal laminar flow. Cell count matches the boundary-layer mode
+        # (2*boundary_layers + 1) so the same resolution knob applies.
+        cells = 2 * boundary_layers + 1
+        return [round(index / cells, 9) for index in range(cells + 1)]
     wall_weights = [growth_rate**index for index in range(boundary_layers)]
     core_weight = growth_rate**boundary_layers * 2.0
     cell_weights = [*wall_weights, core_weight, *reversed(wall_weights)]

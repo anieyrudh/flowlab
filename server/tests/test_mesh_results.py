@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from server.flowlab.mesh import generate_mesh_bundle, mesh_to_openfoam_cht_region_polymesh, mesh_to_openfoam_polymesh
+from server.flowlab.mesh import (
+    _transverse_fractions,
+    generate_mesh_bundle,
+    mesh_to_openfoam_cht_region_polymesh,
+    mesh_to_openfoam_polymesh,
+)
 from server.flowlab.results import parse_vtk_result, preview_vtk_result_text, summarize_vtk_result_text
 from server.flowlab.schemas import CaseRequest
 from server.flowlab import adapters
@@ -1418,3 +1423,21 @@ def test_parse_vtu_rejects_declared_count_mismatch() -> None:
 """
     with pytest.raises(ValueError, match="point count"):
         parse_vtk_result(malformed)
+
+
+def test_transverse_fractions_uniform_resolves_the_core_better_than_boundary_layer() -> None:
+    # boundary-layer (default): wall-clustered cells that leave one large core cell
+    bl = _transverse_fractions(1, 1.25, "boundary-layer")
+    assert bl == pytest.approx([0.0, 0.222222222, 0.777777778, 1.0])
+
+    # uniform: evenly spaced cells (2*N+1 across the gap) -> resolves the parabolic core
+    uni1 = _transverse_fractions(1, 1.25, "uniform")
+    assert uni1 == pytest.approx([0.0, 1 / 3, 2 / 3, 1.0])
+
+    uni8 = _transverse_fractions(8, 1.25, "uniform")
+    assert len(uni8) == 18  # 17 uniform cells
+    widths = [uni8[i + 1] - uni8[i] for i in range(len(uni8) - 1)]
+    assert max(widths) - min(widths) < 1e-8  # every cell has equal width (modulo 9-dp rounding)
+
+    # an unrecognized distribution falls back to the boundary-layer behavior
+    assert _transverse_fractions(1, 1.25, "nonsense") == pytest.approx(bl)

@@ -1141,10 +1141,32 @@ functions
 """
 
 
+STEADY_RUN_CAPABLE_MODES = frozenset({"incompressible-navier-stokes"})
+
+
+def _openfoam_steady_requested(advanced_mode: str, project: dict[str, Any] | None) -> bool:
+    """Return True when a converged steady-state SIMPLE run was explicitly requested.
+
+    Opt-in via ``project["solver"]["runMode"] == "steady"``. Honoured only for
+    steady-capable incompressible modes; inherently transient modes (water-hammer,
+    multiphase VOF, cavitation, compressible flow) always keep transient controls.
+    The default (no ``runMode`` set) remains the short transient starter run.
+    """
+    if advanced_mode not in STEADY_RUN_CAPABLE_MODES:
+        return False
+    solver = project.get("solver") if isinstance(project, dict) and isinstance(project.get("solver"), dict) else {}
+    return str(solver.get("runMode", "transient")).strip().lower() == "steady"
+
+
 def _openfoam_control_dict(solver: str, mesh: dict[str, Any] | None, advanced_mode: str, project: dict[str, Any] | None = None) -> str:
-    end_time = "0.001" if advanced_mode == "compressible-flow" else "0.05"
-    delta_t = "0.00001" if advanced_mode == "compressible-flow" else "0.001"
-    write_interval = "100" if advanced_mode == "compressible-flow" else "25"
+    if _openfoam_steady_requested(advanced_mode, project):
+        # Steady SIMPLE: deltaT is an iteration counter and residualControl in
+        # fvSolution stops the solve early once residuals fall below tolerance.
+        end_time, delta_t, write_interval = "2000", "1", "2000"
+    elif advanced_mode == "compressible-flow":
+        end_time, delta_t, write_interval = "0.001", "0.00001", "100"
+    else:
+        end_time, delta_t, write_interval = "0.05", "0.001", "25"
     solver_header = (
         """application     foamMultiRun;
 
@@ -1181,14 +1203,12 @@ runTimeModifiable true;
     )
 
 
-def _openfoam_fv_schemes() -> str:
+def _openfoam_fv_schemes(steady: bool = False) -> str:
+    ddt_default = "steadyState" if steady else "Euler"
     return (
         _foam_header("dictionary", "fvSchemes")
-        + """ddtSchemes
-{
-    default         Euler;
-}
-gradSchemes
+        + "ddtSchemes\n{\n    default         " + ddt_default + ";\n}\n"
+        + """gradSchemes
 {
     default         Gauss linear;
 }
@@ -1241,7 +1261,7 @@ wallDist
     )
 
 
-def _openfoam_fv_solution() -> str:
+def _openfoam_fv_solution(steady: bool = False) -> str:
     return (
         _foam_header("dictionary", "fvSolution")
         + """solvers
@@ -1323,11 +1343,37 @@ PIMPLE
     nNonOrthogonalCorrectors 0;
 }
 
-SIMPLE
+"""
+        + (
+            """SIMPLE
+{
+    nNonOrthogonalCorrectors 1;
+    residualControl
+    {
+        p               1e-5;
+        U               1e-5;
+    }
+}
+
+relaxationFactors
+{
+    fields
+    {
+        p               0.3;
+    }
+    equations
+    {
+        U               0.7;
+    }
+}
+"""
+            if steady
+            else """SIMPLE
 {
     nNonOrthogonalCorrectors 0;
 }
 """
+        )
     )
 
 
@@ -4587,8 +4633,8 @@ class OpenFOAMAdapter(SolverAdapter):
             "system/blockMeshDict": _openfoam_block_mesh_dict(mesh),
             "system/controlDict": _openfoam_control_dict(solver, mesh, request.advancedMode, request.project),
             "system/functions": _openfoam_function_object_entries(mesh, request.advancedMode, request.project),
-            "system/fvSchemes": _openfoam_fv_schemes(),
-            "system/fvSolution": _openfoam_fv_solution(),
+            "system/fvSchemes": _openfoam_fv_schemes(steady=_openfoam_steady_requested(request.advancedMode, request.project)),
+            "system/fvSolution": _openfoam_fv_solution(steady=_openfoam_steady_requested(request.advancedMode, request.project)),
             "0/U": _openfoam_vector_field("U", f"({conditions.inlet_velocity:.9g} 0 0)"),
             "0/p": _openfoam_pressure_field(
                 "p",

@@ -3270,6 +3270,30 @@ function MeshControlsPanel({
           <option value="fine">Fine</option>
         </select>
       </label>
+      {solver.advancedMode === "incompressible-navier-stokes" && (
+        <label>
+          Run mode
+          <select
+            aria-label="Run mode"
+            value={solver.runMode ?? "transient"}
+            onChange={(event) => onSolverChange({ runMode: event.target.value as NonNullable<SolverSettings["runMode"]> })}
+          >
+            <option value="transient">Transient (quick starter)</option>
+            <option value="steady">Steady (converged Δp)</option>
+          </select>
+        </label>
+      )}
+      <label>
+        Transverse cells
+        <select
+          aria-label="Transverse distribution"
+          value={controls.transverseDistribution ?? "boundary-layer"}
+          onChange={(event) => onMeshControlsChange({ transverseDistribution: event.target.value as "boundary-layer" | "uniform" })}
+        >
+          <option value="boundary-layer">Boundary layer (wall-clustered)</option>
+          <option value="uniform">Uniform (laminar core)</option>
+        </select>
+      </label>
       <div className="mesh-control-grid">
         <label>
           Longitudinal x
@@ -3289,7 +3313,7 @@ function MeshControlsPanel({
             aria-label="Boundary layer strip cells"
             type="number"
             min={0}
-            max={8}
+            max={12}
             step={1}
             value={controls.boundaryLayerLayers ?? 1}
             onChange={(event) => onMeshControlsChange({ boundaryLayerLayers: Number(event.target.value) })}

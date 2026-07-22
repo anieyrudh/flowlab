@@ -176,11 +176,20 @@ export type SolverSettings = {
   advancedMode: AdvancedPhysicsMode;
   turbulence: "laminar" | "rans-k-epsilon" | "rans-sst" | "les" | "dns";
   meshResolution: "coarse" | "medium" | "fine";
+  // OpenFOAM incompressible run mode. "transient" (default) is a short starter
+  // solve; "steady" runs steady-state SIMPLE to convergence so the case yields a
+  // fully-developed pressure drop. Honored only for incompressible-navier-stokes.
+  runMode?: "transient" | "steady";
   reviewedGeometry?: ReviewedGeometrySource;
   meshControls?: {
     longitudinalRefinement?: number;
     boundaryLayerLayers?: number;
     boundaryLayerGrowthRate?: number;
+    // Transverse (across-gap) cell distribution. "boundary-layer" (default)
+    // clusters cells at the walls for near-wall/turbulent resolution; "uniform"
+    // spaces them evenly, which resolves a laminar parabolic core far better and
+    // roughly triples pressure-drop accuracy for internal laminar flow.
+    transverseDistribution?: "boundary-layer" | "uniform";
     targetYPlus?: number;
     refinementRegions?: Array<{ edgeId: EdgeId; factor: number; reason?: string }>;
     featureRefinement?: {

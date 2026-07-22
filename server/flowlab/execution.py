@@ -1902,7 +1902,17 @@ def _apply_patch_metric_file(metrics: dict[str, Any], relative_path: str, kind: 
                 continue
             patch_name = _clean_patch_column_name(column)
             patch = _ensure_patch(metrics, patch_name)
-            field_name = "p" if re.search(r"(?:^|[/_.-])p(?:$|[/_.-])|pressure", relative_path.lower()) else "average"
+            # Identify the pressure field from the OpenFOAM value-column header
+            # (e.g. `# Time   areaAverage(p)`) as well as the file path. FlowLab
+            # writes per-patch outputs to `patchAverage_<patch>/` directories whose
+            # path contains no matchable `p`/`pressure` token, and the numeric-table
+            # parser replaces the header with a generic `c1` column name, so
+            # path/column-only detection missed the pressure field and left
+            # `averagePressure` unset -- which blocked all pressure-drop metrics.
+            header_match = re.search(r"^#\s*Time\b(.*)$", text, re.MULTILINE)
+            header_fields = header_match.group(1) if header_match else ""
+            field_source = f"{column} {header_fields} {relative_path}".lower()
+            field_name = "p" if re.search(r"\(\s*p\s*\)|(?:^|[/_.-])p(?:$|[/_.-])|pressure", field_source) else "average"
             patch_key = "averagePressure" if field_name == "p" else "patchAverage"
             unit = "Pa" if field_name == "p" else "solver units"
             if len(value_columns) == 1:

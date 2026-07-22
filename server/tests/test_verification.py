@@ -10,11 +10,14 @@ from server.flowlab.acceleration import (
     evaluate_surrogate_eligibility,
 )
 from server.flowlab.verification import (
+    PlaneChannelSpec,
     StraightPipeSpec,
     VerificationInputError,
     build_straight_pipe_3d_reference_bundle,
     evaluate_straight_pipe_pressure_drop,
     hagen_poiseuille_pressure_drop_pa,
+    plane_channel_reference,
+    plane_poiseuille_pressure_drop_pa,
     richardson_grid_convergence,
     straight_pipe_reference,
 )
@@ -78,6 +81,47 @@ def test_hagen_poiseuille_reference_has_expected_units_and_regime() -> None:
     )
     assert reference["meanVelocityMPerS"] > 0.0
     assert reference["reynoldsNumber"] < 2100.0
+
+
+def _plane_spec() -> PlaneChannelSpec:
+    return PlaneChannelSpec(
+        length_m=1.0,
+        gap_m=0.1,
+        density_kg_m3=1000.0,
+        dynamic_viscosity_pa_s=0.001,
+        mean_velocity_m_s=0.005,
+    )
+
+
+def test_plane_poiseuille_reference_matches_analytic_gap_law() -> None:
+    reference = plane_channel_reference(_plane_spec())
+
+    # Delta p = 12 * mu * U * L / H^2  (parallel-plate plane-Poiseuille, NOT Hagen-Poiseuille)
+    assert math.isclose(
+        reference["pressureDropPa"],
+        12.0 * 0.001 * 0.005 * 1.0 / 0.1**2,
+    )
+    assert math.isclose(
+        reference["pressureDropPa"],
+        plane_poiseuille_pressure_drop_pa(_plane_spec()),
+    )
+    assert math.isclose(reference["hydraulicDiameterM"], 2.0 * 0.1)
+    assert math.isclose(
+        reference["reynoldsNumber"],
+        1000.0 * 0.005 * (2.0 * 0.1) / 0.001,
+    )
+    assert reference["reynoldsNumber"] < 2100.0
+
+
+def test_plane_channel_spec_rejects_non_positive_inputs() -> None:
+    with pytest.raises(VerificationInputError):
+        PlaneChannelSpec(
+            length_m=1.0,
+            gap_m=0.0,
+            density_kg_m3=1000.0,
+            dynamic_viscosity_pa_s=0.001,
+            mean_velocity_m_s=0.005,
+        )
 
 
 def test_3d_pipe_bundle_is_pending_and_preserves_real_geometry_contract() -> None:

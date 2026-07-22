@@ -4,10 +4,20 @@ Track C adds repeatable benchmark metadata without claiming CFD validation.
 The registry lives under `benchmarks/` and currently lists:
 
 - `straight-pipe`
+- `plane-channel`
 - `venturi`
 - `heated-channel`
 - `lid-driven-cavity-placeholder`
 - `nozzle-placeholder`
+
+`straight-pipe` and `plane-channel` are deliberately distinct geometries.
+`straight-pipe` is a **true 3D circular pipe** with a Hagen-Poiseuille reference
+(`128*mu*L*Q/(pi*D^4)`), targeting the dedicated 3D O-grid reference runner.
+`plane-channel` is a **2D one-cell-thick planar channel** (`frontAndBack` type
+`empty`, gap `H = diameter*3.6`) with a plane-Poiseuille reference
+(`12*mu*U*L/H^2`) -- this is the geometry FlowLab's ordinary product pipeline
+actually generates for a `pipe` edge, so it is the benchmark that matches product
+output. See `server/flowlab/verification.py::plane_channel_reference`.
 
 Each case uses schema `flowlab.benchmark_fixture.v1` and is marked
 `pending-real-run`. The metadata defines expected inputs, required patches,

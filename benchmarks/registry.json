@@ -8,6 +8,11 @@
       "status": "pending-real-run"
     },
     {
+      "id": "plane-channel",
+      "path": "cases/plane-channel/benchmark.json",
+      "status": "pending-real-run"
+    },
+    {
       "id": "venturi",
       "path": "cases/venturi/benchmark.json",
       "status": "pending-real-run"

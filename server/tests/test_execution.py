@@ -2792,6 +2792,48 @@ def test_collect_patch_metrics_summarizes_openfoam_postprocessing(tmp_path: Path
     assert metrics["pressureProbes"][0]["pressureSpan"] == 2325.0
 
 
+def test_collect_patch_metrics_builds_pressure_drop_from_per_patch_surface_field_value(tmp_path: Path) -> None:
+    # Regression: FlowLab writes per-patch `patchAverage_<patch>/surfaceFieldValue.dat`
+    # (not a single `patchAverage/p.dat`). The numeric-table parser drops the real
+    # `areaAverage(p)` column header (returning a generic `c1`), so the collector must
+    # recover the pressure field from the header line to populate averagePressure and
+    # build pressureDrops -- otherwise a fully converged run reports no pressure drop.
+    case_dir = tmp_path / "case"
+    pp = case_dir / "postProcessing"
+    for patch, flow, pressure in (("inlet", -0.018165, 6.06438719), ("outlet", 0.018165, 0.0)):
+        flow_dir = pp / f"patchFlowRate_{patch}" / "0"
+        flow_dir.mkdir(parents=True)
+        (flow_dir / "surfaceFieldValue.dat").write_text(
+            f"# Selection type : patch {patch}\n# Faces  : 17\n"
+            f"# Time          \tsum(phi)\n0               \t0.0\n2000            \t{flow}\n",
+            encoding="utf-8",
+        )
+        avg_dir = pp / f"patchAverage_{patch}" / "0"
+        avg_dir.mkdir(parents=True)
+        (avg_dir / "surfaceFieldValue.dat").write_text(
+            f"# Selection type : patch {patch}\n# Faces  : 17\n# Area   : 1.8165e-02\n"
+            f"# Time          \tareaAverage(p)\n0               \t0.0\n2000            \t{pressure}\n",
+            encoding="utf-8",
+        )
+
+    metrics = collect_patch_metrics(case_dir)
+
+    patches = metrics["patches"]
+    assert patches["inlet"]["averagePressure"]["value"] == pytest.approx(6.06438719)
+    assert patches["inlet"]["averagePressure"]["field"] == "p"
+    assert patches["outlet"]["averagePressure"]["value"] == pytest.approx(0.0)
+    assert metrics["pressureDrops"] == [
+        {
+            "fromPatch": "inlet",
+            "toPatch": "outlet",
+            "inletPressure": pytest.approx(6.06438719),
+            "outletPressure": pytest.approx(0.0),
+            "deltaP": pytest.approx(6.06438719),
+            "unit": "Pa",
+        }
+    ]
+
+
 def test_collect_patch_metrics_warns_for_malformed_and_missing_outputs(tmp_path: Path) -> None:
     case_dir = tmp_path / "case"
     bad_dir = case_dir / "postProcessing" / "patchFlowRate" / "0"

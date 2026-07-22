@@ -88,6 +88,79 @@ def straight_pipe_reference(spec: StraightPipeSpec) -> dict[str, float]:
     }
 
 
+@dataclass(frozen=True)
+class PlaneChannelSpec:
+    """SI inputs for the fully developed 2D plane-Poiseuille reference problem.
+
+    This matches FlowLab's product-pipeline mesh, which materialises a "pipe" as
+    a one-cell-thick planar channel of wall-to-wall gap ``gap_m`` (the edge
+    diameter scaled into the canvas plane). The applicable analytical solution
+    is plane-Poiseuille flow between parallel plates, not the 3D Hagen-Poiseuille
+    pipe law used by :class:`StraightPipeSpec`.
+    """
+
+    length_m: float
+    gap_m: float
+    density_kg_m3: float
+    dynamic_viscosity_pa_s: float
+    mean_velocity_m_s: float
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("length_m", self.length_m),
+            ("gap_m", self.gap_m),
+            ("density_kg_m3", self.density_kg_m3),
+            ("dynamic_viscosity_pa_s", self.dynamic_viscosity_pa_s),
+            ("mean_velocity_m_s", self.mean_velocity_m_s),
+        ):
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise VerificationInputError(f"{field_name} must be a finite positive SI value")
+
+
+def plane_poiseuille_pressure_drop_pa(spec: PlaneChannelSpec) -> float:
+    """Return the analytical pressure drop for steady laminar plane-channel flow in Pa.
+
+    Fully developed flow between parallel plates of gap ``H`` has a parabolic
+    profile with mean velocity ``U`` and pressure gradient ``dp/dx = -12 mu U / H**2``.
+    """
+
+    return (
+        12.0
+        * spec.dynamic_viscosity_pa_s
+        * spec.mean_velocity_m_s
+        * spec.length_m
+        / spec.gap_m**2
+    )
+
+
+def plane_channel_reference(spec: PlaneChannelSpec) -> dict[str, float]:
+    """Return analytical plane-Poiseuille QoIs with explicit SI units in key names.
+
+    The Reynolds number uses the parallel-plate hydraulic diameter ``D_h = 2*H``
+    so it is directly comparable to the pipe reference's diameter-based value.
+    """
+
+    hydraulic_diameter_m = 2.0 * spec.gap_m
+    reynolds_number = (
+        spec.density_kg_m3
+        * spec.mean_velocity_m_s
+        * hydraulic_diameter_m
+        / spec.dynamic_viscosity_pa_s
+    )
+    return {
+        "channelGapM": spec.gap_m,
+        "hydraulicDiameterM": hydraulic_diameter_m,
+        "meanVelocityMPerS": spec.mean_velocity_m_s,
+        "reynoldsNumber": reynolds_number,
+        "pressureDropPa": plane_poiseuille_pressure_drop_pa(spec),
+    }
+
+
 def _require_laminar_reference_envelope(spec: StraightPipeSpec) -> dict[str, float]:
     reference = straight_pipe_reference(spec)
     if reference["reynoldsNumber"] >= LAMINAR_REFERENCE_MAX_REYNOLDS:

@@ -314,12 +314,14 @@ const projectSchema = z.object({
     ]),
     turbulence: z.enum(["laminar", "rans-k-epsilon", "rans-sst", "les", "dns"]),
     meshResolution: z.enum(["coarse", "medium", "fine"]),
+    runMode: z.enum(["transient", "steady"]).optional(),
     reviewedGeometry: reviewedGeometrySchema.optional(),
     meshControls: z
       .object({
         longitudinalRefinement: z.number().int().min(1).max(4).optional(),
-        boundaryLayerLayers: z.number().int().min(0).max(8).optional(),
+        boundaryLayerLayers: z.number().int().min(0).max(12).optional(),
         boundaryLayerGrowthRate: z.number().min(1).max(3).optional(),
+        transverseDistribution: z.enum(["boundary-layer", "uniform"]).optional(),
         targetYPlus: z.number().positive().optional(),
         refinementRegions: z
           .array(

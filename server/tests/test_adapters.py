@@ -1439,3 +1439,65 @@ def test_code_saturne_advanced_modes_emit_physics_preset_metadata(
             assert preset["nativeSetupPlan"]["handoffArtifacts"] == ["DATA/flowlab_rigid_body_handoff.json"]
             assert "DATA/flowlab_rigid_body_handoff.json" in checklist["generatedFiles"]
             assert any(check["id"] == "rigid-body-handoff-export" and check["status"] == "pass" for check in preset["readinessChecks"])
+
+
+def _steady_project(run_mode: str | None) -> dict:
+    project = _parameterized_project()
+    solver = dict(project.get("solver") or {})
+    if run_mode is not None:
+        solver["runMode"] = run_mode
+    project["solver"] = solver
+    return project
+
+
+def test_openfoam_steady_run_mode_emits_converging_simple_controls(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+
+    request = CaseRequest.model_construct(
+        project=_steady_project("steady"),
+        solver="openfoam",
+        advancedMode="incompressible-navier-stokes",
+    )
+    case = adapters.generate_case(request)
+
+    control = case.files["system/controlDict"]
+    assert "endTime         2000;" in control
+    assert "deltaT          1;" in control
+    assert "default         steadyState;" in case.files["system/fvSchemes"]
+    solution = case.files["system/fvSolution"]
+    assert "residualControl" in solution
+    assert "relaxationFactors" in solution
+
+
+def test_openfoam_default_run_mode_stays_transient(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+
+    request = CaseRequest.model_construct(
+        project=_steady_project(None),
+        solver="openfoam",
+        advancedMode="incompressible-navier-stokes",
+    )
+    case = adapters.generate_case(request)
+
+    assert "endTime         0.05;" in case.files["system/controlDict"]
+    assert "default         Euler;" in case.files["system/fvSchemes"]
+    assert "residualControl" not in case.files["system/fvSolution"]
+
+
+def test_openfoam_steady_run_mode_ignored_for_transient_physics(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+
+    # runMode=steady must NOT override inherently transient compressible flow.
+    request = CaseRequest.model_construct(
+        project=_steady_project("steady"),
+        solver="openfoam",
+        advancedMode="compressible-flow",
+    )
+    case = adapters.generate_case(request)
+
+    assert "endTime         0.001;" in case.files["system/controlDict"]
+    assert "default         Euler;" in case.files["system/fvSchemes"]
+    assert "residualControl" not in case.files["system/fvSolution"]
