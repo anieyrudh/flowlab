@@ -1,0 +1,221 @@
+{
+  "status": "complete",
+  "mesh": {
+    "L": 3.46,
+    "H": 0.36,
+    "Dz": 0.0504583334,
+    "zlevels": 2,
+    "points": 900
+  },
+  "U": 1.0,
+  "nu": 0.018,
+  "reH": 20.0,
+  "planePoiseuilleRefKin": 5.766666666666667,
+  "planePoiseuilleRefPa": 5766.666666666667,
+  "patchMetrics": {
+    "schema": "flowlab.patch_metrics.v1",
+    "status": "partial",
+    "patches": {
+      "c1": {
+        "patchName": "c1",
+        "role": "unknown",
+        "sources": []
+      },
+      "inlet": {
+        "patchName": "inlet",
+        "role": "inlet",
+        "sources": [
+          "postProcessing/patchAverage_inlet/0/surfaceFieldValue.dat",
+          "postProcessing/patchFlowRate_inlet/0/surfaceFieldValue.dat"
+        ],
+        "patchAverage": {
+          "value": 9.04828626,
+          "unit": "solver units",
+          "time": 0.05,
+          "path": "postProcessing/patchAverage_inlet/0/surfaceFieldValue.dat",
+          "field": "average"
+        },
+        "flowRate": {
+          "value": -0.018165,
+          "unit": "m3/s",
+          "time": 0.05,
+          "path": "postProcessing/patchFlowRate_inlet/0/surfaceFieldValue.dat"
+        }
+      },
+      "outlet": {
+        "patchName": "outlet",
+        "role": "outlet",
+        "sources": [
+          "postProcessing/patchAverage_outlet/0/surfaceFieldValue.dat",
+          "postProcessing/patchFlowRate_outlet/0/surfaceFieldValue.dat"
+        ],
+        "patchAverage": {
+          "value": 0.0,
+          "unit": "solver units",
+          "time": 0.05,
+          "path": "postProcessing/patchAverage_outlet/0/surfaceFieldValue.dat",
+          "field": "average"
+        },
+        "flowRate": {
+          "value": 0.018165,
+          "unit": "m3/s",
+          "time": 0.05,
+          "path": "postProcessing/patchFlowRate_outlet/0/surfaceFieldValue.dat"
+        }
+      },
+      "walls": {
+        "patchName": "walls",
+        "role": "wall",
+        "sources": [
+          "postProcessing/wallForces/0/forces.dat",
+          "VTK/walls/walls_50.vtk"
+        ],
+        "force": {
+          "patchName": "walls",
+          "time": 0.05,
+          "force": {
+            "x": 163.026891,
+            "y": 6.221536678e-06,
+            "z": 0.0
+          },
+          "moment": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 1.3996068381e-05
+          },
+          "components": {
+            "Time": 0.05,
+            "pressureFx": 0.0,
+            "pressureFy": 6.2766561e-06,
+            "pressureFz": 0.0,
+            "viscousFx": 163.026891,
+            "viscousFy": -5.5119422e-08,
+            "viscousFz": 0.0,
+            "pressureMx": 0.0,
+            "pressureMy": 0.0,
+            "pressureMz": 1.45023955e-05,
+            "viscousMx": 0.0,
+            "viscousMy": 0.0,
+            "viscousMz": -5.06327119e-07
+          },
+          "path": "postProcessing/wallForces/0/forces.dat",
+          "forceMagnitude": 163.02689100000012,
+          "momentMagnitude": 1.3996068381e-05
+        },
+        "wallShear": {
+          "min": 0.45036418012695373,
+          "mean": 0.4694167550868384,
+          "max": 0.6303290910453048,
+          "unit": "Pa",
+          "path": "VTK/walls/walls_50.vtk",
+          "field": "wallShearStress"
+        }
+      }
+    },
+    "flowBalance": {
+      "inletFlow": 0.018165,
+      "outletFlow": 0.018165,
+      "imbalance": 0.0,
+      "relativeImbalance": 0.0,
+      "unit": "m3/s",
+      "inletPatches": [
+        "inlet"
+      ],
+      "outletPatches": [
+        "outlet"
+      ]
+    },
+    "pressureDrops": [],
+    "forces": [
+      {
+        "patchName": "walls",
+        "time": 0.05,
+        "force": {
+          "x": 163.026891,
+          "y": 6.221536678e-06,
+          "z": 0.0
+        },
+        "moment": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 1.3996068381e-05
+        },
+        "components": {
+          "Time": 0.05,
+          "pressureFx": 0.0,
+          "pressureFy": 6.2766561e-06,
+          "pressureFz": 0.0,
+          "viscousFx": 163.026891,
+          "viscousFy": -5.5119422e-08,
+          "viscousFz": 0.0,
+          "pressureMx": 0.0,
+          "pressureMy": 0.0,
+          "pressureMz": 1.45023955e-05,
+          "viscousMx": 0.0,
+          "viscousMy": 0.0,
+          "viscousMz": -5.06327119e-07
+        },
+        "path": "postProcessing/wallForces/0/forces.dat",
+        "forceMagnitude": 163.02689100000012,
+        "momentMagnitude": 1.3996068381e-05
+      }
+    ],
+    "pressureProbes": [
+      {
+        "path": "postProcessing/centerlineProbes/0/p",
+        "time": 0.05,
+        "sampleCount": 3,
+        "minPressure": -1.7976931e+307,
+        "maxPressure": 4.6134078,
+        "pressureSpan": 1.7976931e+307,
+        "unit": "Pa"
+      }
+    ],
+    "warnings": [
+      "postProcessing/wallShearStress/0/wallShearStress.dat: no parseable numeric table rows"
+    ],
+    "sources": [
+      {
+        "path": "postProcessing/centerlineProbes/0/p",
+        "kind": "pressure-probes",
+        "status": "parsed"
+      },
+      {
+        "path": "postProcessing/patchAverage_inlet/0/surfaceFieldValue.dat",
+        "kind": "patch-average",
+        "status": "parsed"
+      },
+      {
+        "path": "postProcessing/patchAverage_outlet/0/surfaceFieldValue.dat",
+        "kind": "patch-average",
+        "status": "parsed"
+      },
+      {
+        "path": "postProcessing/patchFlowRate_inlet/0/surfaceFieldValue.dat",
+        "kind": "patch-flow-rate",
+        "status": "parsed"
+      },
+      {
+        "path": "postProcessing/patchFlowRate_outlet/0/surfaceFieldValue.dat",
+        "kind": "patch-flow-rate",
+        "status": "parsed"
+      },
+      {
+        "path": "postProcessing/wallForces/0/forces.dat",
+        "kind": "forces",
+        "status": "parsed"
+      },
+      {
+        "path": "postProcessing/wallShearStress/0/wallShearStress.dat",
+        "kind": "wall-shear",
+        "status": "unparsed"
+      },
+      {
+        "path": "VTK/walls/walls_50.vtk",
+        "kind": "wall-shear",
+        "status": "parsed"
+      }
+    ]
+  },
+  "caseDir": "/Users/anieyrudh/Desktop/Active Projects/test/.claude/worktrees/project-comprehensive-analysis-b1f08d/benchmarks/cases/straight-pipe/runs/track-a-jobmgr/jobs/job-593c4cee76/case"
+}

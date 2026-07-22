@@ -1,0 +1,99 @@
+{
+  "schema": "flowlab.external_benchmark_result.v1",
+  "benchmark": "lid-driven-cavity",
+  "reference": "Ghia, Ghia & Shin, J. Comput. Phys. 48 (1982) 387-411 (Tables I, II)",
+  "status": "exploratory-solver-stack-accuracy",
+  "promotionClaim": null,
+  "disclaimer": "Measures the pinned OpenFOAM 11 solver stack, NOT FlowLab's own case-generation pipeline (FlowLab's mesher cannot express a closed lid-driven cavity). Not a promoted or validated FlowLab claim.",
+  "physics": "steady incompressible laminar Navier-Stokes",
+  "reynolds": 100,
+  "solver": "OpenFOAM 11 foamRun -solver incompressibleFluid (SIMPLE, steadyState)",
+  "convection": "bounded Gauss linearUpwind grad(U)",
+  "container": "flowlab/openfoam11-gmsh:2026-07-13 (linux/amd64, emulated on arm64 host)",
+  "emulationNote": "Emulated container supports correctness, not native-performance claims.",
+  "grids": [
+    {
+      "mesh": "32x32",
+      "cells": 1024,
+      "iterationsToConverge": 417,
+      "uProfileL2vsGhia": 0.0015586009937006466,
+      "vProfileL2vsGhia": 0.003950579120703966
+    },
+    {
+      "mesh": "64x64",
+      "cells": 4096,
+      "iterationsToConverge": 1235,
+      "uProfileL2vsGhia": 0.001837803671804941,
+      "vProfileL2vsGhia": 0.004708025990149821
+    },
+    {
+      "mesh": "128x128",
+      "cells": 16384,
+      "iterationsToConverge": 3817,
+      "uProfileL2vsGhia": 0.002317665762543522,
+      "vProfileL2vsGhia": 0.004763372940777593
+    }
+  ],
+  "gridConvergence": {
+    "method": "Richardson/GCI",
+    "refinementRatio": 2,
+    "safetyFactor": 1.25,
+    "qoi": {
+      "u_min_vertical": {
+        "coarse": -0.210539,
+        "medium": -0.213179,
+        "fine": -0.213676,
+        "observedOrder": 2.409220172683539,
+        "gciFinePercent": 0.06742871359821737,
+        "richardsonExtrapolated": -0.2137912631824545,
+        "ghiaReference": -0.2109,
+        "fineVsGhiaRelErr": 0.01316263632053106
+      },
+      "v_min_horizontal": {
+        "coarse": -0.249356,
+        "medium": -0.252904,
+        "fine": -0.253303,
+        "observedOrder": 3.15254535807879,
+        "gciFinePercent": 0.024948406424090578,
+        "richardsonExtrapolated": -0.2533535560495395,
+        "ghiaReference": -0.24533,
+        "fineVsGhiaRelErr": 0.03249908286797378
+      },
+      "v_max_horizontal": {
+        "coarse": 0.176275,
+        "medium": 0.178686,
+        "fine": 0.179026,
+        "observedOrder": 2.826024999464927,
+        "gciFinePercent": 0.038973700185692066,
+        "richardsonExtrapolated": 0.17908181844519555,
+        "ghiaReference": 0.17527,
+        "fineVsGhiaRelErr": 0.021429794032064707
+      }
+    }
+  },
+  "fineGridVsGhia": {
+    "uProfile": {
+      "comparedPoints": 15,
+      "L2": 0.002317665762543522,
+      "Linf": 0.0046726838883201505,
+      "MAE": 0.001806243267140546
+    },
+    "vProfile": {
+      "comparedPoints": 15,
+      "L2": 0.004763372940777593,
+      "Linf": 0.008788737651967915,
+      "MAE": 0.004304320208230159
+    },
+    "peakQoIRelErr": {
+      "u_min_vertical": 0.01316263632053106,
+      "v_min_horizontal": 0.03249908286797378,
+      "v_max_horizontal": 0.021429794032064707
+    }
+  },
+  "interpretation": [
+    "Solution is grid-converged to <0.1% (GCI on all three peak QoIs).",
+    "Observed order 2.4-3.2, consistent with the 2nd-order-upwind momentum scheme.",
+    "Fine-grid centreline profiles match Ghia to ~0.2% RMS; peak QoIs to 1.3-3.3%.",
+    "The residual peak gap is within the known spread between Ghia 1982 and modern spectral references (e.g. Botella & Peyret 1998); it is largely reference error."
+  ]
+}
