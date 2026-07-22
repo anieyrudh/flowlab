@@ -3350,7 +3350,16 @@ def validate_solver_case(case: SolverCase) -> list[str]:
         elif "foamRun -solver" not in allrun:
             issues.append("OpenFOAM `Allrun` must run `foamRun -solver`.")
         block_mesh = files.get("system/blockMeshDict", "")
-        for patch in ("inlet", "outlet", "walls", "frontAndBack"):
+        # An axisymmetric wedge pipe uses wedge front/back + a collapsed axis instead
+        # of a single empty frontAndBack; its fitted polyMesh is skipped so blockMesh
+        # builds the wedge (and handles the singular axis) at run time.
+        is_axisymmetric_wedge = "type wedge" in block_mesh
+        expected_block_patches = (
+            ("inlet", "outlet", "walls", "front", "back")
+            if is_axisymmetric_wedge
+            else ("inlet", "outlet", "walls", "frontAndBack")
+        )
+        for patch in expected_block_patches:
             if patch not in block_mesh:
                 issues.append(f"OpenFOAM `system/blockMeshDict` is missing `{patch}` boundary patch.")
         poly_boundary = files.get("constant/polyMesh/boundary")
@@ -4665,6 +4674,20 @@ def _openfoam_required_mesh_commands(case_dir: Path, *, skip_snappy: bool = Fals
     return commands
 
 
+def _openfoam_case_is_axisymmetric_wedge(case_dir: Path) -> bool:
+    """True when the generated blockMeshDict is an axisymmetric wedge pipe.
+
+    A wedge blockMesh is itself the final mesh, so surfaceFeatureExtract/snappyHexMesh
+    must be skipped (blockMesh + checkMesh only), exactly like the fitted starter
+    polyMesh path. blockMesh also handles the singular collapsed axis natively.
+    """
+    try:
+        text = (case_dir / "system" / "blockMeshDict").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return "type wedge" in text
+
+
 def _openfoam_uses_starter_fitted_mesh(case_dir: Path, handoff: dict[str, Any]) -> bool:
     starter_geometry = handoff.get("starterGeometry") if isinstance(handoff.get("starterGeometry"), dict) else {}
     reviewed_geometry = handoff.get("reviewedGeometry") if isinstance(handoff.get("reviewedGeometry"), dict) else {}
@@ -5279,7 +5302,8 @@ class JobManager:
         reviewed_geometry = handoff.get("reviewedGeometry") if isinstance(handoff.get("reviewedGeometry"), dict) else {}
         surface_geometry = reviewed_geometry if isinstance(reviewed_geometry.get("surfaces"), list) else starter_geometry
         cad_reviewed = starter_geometry.get("cadReviewed") is True
-        skip_snappy_for_starter = _openfoam_uses_starter_fitted_mesh(case_dir, handoff)
+        is_axisymmetric_wedge = _openfoam_case_is_axisymmetric_wedge(case_dir)
+        skip_snappy_for_starter = _openfoam_uses_starter_fitted_mesh(case_dir, handoff) or is_axisymmetric_wedge
         _, missing_boundary_tags, _ = _reviewed_boundary_tag_status(starter_geometry)
         _, missing_surface_roles, _, required_patch_names = _reviewed_surface_status(surface_geometry)
         missing_boundary_tags = sorted({*missing_boundary_tags, *missing_surface_roles})

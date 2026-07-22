@@ -3283,6 +3283,19 @@ function MeshControlsPanel({
           </select>
         </label>
       )}
+      {solver.advancedMode === "incompressible-navier-stokes" && (
+        <label>
+          Mesh mode
+          <select
+            aria-label="Mesh mode"
+            value={solver.meshMode ?? "planar-2d"}
+            onChange={(event) => onSolverChange({ meshMode: event.target.value as NonNullable<SolverSettings["meshMode"]> })}
+          >
+            <option value="planar-2d">Planar 2D (default)</option>
+            <option value="axisymmetric">Axisymmetric (3D pipe)</option>
+          </select>
+        </label>
+      )}
       <label>
         Transverse cells
         <select

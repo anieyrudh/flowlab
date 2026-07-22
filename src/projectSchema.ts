@@ -315,6 +315,7 @@ const projectSchema = z.object({
     turbulence: z.enum(["laminar", "rans-k-epsilon", "rans-sst", "les", "dns"]),
     meshResolution: z.enum(["coarse", "medium", "fine"]),
     runMode: z.enum(["transient", "steady"]).optional(),
+    meshMode: z.enum(["planar-2d", "axisymmetric"]).optional(),
     reviewedGeometry: reviewedGeometrySchema.optional(),
     meshControls: z
       .object({

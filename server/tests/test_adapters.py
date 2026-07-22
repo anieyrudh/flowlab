@@ -1501,3 +1501,92 @@ def test_openfoam_steady_run_mode_ignored_for_transient_physics(monkeypatch) -> 
     assert "endTime         0.001;" in case.files["system/controlDict"]
     assert "default         Euler;" in case.files["system/fvSchemes"]
     assert "residualControl" not in case.files["system/fvSolution"]
+
+
+def _circular_pipe_project(mesh_mode: str | None) -> dict:
+    solver: dict = {"meshResolution": "coarse"}
+    if mesh_mode is not None:
+        solver["meshMode"] = mesh_mode
+    return {
+        "name": "Axisymmetric pipe",
+        "fluid": {
+            "density": 1000.0,
+            "dynamicViscosity": 0.018,
+            "temperature": 300.0,
+            "vaporPressure": 2300.0,
+            "bulkModulus": 2.2e9,
+        },
+        "solver": solver,
+        "nodes": {
+            "source": {"id": "source", "type": "source", "position": {"x": 0, "y": 0}, "pressure": 101325.0},
+            "sink": {"id": "sink", "type": "sink", "position": {"x": 400, "y": 0}, "pressure": 101325.0},
+        },
+        "edges": {
+            "pipe": {
+                "id": "pipe",
+                "type": "pipe",
+                "from": "source",
+                "to": "sink",
+                "fromPort": "outlet",
+                "toPort": "inlet",
+                "length": 8.0,
+                "shape": {"kind": "circular", "diameter": 0.1},
+            }
+        },
+    }
+
+
+def test_openfoam_axisymmetric_mesh_mode_emits_valid_wedge_pipe(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+
+    case = adapters.generate_case(
+        CaseRequest.model_construct(
+            project=_circular_pipe_project("axisymmetric"),
+            solver="openfoam",
+            advancedMode="incompressible-navier-stokes",
+        )
+    )
+
+    block_mesh = case.files["system/blockMeshDict"]
+    assert "type wedge" in block_mesh
+    for patch in ("inlet", "outlet", "walls", "front", "back"):
+        assert patch in block_mesh
+    # The fitted planar polyMesh is skipped so Allrun's blockMesh builds the wedge.
+    assert "constant/polyMesh/points" not in case.files
+    assert "wedge" in case.files["0/U"] and "axis" in case.files["0/U"]
+    assert "wedge" in case.files["0/p"] and "frontAndBack" not in case.files["0/p"]
+    # The wedge-aware validator must accept the case with no issues.
+    assert validate_solver_case(case) == []
+
+
+def test_openfoam_default_mesh_mode_stays_planar_2d(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+
+    case = adapters.generate_case(
+        CaseRequest.model_construct(
+            project=_circular_pipe_project(None),
+            solver="openfoam",
+            advancedMode="incompressible-navier-stokes",
+        )
+    )
+
+    assert "type wedge" not in case.files["system/blockMeshDict"]
+    assert "frontAndBack" in case.files["0/U"]
+    assert "constant/polyMesh/points" in case.files
+
+
+def test_openfoam_axisymmetric_ignored_for_transient_physics(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+
+    # meshMode=axisymmetric must NOT apply to inherently transient modes.
+    case = adapters.generate_case(
+        CaseRequest.model_construct(
+            project=_circular_pipe_project("axisymmetric"),
+            solver="openfoam",
+            advancedMode="water-hammer",
+        )
+    )
+    assert "type wedge" not in case.files["system/blockMeshDict"]

@@ -320,7 +320,31 @@ mergePatchPairs
     )
 
 
-def _openfoam_vector_field(object_name: str, internal: str = "(1 0 0)") -> str:
+# The "far" patches close the transverse extent of the domain. Planar-2D uses a
+# single empty `frontAndBack`; the axisymmetric wedge uses `wedge` front/back
+# faces plus an empty collapsed `axis`. Field boundaryField patch names must match
+# the mesh exactly or foamRun aborts, so these move in lockstep with the mesh mode.
+_PLANAR_FAR_FIELD_PATCHES = """    frontAndBack
+    {
+        type            empty;
+    }"""
+
+_WEDGE_FAR_FIELD_PATCHES = """    front
+    {
+        type            wedge;
+    }
+    back
+    {
+        type            wedge;
+    }
+    axis
+    {
+        type            empty;
+    }"""
+
+
+def _openfoam_vector_field(object_name: str, internal: str = "(1 0 0)", far_patches: str | None = None) -> str:
+    far = _PLANAR_FAR_FIELD_PATCHES if far_patches is None else far_patches
     return (
         _foam_header("volVectorField", object_name)
         + f"""dimensions      [0 1 -1 0 0 0 0];
@@ -342,10 +366,7 @@ boundaryField
     {{
         type            noSlip;
     }}
-    frontAndBack
-    {{
-        type            empty;
-    }}
+{far}
 }}
 """
     )
@@ -356,7 +377,9 @@ def _openfoam_pressure_field(
     dimensions: str = "[0 2 -2 0 0 0 0]",
     internal: str = "0",
     outlet: str = "0",
+    far_patches: str | None = None,
 ) -> str:
+    far = _PLANAR_FAR_FIELD_PATCHES if far_patches is None else far_patches
     return (
         _foam_header("volScalarField", object_name)
         + f"""dimensions      {dimensions};
@@ -378,11 +401,111 @@ boundaryField
     {{
         type            zeroGradient;
     }}
-    frontAndBack
-    {{
-        type            empty;
-    }}
+{far}
 }}
+"""
+    )
+
+
+AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG = 2.5
+
+
+def _openfoam_axisymmetric_pipe_geometry(mesh: dict[str, Any] | None) -> dict[str, float] | None:
+    """Return {R, L, nAxial, nRadial} for a single straight circular pipe, else None."""
+    if not isinstance(mesh, dict):
+        return None
+    regions = mesh.get("regions")
+    if not isinstance(regions, list) or len(regions) != 1:
+        return None
+    region = regions[0]
+    shape = region.get("shape") if isinstance(region.get("shape"), dict) else {}
+    if region.get("edgeType") != "pipe" or shape.get("kind") != "circular":
+        return None
+    try:
+        diameter = float(shape.get("diameter"))
+        span_px = float(region.get("spanLengthPx"))
+        n_axial = int(region.get("segmentCount"))
+        n_radial = int(region.get("transverseDivisions"))
+    except (TypeError, ValueError):
+        return None
+    if diameter <= 0 or span_px <= 0 or n_axial < 1 or n_radial < 1:
+        return None
+    return {"R": diameter / 2.0, "L": span_px * 0.01, "nAxial": float(n_axial), "nRadial": float(n_radial)}
+
+
+def _openfoam_axisymmetric_requested(project: dict[str, Any] | None, advanced_mode: str, mesh: dict[str, Any] | None) -> bool:
+    """True when an axisymmetric wedge pipe mesh was requested and is expressible.
+
+    Opt-in via ``project["solver"]["meshMode"] == "axisymmetric"``. Honoured only for
+    incompressible-navier-stokes on a single straight circular pipe; otherwise the
+    default planar-2D strip mesh is used. The default (no ``meshMode``) is unchanged.
+    """
+    if advanced_mode != "incompressible-navier-stokes":
+        return False
+    solver = project.get("solver") if isinstance(project, dict) and isinstance(project.get("solver"), dict) else {}
+    if str(solver.get("meshMode", "planar-2d")).strip().lower() != "axisymmetric":
+        return False
+    return _openfoam_axisymmetric_pipe_geometry(mesh) is not None
+
+
+def _openfoam_axisymmetric_block_mesh_dict(mesh: dict[str, Any]) -> str:
+    """Generate a wedge blockMeshDict for a true 3D axisymmetric circular pipe.
+
+    A ~5-degree wedge revolved about the pipe axis with OpenFOAM `wedge` front/back
+    patches and a collapsed `axis`. Validated to reproduce 3D Hagen-Poiseuille;
+    see docs/openfoam-axisymmetric-wedge-2026-07-22.md.
+    """
+    geometry = _openfoam_axisymmetric_pipe_geometry(mesh)
+    if geometry is None:
+        raise ValueError("axisymmetric mesh mode requires a single straight circular pipe")
+    radius = geometry["R"]
+    length = geometry["L"]
+    n_axial = int(geometry["nAxial"])
+    n_radial = int(geometry["nRadial"])
+    rt = radius * math.tan(math.radians(AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG))
+    return (
+        _foam_header("dictionary", "blockMeshDict")
+        + f"""convertToMeters 1;
+
+vertices
+(
+    (0 0 0)
+    ({length:.9g} 0 0)
+    ({length:.9g} {radius:.9g} {-rt:.9g})
+    (0 {radius:.9g} {-rt:.9g})
+    (0 0 0)
+    ({length:.9g} 0 0)
+    ({length:.9g} {radius:.9g} {rt:.9g})
+    (0 {radius:.9g} {rt:.9g})
+);
+
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) ({n_axial} {n_radial} 1) simpleGrading (1 1 1)
+);
+
+edges
+(
+);
+
+defaultPatch
+{{
+    name axis;
+    type empty;
+}}
+
+boundary
+(
+    inlet  {{ type patch; faces ( (0 4 7 3) ); }}
+    outlet {{ type patch; faces ( (1 2 6 5) ); }}
+    walls  {{ type wall;  faces ( (2 3 7 6) ); }}
+    front  {{ type wedge; faces ( (4 5 6 7) ); }}
+    back   {{ type wedge; faces ( (0 3 2 1) ); }}
+);
+
+mergePatchPairs
+(
+);
 """
     )
 
@@ -4595,6 +4718,11 @@ class OpenFOAMAdapter(SolverAdapter):
             mesh = None
             openfoam_mesh_files = {}
             cht_region_mesh_files = {}
+        axisymmetric = _openfoam_axisymmetric_requested(request.project, request.advancedMode, mesh)
+        if axisymmetric:
+            # Skip the fitted planar polyMesh so Allrun runs blockMesh on the wedge dict.
+            openfoam_mesh_files = {}
+        wedge_far = _WEDGE_FAR_FIELD_PATCHES if axisymmetric else None
         mode_files, mode_provenance = _openfoam_mode_files(request.advancedMode, conditions, request.project)
         pressure_dimensions = (
             "[1 -1 -2 0 0 0 0]"
@@ -4630,23 +4758,27 @@ class OpenFOAMAdapter(SolverAdapter):
                 guarded_preflight=request.advancedMode == "conjugate-heat-transfer",
                 parallel_settings=parallel_settings,
             ),
-            "system/blockMeshDict": _openfoam_block_mesh_dict(mesh),
+            "system/blockMeshDict": (
+                _openfoam_axisymmetric_block_mesh_dict(mesh) if axisymmetric else _openfoam_block_mesh_dict(mesh)
+            ),
             "system/controlDict": _openfoam_control_dict(solver, mesh, request.advancedMode, request.project),
             "system/functions": _openfoam_function_object_entries(mesh, request.advancedMode, request.project),
             "system/fvSchemes": _openfoam_fv_schemes(steady=_openfoam_steady_requested(request.advancedMode, request.project)),
             "system/fvSolution": _openfoam_fv_solution(steady=_openfoam_steady_requested(request.advancedMode, request.project)),
-            "0/U": _openfoam_vector_field("U", f"({conditions.inlet_velocity:.9g} 0 0)"),
+            "0/U": _openfoam_vector_field("U", f"({conditions.inlet_velocity:.9g} 0 0)", far_patches=wedge_far),
             "0/p": _openfoam_pressure_field(
                 "p",
                 pressure_dimensions,
                 internal=f"{outlet_pressure_value:.9g}",
                 outlet=f"{outlet_pressure_value:.9g}",
+                far_patches=wedge_far,
             ),
             "0/p_rgh": _openfoam_pressure_field(
                 "p_rgh",
                 pressure_dimensions,
                 internal=f"{outlet_pressure_value:.9g}",
                 outlet=f"{outlet_pressure_value:.9g}",
+                far_patches=wedge_far,
             ),
             "0/T": _openfoam_temperature_field(conditions.temperature),
             "constant/transportProperties": _openfoam_transport_properties(request.advancedMode, conditions),

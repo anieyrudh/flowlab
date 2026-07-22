@@ -180,6 +180,11 @@ export type SolverSettings = {
   // solve; "steady" runs steady-state SIMPLE to convergence so the case yields a
   // fully-developed pressure drop. Honored only for incompressible-navier-stokes.
   runMode?: "transient" | "steady";
+  // OpenFOAM mesh topology for a "pipe" edge. "planar-2d" (default) is a 2D
+  // one-cell-thick channel strip; "axisymmetric" builds a true 3D circular-pipe
+  // wedge that satisfies the 3D Hagen-Poiseuille law. Incompressible-navier-stokes
+  // on a single straight circular pipe only; otherwise the planar strip is used.
+  meshMode?: "planar-2d" | "axisymmetric";
   reviewedGeometry?: ReviewedGeometrySource;
   meshControls?: {
     longitudinalRefinement?: number;
