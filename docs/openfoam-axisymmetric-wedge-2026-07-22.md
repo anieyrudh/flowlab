@@ -81,7 +81,11 @@ inlet/outlet/wall as usual (no `frontAndBack`).
   full-circle scaling rules, and remains explicitly `pending-real-run`.
 - `axisymmetric_straight_pipe_campaign.py --materialize-only` produces coarse
   16x4, medium 32x8, and fine 64x16 cases through the product adapter without
-  running or promoting them.
+  running or promoting them. Its separate `--run-and-package` action requires
+  clean frozen source plus an inspectable pinned Docker image, executes all
+  three cases through `JobManager`, evaluates the retained runtime evidence,
+  and writes a content-hashed read-only candidate package. It never edits the
+  fixture or registry.
 
 ## Scope notes / limitations
 - Axisymmetric paths must remain circular, straight, collinear, non-branching, and

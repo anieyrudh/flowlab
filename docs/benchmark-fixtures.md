@@ -103,8 +103,22 @@ PYTHONPATH=. python3 -m server.flowlab.axisymmetric_straight_pipe_campaign \
 
 This writes exact 16x4, 32x8, and 64x16 wedge cases and source hashes through
 `adapters.generate_case`. It refuses a non-empty output directory and cannot
-run, promote, or edit the fixture. Completed JobManager case directories can be
-checked with `evaluate_completed_level`, which independently recomputes the
+run, promote, or edit the fixture.
+
+The governed product-path run uses a separate explicit action:
+
+```bash
+PYTHONPATH=. python3 -m server.flowlab.axisymmetric_straight_pipe_campaign \
+  benchmarks/cases/straight-pipe/campaigns/<new-campaign-id> --run-and-package
+```
+
+Execution refuses uncommitted campaign/adapter/execution/fixture source and an
+unresolved Docker image identity. It runs all three levels sequentially through
+`JobManager.queue_job`, retains every raw case under the ignored campaign
+directory, evaluates each completed case, and creates a content-hashed,
+read-only `immutable-evidence-package`. It never edits the fixture or registry.
+Completed JobManager case directories can also be checked with
+`evaluate_completed_level`, which independently recomputes the
 mean-velocity-controller, pressure-gradient-tail, continuity, final-linear-
 residual, runtime-3D-mesh, pressure-drop, full-circle flow, and mass-balance
 quantities. A passing level evaluation is still only an experimental candidate;
