@@ -15,25 +15,43 @@ The editor validates pipe endpoint edits and imported projects for self-loops, i
 
 The fastest supported path is the native macOS application. It packages the production React UI and local FastAPI service in a signed AppKit/WebKit shell; there is no mobile target.
 
-Prerequisites on the build/run machine:
+Prerequisites on the build machine:
 
 - Node dependencies installed with `npm install`.
-- The Python selected by `FLOWLAB_PYTHON` or `python3` has `server/requirements.txt` installed.
-- Docker Desktop is running with `flowlab/openfoam11-gmsh:2026-07-13` available for advanced OpenFOAM execution.
+- Xcode Command Line Tools and an arm64 CPython 3.12 build environment.
+- The exact packages in `desktop/macos/requirements-build.txt`.
+
+The packaged UI and local service do not require Python on the run machine.
+Docker Desktop and `flowlab/openfoam11-gmsh:2026-07-13` remain explicit
+external runtime dependencies only for advanced OpenFOAM execution.
 
 Build and launch:
 
 ```bash
-npm run desktop:build
+python3.12 -m venv .venv/desktop-build
+.venv/desktop-build/bin/python -m pip install -r desktop/macos/requirements-build.txt
+FLOWLAB_BUILD_PYTHON=.venv/desktop-build/bin/python npm run desktop:build
+npm run desktop:qa
 open release/FlowLab.app
 ```
 
-The build records the active Python executable in the app bundle. Set `FLOWLAB_PYTHON=/absolute/path/to/python` before building to select a different environment. Runtime jobs and logs live under `~/Library/Application Support/FlowLab/`; the desktop backend log is `flowlab-backend.log` there.
+The build supports arm64 macOS 13.0 or newer and packages CPython 3.12 plus the
+backend dependencies inside the application. It rejects other architectures,
+Python series, and PyInstaller versions. Runtime jobs and logs live under
+`~/Library/Application Support/FlowLab/`; the desktop backend log is
+`flowlab-backend.log` there.
 
 The `Validated regimes` panel currently reports `Candidate bounded regime — laminar open-boundary all-hex` as promotion-blocked. The v4 numerical, reproducibility, negative-control, and product-contract gates passed, but independent empirical validation has not: the completed FDA nozzle Re=500 v2 assessment is `validated-blocked` and its pressure reference is formally nonpromotional. The corrected successor mesh-only recovery passed its prospective 1% geometry contract, and the next velocity-focused numerical-verification design passes its offline fail-closed validator. Hugging Face Jobs twice confirmed `amd64`, but the connector credential could neither create nor commit main-branch evidence to the private dataset; no artifact or solver resulted. The local `fluidmech` credential separately proved private dataset and Space write access. The official OpenFOAM image then failed the private Space's rootless builder on UID/GID 98765. A prospectively frozen R3 image recovery using UID/GID 1000 passed all local identity gates and built, pushed, and ran at an immutable private Space commit and commit-prefixed registry digest. That qualifies only the image path: volume recovery, both coarse pilots, full HF infrastructure qualification, and the six-case execution contract remain blocked. `experimentalDatasetPinned` remains false, the runnable action is hidden, and the dedicated API fails closed with HTTP 409. The historical coarse preset implementation can atomically mint the immutable 12³ OpenFOAM case only after a digest-checked final campaign report passes every required gate and explicitly sets `promotionAuthorized=true`. Any generated-file mutation removes eligibility. All ordinary project-generated cases remain explicitly experimental.
 
-The packaged app intentionally carries only the accepted evidence and traction-audit source needed at runtime, not the full research run tree. The current app bundle is a local, ad-hoc-signed build; broader distribution still requires a bundled Python runtime plus Apple Developer ID signing/notarization.
-The current axisymmetric/XYZ packaged QA and exact release limitations are recorded in [docs/desktop-axisymmetric-qa-2026-07-23.md](docs/desktop-axisymmetric-qa-2026-07-23.md).
+The packaged app intentionally carries only the accepted evidence and
+traction-audit source needed at runtime, not the full research run tree. Local
+builds are ad-hoc signed by default. External distribution still requires a
+Developer ID Application signature, Apple notarization with a stapled ticket,
+and a launch test on a clean supported arm64 Mac. The historical
+axisymmetric/XYZ internal-package evidence is recorded in
+[docs/desktop-axisymmetric-qa-2026-07-23.md](docs/desktop-axisymmetric-qa-2026-07-23.md);
+the self-contained packaging disposition is tracked separately in
+[docs/desktop-release-qa-2026-07-23.md](docs/desktop-release-qa-2026-07-23.md).
 
 ## Run Locally
 

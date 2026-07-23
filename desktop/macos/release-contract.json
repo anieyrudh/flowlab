@@ -1,0 +1,40 @@
+{
+  "schema": "flowlab.macos_release_contract.v1",
+  "platform": "macOS",
+  "supportedArchitecture": "arm64",
+  "minimumMacOSVersion": "13.0",
+  "pythonRuntime": {
+    "implementation": "CPython",
+    "versionSeries": "3.12",
+    "bundled": true,
+    "externalInterpreterAllowed": false
+  },
+  "backendPackage": {
+    "builder": "PyInstaller",
+    "builderVersion": "6.21.0",
+    "layout": "onedir"
+  },
+  "externalDependencies": {
+    "desktopUiAndInstantHydraulics": [],
+    "advancedOpenFoam": [
+      "Docker Desktop",
+      "flowlab/openfoam11-gmsh:2026-07-13"
+    ]
+  },
+  "releaseGates": {
+    "internalPackage": [
+      "ad-hoc-or-stronger-code-signature",
+      "bundled-backend-runtime",
+      "relocated-launch",
+      "packaged-api-health",
+      "packaged-browser-ui",
+      "native-interaction-qa"
+    ],
+    "externalRelease": [
+      "Developer ID Application signature",
+      "Apple notarization acceptance",
+      "stapled notarization ticket",
+      "clean supported arm64 Mac launch"
+    ]
+  }
+}

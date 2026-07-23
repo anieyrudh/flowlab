@@ -44,12 +44,8 @@ static const NSInteger FlowLabPort = 8787;
     return directory;
 }
 
-- (NSString *)pythonExecutable {
-    NSString *override = [NSProcessInfo processInfo].environment[@"FLOWLAB_PYTHON"];
-    if (override.length > 0) return override;
-    NSString *configured = [NSString stringWithContentsOfURL:[self resourceURL:@"python-path.txt"] encoding:NSUTF8StringEncoding error:nil];
-    configured = [configured stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    return configured.length > 0 ? configured : @"/usr/bin/python3";
+- (NSURL *)backendExecutableURL {
+    return [self resourceURL:@"backend/FlowLabBackend"];
 }
 
 - (void)createWindow {
@@ -223,14 +219,14 @@ static const NSInteger FlowLabPort = 8787;
     self.backendLog = [NSFileHandle fileHandleForWritingAtPath:logURL.path];
 
     NSTask *task = [[NSTask alloc] init];
-    task.executableURL = [NSURL fileURLWithPath:[self pythonExecutable]];
-    task.arguments = @[@"-m", @"uvicorn", @"server.app:app", @"--host", @"127.0.0.1", @"--port", [NSString stringWithFormat:@"%ld", (long)FlowLabPort]];
+    task.executableURL = [self backendExecutableURL];
+    task.arguments = @[];
     task.currentDirectoryURL = support;
     NSMutableDictionary *environment = [[NSProcessInfo processInfo].environment mutableCopy];
     NSString *existingPath = environment[@"PATH"] ?: @"/usr/bin:/bin:/usr/sbin:/sbin";
     environment[@"PATH"] = [NSString stringWithFormat:@"%@:/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin", existingPath];
-    environment[@"PYTHONPATH"] = [NSBundle mainBundle].resourceURL.path;
     environment[@"PYTHONDONTWRITEBYTECODE"] = @"1";
+    environment[@"FLOWLAB_BACKEND_PORT"] = [NSString stringWithFormat:@"%ld", (long)FlowLabPort];
     environment[@"FLOWLAB_DESKTOP_DIST"] = [self resourceURL:@"dist"].path;
     environment[@"FLOWLAB_RUNTIME_DIR"] = [support URLByAppendingPathComponent:@"runtime" isDirectory:YES].path;
     task.environment = environment;
@@ -245,7 +241,7 @@ static const NSInteger FlowLabPort = 8787;
     };
     NSError *error = nil;
     if (![task launchAndReturnError:&error]) {
-        [self showError:[NSString stringWithFormat:@"Could not start Python at %@. Set FLOWLAB_PYTHON to an environment containing FastAPI and Uvicorn.\n\n%@", [self pythonExecutable], error.localizedDescription]];
+        [self showError:[NSString stringWithFormat:@"Could not start the bundled FlowLab backend at %@.\n\n%@", [self backendExecutableURL].path, error.localizedDescription]];
         return;
     }
     self.backend = task;

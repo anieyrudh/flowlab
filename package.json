@@ -16,7 +16,9 @@
     "smoke:su2": "python3 -m server.flowlab.smoke --solver su2",
     "smoke:mujoco": "python3 -m server.flowlab.smoke --solver mujoco",
     "smoke:code-saturne": "python3 -m server.flowlab.smoke --solver code-saturne",
-    "desktop:build": "bash scripts/build_macos_app.sh"
+    "desktop:build": "bash scripts/build_macos_app.sh",
+    "desktop:qa": "bash scripts/qa_macos_app.sh release/FlowLab.app internal",
+    "desktop:qa:external": "bash scripts/qa_macos_app.sh release/FlowLab.app external"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",

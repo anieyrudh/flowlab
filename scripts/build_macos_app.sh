@@ -3,17 +3,41 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/release/FlowLab.app"
-CONTENTS="$APP/Contents"
+CONTRACT="$ROOT/desktop/macos/release-contract.json"
+BUILD_PYTHON="${FLOWLAB_BUILD_PYTHON:-$(command -v python3)}"
+SIGNING_IDENTITY="${FLOWLAB_CODESIGN_IDENTITY:--}"
+ARCHITECTURE="$(plutil -extract supportedArchitecture raw "$CONTRACT")"
+MINIMUM_MACOS="$(plutil -extract minimumMacOSVersion raw "$CONTRACT")"
+PYTHON_SERIES="$(plutil -extract pythonRuntime.versionSeries raw "$CONTRACT")"
+PYINSTALLER_VERSION="$(plutil -extract backendPackage.builderVersion raw "$CONTRACT")"
+SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/flowlab-macos-build.XXXXXX")"
+STAGED_APP="$BUILD_ROOT/FlowLab.app"
+CONTENTS="$STAGED_APP/Contents"
 RESOURCES="$CONTENTS/Resources"
-PYTHON_BIN="${FLOWLAB_PYTHON:-$(command -v python3)}"
+BACKEND_ROOT="$RESOURCES/backend"
+
+cleanup() {
+  rm -rf "$BUILD_ROOT"
+}
+trap cleanup EXIT
 
 cd "$ROOT"
+
+[[ "$ARCHITECTURE" == "arm64" ]] || {
+  echo "Unsupported macOS release architecture: $ARCHITECTURE" >&2
+  exit 1
+}
+"$BUILD_PYTHON" -c "import platform,sys; assert platform.machine() == '$ARCHITECTURE', platform.machine(); assert f'{sys.version_info.major}.{sys.version_info.minor}' == '$PYTHON_SERIES', sys.version"
+"$BUILD_PYTHON" -c "import PyInstaller; assert PyInstaller.__version__ == '$PYINSTALLER_VERSION', PyInstaller.__version__"
+
 npm run build
 
-rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$RESOURCES"
 
 xcrun clang \
+  -arch "$ARCHITECTURE" \
+  "-mmacosx-version-min=$MINIMUM_MACOS" \
   -fobjc-arc \
   -O2 \
   -framework Cocoa \
@@ -23,14 +47,29 @@ xcrun clang \
 
 cp desktop/macos/Info.plist "$CONTENTS/Info.plist"
 cp -R dist "$RESOURCES/dist"
-rsync -a --exclude '__pycache__' --exclude '*.pyc' --exclude 'tests' server/ "$RESOURCES/server/"
-cp -R reference_cases "$RESOURCES/reference_cases"
-cp server/requirements.txt "$RESOURCES/requirements.txt"
-printf '%s\n' "$PYTHON_BIN" > "$RESOURCES/python-path.txt"
+cp desktop/macos/release-contract.json "$RESOURCES/release-contract.json"
+cp desktop/macos/requirements-build.txt "$RESOURCES/requirements-build.txt"
+
+PYINSTALLER_CONFIG_DIR="$BUILD_ROOT/pyinstaller-config" "$BUILD_PYTHON" -m PyInstaller \
+  --noconfirm \
+  --clean \
+  --onedir \
+  --name FlowLabBackend \
+  --target-architecture "$ARCHITECTURE" \
+  --paths "$ROOT" \
+  --collect-submodules uvicorn \
+  --distpath "$BUILD_ROOT/backend-dist" \
+  --workpath "$BUILD_ROOT/backend-work" \
+  --specpath "$BUILD_ROOT/backend-spec" \
+  desktop/macos/backend_main.py
+
+mkdir -p "$BACKEND_ROOT"
+cp -R "$BUILD_ROOT/backend-dist/FlowLabBackend/." "$BACKEND_ROOT/"
+cp -R reference_cases "$BACKEND_ROOT/_internal/reference_cases"
 
 copy_evidence() {
   local source="$1"
-  local target="$RESOURCES/$source"
+  local target="$BACKEND_ROOT/_internal/$source"
   mkdir -p "$(dirname "$target")"
   cp "$ROOT/$source" "$target"
 }
@@ -47,5 +86,17 @@ copy_evidence "benchmarks/tools/flowlabPatchTractionAudit/flowlabPatchTractionAu
 copy_evidence "benchmarks/tools/flowlabPatchTractionAudit/Make/files"
 copy_evidence "benchmarks/tools/flowlabPatchTractionAudit/Make/options"
 
-codesign --force --deep --sign - "$APP"
+"$BUILD_PYTHON" scripts/write_macos_build_manifest.py \
+  --output "$RESOURCES/build-manifest.json" \
+  --architecture "$ARCHITECTURE" \
+  --minimum-macos "$MINIMUM_MACOS" \
+  --sdk "$SDK_VERSION" \
+  --signing-identity "$SIGNING_IDENTITY"
+
+codesign --force --deep --sign "$SIGNING_IDENTITY" "$STAGED_APP"
+bash scripts/qa_macos_app.sh "$STAGED_APP" internal
+
+mkdir -p "$(dirname "$APP")"
+rm -rf "$APP"
+mv "$STAGED_APP" "$APP"
 echo "Built $APP"
