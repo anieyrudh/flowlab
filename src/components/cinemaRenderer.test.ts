@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { VtkResultDataset } from "../types";
-import { exteriorTriangleCount, extractExteriorCellFaces } from "./cinemaRenderer";
+import {
+  exteriorTriangleCount,
+  extractExteriorCellFaces,
+  resultSurfaceTriangles
+} from "./cinemaRenderer";
 
 function dataset(
   points: [number, number, number][],
@@ -35,6 +39,9 @@ describe("Cinema VTK exterior surface extraction", () => {
 
     expect(extractExteriorCellFaces(volume)).toHaveLength(6);
     expect(exteriorTriangleCount(volume)).toBe(12);
+    expect(resultSurfaceTriangles(volume)).toHaveLength(12);
+    expect(resultSurfaceTriangles(volume).every((triangle) => triangle.ownerCellIndex === 0)).toBe(true);
+    expect(resultSurfaceTriangles(volume).every((triangle) => triangle.pointIndices.length === 3)).toBe(true);
   });
 
   it("removes the shared face between two adjacent hexahedra", () => {
@@ -58,6 +65,9 @@ describe("Cinema VTK exterior surface extraction", () => {
     expect(faces).toHaveLength(10);
     expect(exteriorTriangleCount(volume)).toBe(20);
     expect(new Set(faces.map((face) => face.ownerCellIndex))).toEqual(new Set([0, 1]));
+    expect(new Set(resultSurfaceTriangles(volume).map((triangle) => triangle.ownerCellIndex))).toEqual(
+      new Set([0, 1])
+    );
   });
 
   it.each([

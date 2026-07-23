@@ -743,3 +743,101 @@ export function sampleDatasetAtCanvasPoint(
     unit: fieldValues.unit
   };
 }
+
+export function sampleDatasetAtWorldPoint(
+  dataset: VtkResultDataset | null,
+  overlay: string,
+  worldPoint: [number, number, number],
+  selection: ResultFieldSelection | null = null,
+  vectorComponent: ResultVectorComponent = "magnitude",
+  preferredCellIndex?: number,
+  preferredPointIndex?: number,
+  pointInterpolation?: {
+    pointIndices: [number, number, number];
+    weights: [number, number, number];
+  }
+): {
+  field: string;
+  value: number;
+  point: [number, number, number];
+  pointIndex: number;
+  distanceM: number;
+  location: "point" | "cell";
+  unit: ResultFieldUnit;
+} | null {
+  const fieldValues = selection
+    ? fieldValuesForSelection(dataset, selection, vectorComponent)
+    : fieldValuesForOverlay(dataset, overlay);
+  if (!dataset || !fieldValues || dataset.points.length === 0) return null;
+
+  const cellCenters = () =>
+    dataset.cells.map((cell) =>
+      cell.reduce(
+        (sum, pointIndex) => {
+          const point = dataset.points[pointIndex];
+          return [
+            sum[0] + point[0] / cell.length,
+            sum[1] + point[1] / cell.length,
+            sum[2] + point[2] / cell.length
+          ] as [number, number, number];
+        },
+        [0, 0, 0] as [number, number, number]
+      )
+    );
+  const candidates = fieldValues.location === "cell" ? cellCenters() : dataset.points;
+  if (candidates.length === 0) return null;
+  const preferred =
+    fieldValues.location === "cell" ? preferredCellIndex : preferredPointIndex;
+  let bestIndex =
+    Number.isInteger(preferred) && Number(preferred) >= 0 && Number(preferred) < candidates.length
+      ? Number(preferred)
+      : -1;
+  let bestDistance =
+    bestIndex >= 0
+      ? Math.hypot(
+          candidates[bestIndex][0] - worldPoint[0],
+          candidates[bestIndex][1] - worldPoint[1],
+          candidates[bestIndex][2] - worldPoint[2]
+        )
+      : Number.POSITIVE_INFINITY;
+  if (bestIndex < 0) {
+    candidates.forEach((point, index) => {
+      const distance = Math.hypot(
+        point[0] - worldPoint[0],
+        point[1] - worldPoint[1],
+        point[2] - worldPoint[2]
+      );
+      if (distance < bestDistance) {
+        bestIndex = index;
+        bestDistance = distance;
+      }
+    });
+  }
+  if (bestIndex < 0 || !Number.isFinite(fieldValues.values[bestIndex])) return null;
+  const interpolatedValue =
+    fieldValues.location === "point" &&
+    pointInterpolation &&
+    pointInterpolation.pointIndices.every(
+      (pointIndex) =>
+        Number.isInteger(pointIndex) &&
+        pointIndex >= 0 &&
+        pointIndex < fieldValues.values.length &&
+        Number.isFinite(fieldValues.values[pointIndex])
+    ) &&
+    pointInterpolation.weights.every((weight) => Number.isFinite(weight))
+      ? pointInterpolation.pointIndices.reduce(
+          (sum, pointIndex, index) =>
+            sum + fieldValues.values[pointIndex] * pointInterpolation.weights[index],
+          0
+        )
+      : null;
+  return {
+    field: fieldValues.field,
+    value: interpolatedValue ?? fieldValues.values[bestIndex],
+    point: [worldPoint[0], worldPoint[1], worldPoint[2]],
+    pointIndex: bestIndex,
+    distanceM: bestDistance,
+    location: fieldValues.location,
+    unit: fieldValues.unit
+  };
+}

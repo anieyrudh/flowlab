@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -180,6 +181,38 @@ def test_materialize_axisymmetric_campaign_freezes_three_levels(
 
     with pytest.raises(AxisymmetricStraightPipeCampaignError, match="refusing to overwrite"):
         materialize_campaign(output_dir)
+
+
+def test_campaign_clean_source_gate_covers_transitive_scientific_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.flowlab import axisymmetric_straight_pipe_campaign as campaign
+
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], *, cwd: Path | None = None) -> SimpleNamespace:
+        del cwd
+        commands.append(command)
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return SimpleNamespace(returncode=0, stdout="abc123\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(campaign, "_run_command", fake_run)
+
+    identity = campaign._source_control_identity()
+
+    assert identity["frozenPathsClean"] is True
+    assert set(identity["frozenPaths"]) >= {
+        "server/flowlab/adapters.py",
+        "server/flowlab/execution.py",
+        "server/flowlab/mesh.py",
+        "server/flowlab/results.py",
+        "server/flowlab/schemas.py",
+        "server/flowlab/verification.py",
+        "server/flowlab/axisymmetric_straight_pipe_campaign.py",
+        "benchmarks/cases/straight-pipe/benchmark.json",
+    }
+    assert commands[-1][:4] == ["git", "status", "--porcelain", "--"]
 
 
 def test_completed_level_evaluator_recomputes_physical_qois(

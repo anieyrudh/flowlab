@@ -541,6 +541,10 @@ def _source_control_identity() -> dict[str, Any]:
     frozen_paths = [
         "server/flowlab/adapters.py",
         "server/flowlab/execution.py",
+        "server/flowlab/mesh.py",
+        "server/flowlab/results.py",
+        "server/flowlab/schemas.py",
+        "server/flowlab/verification.py",
         "server/flowlab/axisymmetric_straight_pipe_campaign.py",
         "benchmarks/cases/straight-pipe/benchmark.json",
     ]
@@ -549,7 +553,7 @@ def _source_control_identity() -> dict[str, Any]:
         raise AxisymmetricStraightPipeCampaignError("could not inspect the frozen campaign source state")
     if status.stdout.strip():
         raise AxisymmetricStraightPipeCampaignError(
-            "refusing scientific execution with uncommitted campaign, adapter, execution, or fixture source"
+            "refusing scientific execution with uncommitted campaign or transitive scientific source"
         )
     return {
         "commit": commit.stdout.strip(),

@@ -10,6 +10,7 @@ import {
   parseAsciiVtuResult,
   parseLegacyVtkResult,
   sampleDatasetAtCanvasPoint,
+  sampleDatasetAtWorldPoint,
   timelineStatsForSnapshots
 } from "./vtk";
 
@@ -372,6 +373,43 @@ U 3 1 float
       unit: { symbol: "m/s", label: "velocity" }
     });
     expect(sampleDatasetAtCanvasPoint(parsed, "pressure", { x: 0.5, y: 0.5 }, { width: 10, height: 10 }, { field: "missing", location: "cell", kind: "scalar" })).toBeNull();
+    expect(
+      sampleDatasetAtWorldPoint(
+        parsed,
+        "pressure",
+        [0.9, 0.8, 0],
+        { field: "p", location: "cell", kind: "scalar" },
+        "magnitude",
+        0,
+        2
+      )
+    ).toMatchObject({
+      field: "p",
+      value: 8,
+      point: [0.9, 0.8, 0],
+      pointIndex: 0,
+      location: "cell"
+    });
+    expect(
+      sampleDatasetAtWorldPoint(
+        parsed,
+        "velocity",
+        [0.02, 0.95, 0],
+        { field: "velocity", location: "point", kind: "vector" },
+        "x",
+        0,
+        3,
+        {
+          pointIndices: [0, 1, 3],
+          weights: [0.2, 0.3, 0.5]
+        }
+      )
+    ).toMatchObject({
+      field: "velocity",
+      value: 2.8,
+      pointIndex: 3,
+      location: "point"
+    });
   });
 
   it("infers conservative units for common CFD result fields", () => {

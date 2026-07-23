@@ -20,6 +20,14 @@ export type CinemaPick =
   | { kind: "port"; nodeId: string; port: PipePortId; point: Vec2 }
   | { kind: "rotate"; nodeId: string };
 
+export type CinemaResultProbe = {
+  point: [number, number, number];
+  ownerCellIndex: number;
+  nearestPointIndex: number;
+  trianglePointIndices: [number, number, number];
+  barycentricWeights: [number, number, number];
+};
+
 export type CinemaRuntime = {
   center: Vec2;
   worldScale: number;
@@ -33,6 +41,7 @@ export type CinemaRuntime = {
   resize: () => void;
   dispose: () => void;
   pickAt: (event: Pick<PointerEvent, "clientX" | "clientY">) => CinemaPick | null;
+  probeAt: (event: Pick<PointerEvent, "clientX" | "clientY">) => CinemaResultProbe | null;
   pointAt: (event: Pick<PointerEvent, "clientX" | "clientY">) => Vec2 | null;
 };
 
@@ -255,6 +264,24 @@ export function exteriorTriangleCount(dataset: VtkResultDataset): number {
   return extractExteriorCellFaces(dataset).reduce((count, face) => count + Math.max(0, face.pointIndices.length - 2), 0);
 }
 
+export type ResultSurfaceTriangle = {
+  pointIndices: [number, number, number];
+  ownerCellIndex: number;
+};
+
+export function resultSurfaceTriangles(dataset: VtkResultDataset): ResultSurfaceTriangle[] {
+  return extractExteriorCellFaces(dataset).flatMap(({ pointIndices, ownerCellIndex }) => {
+    const triangles: ResultSurfaceTriangle[] = [];
+    for (let index = 1; index < pointIndices.length - 1; index += 1) {
+      triangles.push({
+        pointIndices: [pointIndices[0], pointIndices[index], pointIndices[index + 1]],
+        ownerCellIndex
+      });
+    }
+    return triangles;
+  });
+}
+
 function fieldValueForDatasetPoint(values: number[], location: "point" | "cell", pointIndex: number, cellIndex: number, cell: number[]) {
   if (location === "point") return values[pointIndex] ?? 0;
   return values[cellIndex] ?? cell.reduce((sum, index) => sum + (values[index] ?? 0), 0) / Math.max(cell.length, 1);
@@ -267,30 +294,34 @@ function addResultSurfaceMesh(
   resultFieldSelection: ResultFieldSelection | null,
   resultVectorComponent: ResultVectorComponent,
   resultColorMap: ResultColorMap
-) {
+): {
+  surface: THREE.Mesh;
+  triangles: ResultSurfaceTriangle[];
+  bounds: ReturnType<typeof datasetBounds>;
+  meshScale: number;
+} | null {
   const fieldValues = resultFieldSelection ? fieldValuesForSelection(dataset, resultFieldSelection, resultVectorComponent) : fieldValuesForOverlay(dataset, overlay);
-  if (!fieldValues || dataset.cells.length === 0 || dataset.points.length === 0) return;
+  if (!fieldValues || dataset.cells.length === 0 || dataset.points.length === 0) return null;
   const bounds = datasetBounds(dataset);
   const maxValue = Math.max(...fieldValues.values.map((value) => Math.abs(value)), 1e-9);
   const positions: number[] = [];
   const colors: number[] = [];
   const meshScale = 5.2 / bounds.span;
+  const triangles = resultSurfaceTriangles(dataset);
 
-  extractExteriorCellFaces(dataset).forEach(({ pointIndices, ownerCellIndex }) => {
+  triangles.forEach(({ pointIndices, ownerCellIndex }) => {
     const cell = dataset.cells[ownerCellIndex];
-    for (let i = 1; i < pointIndices.length - 1; i += 1) {
-      [pointIndices[0], pointIndices[i], pointIndices[i + 1]].forEach((pointIndex) => {
-        const point = dataset.points[pointIndex];
-        const color = new THREE.Color(
-          resultValueColor(fieldValueForDatasetPoint(fieldValues.values, fieldValues.location, pointIndex, ownerCellIndex, cell), maxValue, resultColorMap)
-        );
-        positions.push((point[0] - bounds.center[0]) * meshScale, (point[1] - bounds.center[1]) * meshScale, (point[2] - bounds.center[2]) * meshScale + 0.16);
-        colors.push(color.r, color.g, color.b);
-      });
-    }
+    pointIndices.forEach((pointIndex) => {
+      const point = dataset.points[pointIndex];
+      const color = new THREE.Color(
+        resultValueColor(fieldValueForDatasetPoint(fieldValues.values, fieldValues.location, pointIndex, ownerCellIndex, cell), maxValue, resultColorMap)
+      );
+      positions.push((point[0] - bounds.center[0]) * meshScale, (point[1] - bounds.center[1]) * meshScale, (point[2] - bounds.center[2]) * meshScale + 0.16);
+      colors.push(color.r, color.g, color.b);
+    });
   });
 
-  if (positions.length === 0) return;
+  if (positions.length === 0) return null;
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
@@ -305,6 +336,7 @@ function addResultSurfaceMesh(
   const surface = new THREE.Mesh(geometry, material);
   surface.name = `VTK ${fieldValues.field} exterior surface`;
   scene.add(surface);
+  return { surface, triangles, bounds, meshScale };
 }
 
 function canvasNdc(canvas: HTMLCanvasElement, event: Pick<PointerEvent, "clientX" | "clientY">) {
@@ -365,6 +397,7 @@ export function buildCinemaScene(options: {
   camera.updateMatrixWorld();
   camera.updateProjectionMatrix();
 
+  let currentProject = project;
   let center = projectCenter(project);
   const worldScale = 74;
   const pickables: THREE.Object3D[] = [];
@@ -419,7 +452,16 @@ export function buildCinemaScene(options: {
   floor.position.z = -0.45;
   scene.add(floor);
 
-  if (resultDataset) addResultSurfaceMesh(scene, resultDataset, project.visualization.overlay, resultFieldSelection, resultVectorComponent, resultColorMap);
+  const resultSurface = resultDataset
+    ? addResultSurfaceMesh(
+        scene,
+        resultDataset,
+        project.visualization.overlay,
+        resultFieldSelection,
+        resultVectorComponent,
+        resultColorMap
+      )
+    : null;
 
   const edgeValues = Object.values(result.edgeResults).map((edge) => {
     if (project.visualization.overlay === "pressure") return edge.pressureDrop;
@@ -621,6 +663,49 @@ export function buildCinemaScene(options: {
     return null;
   }
 
+  function probeAt(event: Pick<PointerEvent, "clientX" | "clientY">): CinemaResultProbe | null {
+    if (!resultDataset || !resultSurface) return null;
+    raycaster.setFromCamera(canvasNdc(canvas, event), camera);
+    const hit = raycaster.intersectObject(resultSurface.surface, false)[0];
+    const triangleIndex = hit?.faceIndex;
+    if (!hit || triangleIndex === undefined || triangleIndex === null || triangleIndex < 0) return null;
+    const triangle = resultSurface.triangles[triangleIndex];
+    if (!triangle) return null;
+    const physicalPoint: [number, number, number] = [
+      hit.point.x / resultSurface.meshScale + resultSurface.bounds.center[0],
+      hit.point.y / resultSurface.meshScale + resultSurface.bounds.center[1],
+      (hit.point.z - 0.16) / resultSurface.meshScale + resultSurface.bounds.center[2]
+    ];
+    const [firstIndex, secondIndex, thirdIndex] = triangle.pointIndices;
+    const barycentric = new THREE.Triangle(
+      new THREE.Vector3(...resultDataset.points[firstIndex]),
+      new THREE.Vector3(...resultDataset.points[secondIndex]),
+      new THREE.Vector3(...resultDataset.points[thirdIndex])
+    ).getBarycoord(new THREE.Vector3(...physicalPoint), new THREE.Vector3());
+    if (!barycentric) return null;
+    let nearestPointIndex = triangle.pointIndices[0];
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    triangle.pointIndices.forEach((pointIndex) => {
+      const point = resultDataset.points[pointIndex];
+      const distance = Math.hypot(
+        point[0] - physicalPoint[0],
+        point[1] - physicalPoint[1],
+        point[2] - physicalPoint[2]
+      );
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestPointIndex = pointIndex;
+      }
+    });
+    return {
+      point: physicalPoint,
+      ownerCellIndex: triangle.ownerCellIndex,
+      nearestPointIndex,
+      trianglePointIndices: triangle.pointIndices,
+      barycentricWeights: [barycentric.x, barycentric.y, barycentric.z]
+    };
+  }
+
   function pointAt(event: Pick<PointerEvent, "clientX" | "clientY">): Vec2 | null {
     raycaster.setFromCamera(canvasNdc(canvas, event), camera);
     const world = new THREE.Vector3();
@@ -646,6 +731,7 @@ export function buildCinemaScene(options: {
   }
 
   function updateModel(nextProject: FluidProject, nextResult: SimulationResult) {
+    currentProject = nextProject;
     const nextCenter = projectCenter(nextProject);
     center.x = nextCenter.x;
     center.y = nextCenter.y;
@@ -741,11 +827,13 @@ export function buildCinemaScene(options: {
     updateCamera(settings: CinemaCameraState) {
       applyCamera(camera, settings);
       camera.updateMatrixWorld();
+      Object.assign(projectedPositions, projectedNodePositions(currentProject, center, worldScale, camera, width, height));
       renderer.render(scene, camera);
     },
     resize,
     dispose,
     pickAt,
+    probeAt,
     pointAt
   };
   recordEditorMetric("cinema-build", performance.now() - buildStarted);

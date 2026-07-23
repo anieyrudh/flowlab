@@ -22,7 +22,7 @@ import type {
   VtkResultDataset,
   Vec2
 } from "../types";
-import type { CinemaPick, CinemaRuntime } from "./cinemaRenderer";
+import type { CinemaPick, CinemaResultProbe, CinemaRuntime } from "./cinemaRenderer";
 import { recordEditorFrame, recordEditorMetric } from "../performance/editorProfiler";
 import {
   clampViewportZoom,
@@ -55,7 +55,11 @@ type Props = {
   onRotateNode?: (id: string, rotation: number) => void;
   onConnectEdge?: (from: string, to: string, fromPort: PipePortId, toPort: PipePortId) => void;
   onUpdateEdgeEndpoint?: (edgeId: string, endpoint: "from" | "to", nodeId: string, port: PipePortId) => void;
-  onProbePoint?: (point: Vec2, size: { width: number; height: number }) => void;
+  onProbePoint?: (
+    point: Vec2,
+    size: { width: number; height: number },
+    surfaceProbe?: CinemaResultProbe | null
+  ) => void;
   previewPlaying?: boolean;
   onCinemaCameraChange?: (camera: CinemaCameraState) => void;
 };
@@ -903,9 +907,11 @@ export function SimulationCanvas({
 
   useEffect(() => {
     if (canvasRenderMode !== "cinema") return;
-    cinemaRef.current?.updateCamera(cinemaCamera);
+    const runtime = cinemaRef.current;
+    runtime?.updateCamera(cinemaCamera);
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (runtime) canvas.dataset.cinemaNodePositions = JSON.stringify(runtime.projectedNodePositions);
     canvas.dataset.cinemaCameraYaw = String(cinemaCamera.yaw);
     canvas.dataset.cinemaCameraPitch = String(cinemaCamera.pitch);
     canvas.dataset.cinemaCameraZoom = String(cinemaCamera.zoom);
@@ -1201,7 +1207,11 @@ export function SimulationCanvas({
       onProbePoint(screenPoint(event), { width: rect.width, height: rect.height });
     } else if (!cancelled && (active?.kind === "cinema-orbit" || active?.kind === "cinema-pan") && !active.moved && resultDataset) {
       const rect = event.currentTarget.getBoundingClientRect();
-      onProbePoint(screenPoint(event), { width: rect.width, height: rect.height });
+      onProbePoint(
+        screenPoint(event),
+        { width: rect.width, height: rect.height },
+        cinemaRef.current?.probeAt(event) ?? null
+      );
     }
 
     dragRef.current = null;

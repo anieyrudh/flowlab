@@ -4,7 +4,7 @@ Goal: let a FlowLab "pipe" edge produce a **true 3D circular-pipe** mesh that sa
 the 3D Hagen–Poiseuille law `Δp = 128·μ·L·Q/(π·D⁴)`, instead of the current 2D
 one-cell-thick planar strip (`frontAndBack empty`, gap `H = diameter·3.6`).
 
-## Status: integrated software path; scientific fixture still pending
+## Status: integrated software path; candidate campaign passed; controlled review pending
 
 `solver.meshMode: "axisymmetric"` is live for incompressible flow. It now compiles
 one straight, collinear, non-branching circular source-to-sink path with pipe,
@@ -14,9 +14,36 @@ closed. `validate_solver_case` checks the canonical SI profile and the non-plana
 3D inspection artifact before execution.
 
 The software path has passed local `blockMesh`, `checkMesh`, and steady solver
-smokes in the pinned OpenFOAM container. Those runs are experimental smoke
-evidence only. They are not the governed three-grid campaign, independent
-validation, promotion authorization, or external release evidence.
+smokes in the pinned OpenFOAM container. The governed product-path campaign
+`2026-07-23-axisymmetric-product-v1` has also completed its frozen coarse,
+medium, and fine levels. Its immutable package passes the candidate numerical
+gates, but controlled independent review is still pending. The fixture and
+registry therefore remain unchanged.
+
+### Governed candidate result
+
+| Quantity | Coarse | Medium | Fine / result |
+| --- | ---: | ---: | ---: |
+| Logical grid | 16 x 4 | 32 x 8 | 64 x 16 |
+| Pressure drop | 0.457474056 Pa | 0.467655816 Pa | 0.470355072 Pa |
+| Mass-flow imbalance | 0 | 0 | 0 |
+| Observed order |  |  | 1.9153532495650476 |
+| Fine-grid GCI |  |  | 0.25877682173974026% |
+| Fine pressure-drop error |  |  | 0.25767738276188347% |
+
+The retained campaign lives under
+`benchmarks/cases/straight-pipe/campaigns/2026-07-23-axisymmetric-product-v1/`.
+The read-only package has tree digest
+`d57fc73f4fc2727c8cdb6fea1ff2aba32fed862e0216e758b66f9eb8726be056`
+and is bound to source commit
+`4fa840bb852be23ccd9445c8a3f5283ef335ee8f` plus the immutable container
+digest recorded in its manifest. These hashes establish identity, not
+independent approval. The
+[independent AI technical review](axisymmetric-straight-pipe-independent-ai-review-2026-07-23.md)
+reproduced the metrics and hashes, but placed promotion on hold because the
+fixture's patch-average pressure operator does not match the periodic forcing
+operator used by the campaign. That conflict requires a new prospective
+contract decision; it is not being reinterpreted post hoc.
 
 ## What the smoke established
 
@@ -91,9 +118,14 @@ inlet/outlet/wall as usual (no `frontAndBack`).
 - Axisymmetric paths must remain circular, straight, collinear, non-branching, and
   incompressible. Elbows, branches, and non-circular sections need a full 3D
   topology such as the O-grid/native CAD meshing path.
-- The editor/result canvas displays the real 3D wedge surface, but XYZ-aware
-  ray-cast probing is still pending.
+- The editor/result canvas displays the real 3D wedge surface. A stationary
+  click now ray-casts that exterior surface, preserves the owning solver cell,
+  samples the active point/cell field, and reports solver-space XYZ. Object
+  editing retains pointer priority when a node or port overlaps the surface.
 - The straight-pipe fixture now formally requires this product path and its 3D
-  runtime evidence. It stays `pending-real-run` until the three cases execute,
-  the postprocessor reconstructs full-circle QoIs, every frozen gate passes, and
-  an independent review approves the immutable evidence package.
+  runtime evidence. The three cases and frozen numerical gates are complete,
+  but the fixture remains `pending-real-run` until a controlled independent
+  reviewer approves the exact immutable package.
+- The non-axisymmetric full O-grid is a separate geometry milestone with its own
+  topology, verification, evidence, and review contract. See
+  [non-axisymmetric O-grid milestone](non-axisymmetric-o-grid-milestone-2026-07-23.md).

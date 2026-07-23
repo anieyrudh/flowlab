@@ -44,6 +44,7 @@ import {
   listResultFields,
   parseVtkResult,
   sampleDatasetAtCanvasPoint,
+  sampleDatasetAtWorldPoint,
   timelineStatsForSnapshots,
   type ResultFieldInventoryItem,
   type ResultFieldSelection,
@@ -154,8 +155,16 @@ declare global {
 }
 
 type ProbeTarget = {
+  kind: "canvas";
   point: { x: number; y: number };
   size: { width: number; height: number };
+} | {
+  kind: "surface";
+  point: [number, number, number];
+  ownerCellIndex: number;
+  nearestPointIndex: number;
+  trianglePointIndices: [number, number, number];
+  barycentricWeights: [number, number, number];
 };
 
 const overlayOptions: { id: OverlayMode; label: string }[] = [
@@ -842,7 +851,31 @@ export default function App() {
   }, [resultTimelineStats]);
   const activeTimelineSample = resultTimelineStats[activeResultIndex] ?? null;
   const probeSample = useMemo(
-    () => (probeTarget ? sampleDatasetAtCanvasPoint(loadedResult, project.visualization.overlay, probeTarget.point, probeTarget.size, activeResultField, activeVectorComponent) : null),
+    () =>
+      probeTarget?.kind === "surface"
+        ? sampleDatasetAtWorldPoint(
+            loadedResult,
+            project.visualization.overlay,
+            probeTarget.point,
+            activeResultField,
+            activeVectorComponent,
+            probeTarget.ownerCellIndex,
+            probeTarget.nearestPointIndex,
+            {
+              pointIndices: probeTarget.trianglePointIndices,
+              weights: probeTarget.barycentricWeights
+            }
+          )
+        : probeTarget
+          ? sampleDatasetAtCanvasPoint(
+              loadedResult,
+              project.visualization.overlay,
+              probeTarget.point,
+              probeTarget.size,
+              activeResultField,
+              activeVectorComponent
+            )
+          : null,
     [activeResultField, activeVectorComponent, loadedResult, probeTarget, project.visualization.overlay]
   );
   const activeWarnings = result.warnings.filter((warning) => warning.severity !== "info");
@@ -1732,7 +1765,15 @@ export default function App() {
           onRotateNode={rotateNode}
           onConnectEdge={connectEdge}
           onUpdateEdgeEndpoint={updateEdgeEndpoint}
-          onProbePoint={(point, size) => setProbeTarget({ point, size })}
+          onProbePoint={(point, size, surfaceProbe) =>
+            setProbeTarget(
+              surfaceProbe
+                ? { kind: "surface", ...surfaceProbe }
+                : surfaceProbe === null
+                  ? null
+                  : { kind: "canvas", point, size }
+            )
+          }
         />
         <p id="canvas-status" className="sr-only" aria-live="polite">
           {selected ? `Selected ${selectedKind}: ${(selected as FluidNode | FluidEdge).label}. ${canvasRenderMode === "cinema" ? "Cinema 3D camera" : "Schematic 2D viewport"}. Press F to fit or 0 to reset.` : "No item selected."}
@@ -2369,16 +2410,21 @@ export default function App() {
             <dl className="probe-readout" aria-label="Probe sample">
               <div>
                 <dt>Probe</dt>
-                <dd>{probeSample.field} @ {probeSample.location === "cell" ? "c" : "p"}{probeSample.pointIndex}</dd>
+                <dd>
+                  {probeSample.field} @{" "}
+                  {probeTarget?.kind === "surface" && probeSample.location === "point"
+                    ? "surface"
+                    : `${probeSample.location === "cell" ? "c" : "p"}${probeSample.pointIndex}`}
+                </dd>
               </div>
               <div>
                 <dt>Value</dt>
                 <dd>{formatNumber(probeSample.value, 4)} {probeSample.unit.symbol}</dd>
               </div>
               <div>
-                <dt>Point</dt>
+                <dt>{probeTarget?.kind === "surface" ? "Surface XYZ" : "Point XYZ"}</dt>
                 <dd>
-                  {formatNumber(probeSample.point[0], 2)}, {formatNumber(probeSample.point[1], 2)}
+                  {formatNumber(probeSample.point[0], 6)}, {formatNumber(probeSample.point[1], 6)}, {formatNumber(probeSample.point[2], 6)}
                 </dd>
               </div>
             </dl>
