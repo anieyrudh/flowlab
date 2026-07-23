@@ -68,7 +68,7 @@ change.
 - Native capture:
   `/Users/anieyrudh/.codex/visualizations/2026/07/23/019f8eaf-3fad-7740-a404-af258b2ced9b/flowlab-packaged-native-surface.jpeg`
 - Packaged executable SHA-256:
-  `18a83dc86acb2d1dd313c75eef0183b648151df2ece00ec715792636e76be5e5`
+  `44cbb7f343388f254249e171f998d0a01d97a924da72ee1220278f2e22dae734`
 
 The captures are QA aids, not retained scientific campaign evidence.
 
