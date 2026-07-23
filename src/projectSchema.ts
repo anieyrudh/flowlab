@@ -273,8 +273,54 @@ const fluidEdgeSchema = z.object({
   roughness: z.number().nonnegative(),
   minorLossK: z.number().nonnegative(),
   throatDiameter: z.number().positive().optional(),
+  outletDiameter: z.number().positive().optional(),
+  throatPosition: z.number().min(0).max(1).optional(),
+  throatLength: z.number().nonnegative().optional(),
   dischargeCoefficient: z.number().positive().optional(),
   valveOpening: z.number().min(0).max(1).optional()
+}).superRefine((edge, context) => {
+  if (edge.shape.kind !== "circular") {
+    if (edge.outletDiameter !== undefined || edge.throatDiameter !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Axisymmetric diameter controls require a circular edge.",
+        path: ["shape"]
+      });
+    }
+    return;
+  }
+  const outletDiameter = edge.outletDiameter ?? edge.shape.diameter;
+  if (edge.type === "venturi") {
+    if (edge.throatDiameter === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Venturi edges require throatDiameter.",
+        path: ["throatDiameter"]
+      });
+    } else if (edge.throatDiameter >= Math.min(edge.shape.diameter, outletDiameter)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Venturi throatDiameter must be smaller than the inlet and outlet diameters.",
+        path: ["throatDiameter"]
+      });
+    }
+    const throatPosition = edge.throatPosition ?? 0.5;
+    const throatLength = edge.throatLength ?? 0;
+    const throatCenter = throatPosition * edge.length;
+    if (throatPosition <= 0 || throatPosition >= 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Venturi throatPosition must be between 0 and 1.",
+        path: ["throatPosition"]
+      });
+    } else if (throatCenter - throatLength / 2 <= 0 || throatCenter + throatLength / 2 >= edge.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Venturi throatLength must fit inside the edge length.",
+        path: ["throatLength"]
+      });
+    }
+  }
 });
 
 const projectSchema = z.object({
@@ -316,12 +362,22 @@ const projectSchema = z.object({
     meshResolution: z.enum(["coarse", "medium", "fine"]),
     runMode: z.enum(["transient", "steady"]).optional(),
     meshMode: z.enum(["planar-2d", "axisymmetric"]).optional(),
+    axisymmetricBenchmark: z
+      .object({
+        fixtureId: z.literal("straight-pipe"),
+        boundaryCondition: z.literal("periodic-pressure-gradient"),
+        lengthM: z.number().positive(),
+        volumetricFlowRateM3PerS: z.number().positive()
+      })
+      .optional(),
     reviewedGeometry: reviewedGeometrySchema.optional(),
     meshControls: z
       .object({
         longitudinalRefinement: z.number().int().min(1).max(4).optional(),
         boundaryLayerLayers: z.number().int().min(0).max(12).optional(),
         boundaryLayerGrowthRate: z.number().min(1).max(3).optional(),
+        axisymmetricAxialCells: z.number().int().min(4).max(4096).optional(),
+        axisymmetricRadialCells: z.number().int().min(2).max(1024).optional(),
         transverseDistribution: z.enum(["boundary-layer", "uniform"]).optional(),
         targetYPlus: z.number().positive().optional(),
         refinementRegions: z
@@ -363,6 +419,39 @@ const projectSchema = z.object({
       .optional(),
     maxIterations: z.number().int().positive(),
     tolerance: z.number().positive()
+  }).superRefine((solver, context) => {
+    const axial = solver.meshControls?.axisymmetricAxialCells;
+    const radial = solver.meshControls?.axisymmetricRadialCells;
+    if ((axial === undefined) !== (radial === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["meshControls"],
+        message: "Exact axisymmetric axial and radial cell counts must be supplied together."
+      });
+    }
+    if (solver.axisymmetricBenchmark) {
+      if (solver.meshMode !== "axisymmetric") {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["axisymmetricBenchmark"],
+          message: "The straight-pipe benchmark contract requires axisymmetric mesh mode."
+        });
+      }
+      if (solver.runMode !== "steady" || solver.turbulence !== "laminar") {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["axisymmetricBenchmark"],
+          message: "The straight-pipe benchmark contract requires a steady laminar solver."
+        });
+      }
+      if (axial === undefined || radial === undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["meshControls"],
+          message: "The straight-pipe benchmark contract requires exact axisymmetric cell counts."
+        });
+      }
+    }
   }),
   visualization: z.object({
     mode: z.enum(["design", "simulate", "sweep", "analyze"]),

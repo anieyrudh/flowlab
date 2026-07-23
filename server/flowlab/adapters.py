@@ -14,7 +14,15 @@ from pathlib import Path
 from typing import Any
 
 from .acceleration import build_openfoam_parallel_plan
-from .mesh import generate_mesh_bundle, mesh_to_openfoam_cht_region_polymesh, mesh_to_openfoam_polymesh, su2_marker_tags
+from .mesh import (
+    VTK_HEXAHEDRON,
+    generate_mesh_bundle,
+    mesh_to_legacy_vtk,
+    mesh_to_openfoam_cht_region_polymesh,
+    mesh_to_openfoam_polymesh,
+    mesh_to_vtu,
+    su2_marker_tags,
+)
 from .schemas import CaseRequest, SolverCapability, SolverCase
 from .validated_benchmark import experimental_capability
 
@@ -95,11 +103,23 @@ def _shape_width_for_station(shape: dict[str, Any] | None, edge: dict[str, Any],
     if shape.get("kind") == "rectangular":
         return _safe_positive(shape.get("height"), 0.1)
     diameter = _safe_positive(shape.get("diameter"), 0.1)
+    outlet_diameter = _safe_positive(edge.get("outletDiameter"), diameter)
     if edge.get("type") == "venturi" and edge.get("throatDiameter"):
         throat = _safe_positive(edge.get("throatDiameter"), diameter)
-        influence = max(0.0, 1.0 - abs(station - 0.5) * 2.0)
-        return diameter * (1.0 - influence) + throat * influence
-    return diameter
+        throat_position = float(edge.get("throatPosition", 0.5))
+        edge_length = _safe_positive(edge.get("length"), 1.0)
+        throat_length = max(0.0, float(edge.get("throatLength", 0.0)))
+        half_fraction = throat_length / (2.0 * edge_length)
+        throat_start = max(1.0e-9, throat_position - half_fraction)
+        throat_end = min(1.0 - 1.0e-9, throat_position + half_fraction)
+        if station <= throat_start:
+            fraction = station / throat_start
+            return diameter + (throat - diameter) * fraction
+        if station <= throat_end:
+            return throat
+        fraction = (station - throat_end) / (1.0 - throat_end)
+        return throat + (outlet_diameter - throat) * fraction
+    return diameter + (outlet_diameter - diameter) * station
 
 
 def _project_nodes(project: dict[str, Any]) -> list[dict[str, Any]]:
@@ -407,81 +427,552 @@ boundaryField
     )
 
 
+def _openfoam_axisymmetric_periodic_vector_field(
+    internal: str,
+    far_patches: str = _WEDGE_FAR_FIELD_PATCHES,
+) -> str:
+    return (
+        _foam_header("volVectorField", "U")
+        + f"""dimensions      [0 1 -1 0 0 0 0];
+
+internalField   uniform {internal};
+
+boundaryField
+{{
+    inlet
+    {{
+        type            cyclic;
+    }}
+    outlet
+    {{
+        type            cyclic;
+    }}
+    walls
+    {{
+        type            noSlip;
+    }}
+{far_patches}
+}}
+"""
+    )
+
+
+def _openfoam_axisymmetric_periodic_scalar_field(
+    object_name: str,
+    dimensions: str,
+    internal: str,
+    wall_type: str = "zeroGradient",
+    far_patches: str = _WEDGE_FAR_FIELD_PATCHES,
+) -> str:
+    return (
+        _foam_header("volScalarField", object_name)
+        + f"""dimensions      {dimensions};
+
+internalField   uniform {internal};
+
+boundaryField
+{{
+    inlet
+    {{
+        type            cyclic;
+    }}
+    outlet
+    {{
+        type            cyclic;
+    }}
+    walls
+    {{
+        type            {wall_type};
+    }}
+{far_patches}
+}}
+"""
+    )
+
+
 AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG = 2.5
+AXISYMMETRIC_PROFILE_SCHEMA = "flowlab.axisymmetric-profile.v1"
+AXISYMMETRIC_BENCHMARK_SCHEMA = "flowlab.axisymmetric-straight-pipe-contract.v1"
+AXISYMMETRIC_ALLOWED_EDGE_TYPES = {"pipe", "venturi", "expansion", "contraction", "nozzle"}
 
 
-def _openfoam_axisymmetric_pipe_geometry(mesh: dict[str, Any] | None) -> dict[str, float] | None:
-    """Return {R, L, nAxial, nRadial} for a single straight circular pipe, else None."""
-    if not isinstance(mesh, dict):
-        return None
-    regions = mesh.get("regions")
-    if not isinstance(regions, list) or len(regions) != 1:
-        return None
-    region = regions[0]
-    shape = region.get("shape") if isinstance(region.get("shape"), dict) else {}
-    if region.get("edgeType") != "pipe" or shape.get("kind") != "circular":
-        return None
-    try:
-        diameter = float(shape.get("diameter"))
-        span_px = float(region.get("spanLengthPx"))
-        n_axial = int(region.get("segmentCount"))
-        n_radial = int(region.get("transverseDivisions"))
-    except (TypeError, ValueError):
-        return None
-    if diameter <= 0 or span_px <= 0 or n_axial < 1 or n_radial < 1:
-        return None
-    return {"R": diameter / 2.0, "L": span_px * 0.01, "nAxial": float(n_axial), "nRadial": float(n_radial)}
-
-
-def _openfoam_axisymmetric_requested(project: dict[str, Any] | None, advanced_mode: str, mesh: dict[str, Any] | None) -> bool:
-    """True when an axisymmetric wedge pipe mesh was requested and is expressible.
-
-    Opt-in via ``project["solver"]["meshMode"] == "axisymmetric"``. Honoured only for
-    incompressible-navier-stokes on a single straight circular pipe; otherwise the
-    default planar-2D strip mesh is used. The default (no ``meshMode``) is unchanged.
-    """
-    if advanced_mode != "incompressible-navier-stokes":
-        return False
+def _openfoam_axisymmetric_mode_requested(project: dict[str, Any] | None) -> bool:
     solver = project.get("solver") if isinstance(project, dict) and isinstance(project.get("solver"), dict) else {}
-    if str(solver.get("meshMode", "planar-2d")).strip().lower() != "axisymmetric":
-        return False
-    return _openfoam_axisymmetric_pipe_geometry(mesh) is not None
+    return str(solver.get("meshMode", "planar-2d")).strip().lower() == "axisymmetric"
 
 
-def _openfoam_axisymmetric_block_mesh_dict(mesh: dict[str, Any]) -> str:
-    """Generate a wedge blockMeshDict for a true 3D axisymmetric circular pipe.
+def _axisymmetric_positive_number(value: Any, label: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Axisymmetric geometry requires a numeric {label}.") from exc
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError(f"Axisymmetric geometry requires a positive {label}.")
+    return number
 
-    A ~5-degree wedge revolved about the pipe axis with OpenFOAM `wedge` front/back
-    patches and a collapsed `axis`. Validated to reproduce 3D Hagen-Poiseuille;
-    see docs/openfoam-axisymmetric-wedge-2026-07-22.md.
-    """
-    geometry = _openfoam_axisymmetric_pipe_geometry(mesh)
-    if geometry is None:
-        raise ValueError("axisymmetric mesh mode requires a single straight circular pipe")
-    radius = geometry["R"]
-    length = geometry["L"]
-    n_axial = int(geometry["nAxial"])
-    n_radial = int(geometry["nRadial"])
-    rt = radius * math.tan(math.radians(AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG))
+
+def _axisymmetric_nonnegative_number(value: Any, label: str) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Axisymmetric geometry requires a numeric {label}.") from exc
+    if not math.isfinite(number) or number < 0:
+        raise ValueError(f"Axisymmetric geometry requires a non-negative {label}.")
+    return number
+
+
+def _axisymmetric_exact_cell_controls(
+    project: dict[str, Any],
+    edge_count: int,
+) -> tuple[int, int] | None:
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    controls = solver.get("meshControls") if isinstance(solver.get("meshControls"), dict) else {}
+    axial_raw = controls.get("axisymmetricAxialCells")
+    radial_raw = controls.get("axisymmetricRadialCells")
+    if axial_raw is None and radial_raw is None:
+        return None
+    if axial_raw is None or radial_raw is None:
+        raise ValueError("Exact axisymmetric axial and radial cell counts must be supplied together.")
+    if (
+        not isinstance(axial_raw, int)
+        or isinstance(axial_raw, bool)
+        or axial_raw < 4
+        or not isinstance(radial_raw, int)
+        or isinstance(radial_raw, bool)
+        or radial_raw < 2
+    ):
+        raise ValueError("Exact axisymmetric mesh controls require at least 4 axial and 2 radial cells.")
+    if edge_count != 1:
+        raise ValueError(
+            "Exact global axisymmetric cell counts currently require a single edge; "
+            "multi-edge paths use their per-edge mesh controls."
+        )
+    return axial_raw, radial_raw
+
+
+def _axisymmetric_benchmark_request(
+    project: dict[str, Any],
+    ordered_edges: list[dict[str, Any]],
+    exact_cells: tuple[int, int] | None,
+) -> dict[str, Any] | None:
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    raw = solver.get("axisymmetricBenchmark")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("axisymmetricBenchmark must be an object.")
+    if raw.get("fixtureId") != "straight-pipe":
+        raise ValueError("Axisymmetric benchmark mode currently supports only the straight-pipe fixture.")
+    if raw.get("boundaryCondition") != "periodic-pressure-gradient":
+        raise ValueError("The straight-pipe axisymmetric benchmark requires periodic-pressure-gradient flow control.")
+    if str(solver.get("runMode") or "") != "steady" or str(solver.get("turbulence") or "") != "laminar":
+        raise ValueError("The straight-pipe axisymmetric benchmark requires a steady laminar solver.")
+    if exact_cells is None:
+        raise ValueError("The straight-pipe axisymmetric benchmark requires exact axial and radial cell counts.")
+    if len(ordered_edges) != 1:
+        raise ValueError("The straight-pipe axisymmetric benchmark requires exactly one edge.")
+    edge = ordered_edges[0]
+    shape = edge.get("shape") if isinstance(edge.get("shape"), dict) else {}
+    inlet_diameter = _axisymmetric_positive_number(shape.get("diameter"), "straight-pipe diameter")
+    outlet_diameter = _axisymmetric_positive_number(edge.get("outletDiameter", inlet_diameter), "straight-pipe outlet diameter")
+    if edge.get("type") != "pipe" or shape.get("kind") != "circular" or not math.isclose(
+        inlet_diameter,
+        outlet_diameter,
+        rel_tol=1.0e-12,
+        abs_tol=1.0e-15,
+    ):
+        raise ValueError("The straight-pipe axisymmetric benchmark requires one constant-diameter circular pipe edge.")
+    return {
+        "fixtureId": "straight-pipe",
+        "boundaryCondition": "periodic-pressure-gradient",
+        "lengthM": _axisymmetric_positive_number(raw.get("lengthM"), "straight-pipe benchmark lengthM"),
+        "volumetricFlowRateM3PerS": _axisymmetric_positive_number(
+            raw.get("volumetricFlowRateM3PerS"),
+            "straight-pipe benchmark volumetricFlowRateM3PerS",
+        ),
+    }
+
+
+def _axisymmetric_cell_distribution(total: int, lengths: list[float]) -> list[int]:
+    if total < len(lengths):
+        raise ValueError(
+            f"Axisymmetric mesh needs at least one axial cell per profile segment; got {total} cells for {len(lengths)} segments."
+        )
+    length_total = sum(lengths)
+    if length_total <= 0:
+        raise ValueError("Axisymmetric profile segments must have positive physical lengths.")
+    remaining = total - len(lengths)
+    exact = [remaining * length / length_total for length in lengths]
+    extra = [int(math.floor(value)) for value in exact]
+    for index in sorted(range(len(lengths)), key=lambda item: (exact[item] - extra[item], -item), reverse=True)[
+        : remaining - sum(extra)
+    ]:
+        extra[index] += 1
+    return [1 + value for value in extra]
+
+
+def _axisymmetric_ordered_path(project: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    nodes = {str(node.get("id")): node for node in _project_nodes(project) if str(node.get("id") or "").strip()}
+    edges = _project_edges(project)
+    if not nodes or not edges:
+        raise ValueError("Axisymmetric mesh mode requires one connected source-to-sink circular path.")
+
+    incoming: dict[str, list[dict[str, Any]]] = {node_id: [] for node_id in nodes}
+    outgoing: dict[str, list[dict[str, Any]]] = {node_id: [] for node_id in nodes}
+    edge_ids: set[str] = set()
+    for edge in edges:
+        edge_id = str(edge.get("id") or "").strip()
+        from_id = str(edge.get("from") or "")
+        to_id = str(edge.get("to") or "")
+        if not edge_id or edge_id in edge_ids:
+            raise ValueError("Axisymmetric mesh mode requires unique non-empty edge IDs.")
+        if from_id not in nodes or to_id not in nodes:
+            raise ValueError(f"Axisymmetric edge `{edge_id}` is missing a valid endpoint node.")
+        edge_ids.add(edge_id)
+        outgoing[from_id].append(edge)
+        incoming[to_id].append(edge)
+
+    involved = {node_id for node_id in nodes if incoming[node_id] or outgoing[node_id]}
+    starts = [node_id for node_id in involved if not incoming[node_id] and len(outgoing[node_id]) == 1]
+    ends = [node_id for node_id in involved if len(incoming[node_id]) == 1 and not outgoing[node_id]]
+    if len(starts) != 1 or len(ends) != 1:
+        raise ValueError("Axisymmetric mesh mode requires exactly one non-branching source-to-sink path.")
+    if nodes[starts[0]].get("type") != "source" or nodes[ends[0]].get("type") != "sink":
+        raise ValueError("Axisymmetric path must begin at a source node and end at a sink node.")
+    for node_id in involved - {starts[0], ends[0]}:
+        if len(incoming[node_id]) != 1 or len(outgoing[node_id]) != 1:
+            raise ValueError("Axisymmetric mesh mode does not support branches, merges, or disconnected components.")
+
+    ordered: list[dict[str, Any]] = []
+    current = starts[0]
+    visited: set[str] = set()
+    while current != ends[0]:
+        candidates = outgoing[current]
+        if len(candidates) != 1:
+            raise ValueError("Axisymmetric mesh mode requires a single ordered edge path.")
+        edge = candidates[0]
+        edge_id = str(edge.get("id"))
+        if edge_id in visited:
+            raise ValueError("Axisymmetric mesh mode does not support cycles.")
+        visited.add(edge_id)
+        ordered.append(edge)
+        current = str(edge.get("to"))
+    if len(ordered) != len(edges):
+        raise ValueError("Axisymmetric mesh mode does not support disconnected edge components.")
+
+    path_node_ids = [str(ordered[0].get("from")), *(str(edge.get("to")) for edge in ordered)]
+    x0, y0 = _node_position(nodes[path_node_ids[0]])
+    x1, y1 = _node_position(nodes[path_node_ids[-1]])
+    dx, dy = x1 - x0, y1 - y0
+    span = math.hypot(dx, dy)
+    if span <= 0:
+        raise ValueError("Axisymmetric path endpoints must have distinct editor positions.")
+    previous_projection = -math.inf
+    for node_id in path_node_ids:
+        x, y = _node_position(nodes[node_id])
+        cross_distance = abs((x - x0) * dy - (y - y0) * dx) / span
+        projection = ((x - x0) * dx + (y - y0) * dy) / span
+        if cross_distance > max(1.0e-6, span * 1.0e-6) or projection + 1.0e-9 < previous_projection:
+            raise ValueError("Axisymmetric mesh mode requires a straight, collinear, consistently ordered path.")
+        previous_projection = projection
+    return ordered, nodes
+
+
+def _openfoam_axisymmetric_profile(
+    project: dict[str, Any],
+    advanced_mode: str,
+    mesh: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Compile the requested graph into one fail-closed SI axisymmetric profile."""
+    if not _openfoam_axisymmetric_mode_requested(project):
+        return None
+    if advanced_mode != "incompressible-navier-stokes":
+        raise ValueError("Axisymmetric mesh mode currently supports only incompressible Navier-Stokes.")
+    if not isinstance(mesh, dict):
+        raise ValueError("Axisymmetric mesh mode requires a successfully generated source mesh.")
+
+    ordered_edges, nodes_by_id = _axisymmetric_ordered_path(project)
+    exact_cells = _axisymmetric_exact_cell_controls(project, len(ordered_edges))
+    benchmark_request = _axisymmetric_benchmark_request(project, ordered_edges, exact_cells)
+    regions = mesh.get("regions") if isinstance(mesh.get("regions"), list) else []
+    region_by_edge = {
+        str(region.get("edgeId")): region
+        for region in regions
+        if isinstance(region, dict) and region.get("edgeType") != "connector"
+    }
+
+    stations: list[dict[str, Any]] = []
+    segments: list[dict[str, Any]] = []
+    sampling_surfaces: list[dict[str, Any]] = []
+    radial_counts: set[int] = set()
+    cumulative_x = 0.0
+    previous_outlet_diameter: float | None = None
+
+    def add_station(x_m: float, diameter_m: float, feature: str, edge_id: str) -> int:
+        radius_m = diameter_m / 2.0
+        if stations and math.isclose(float(stations[-1]["xM"]), x_m, rel_tol=0.0, abs_tol=1.0e-12):
+            if not math.isclose(float(stations[-1]["radiusM"]), radius_m, rel_tol=1.0e-6, abs_tol=1.0e-9):
+                raise ValueError(f"Axisymmetric path has a diameter discontinuity at edge `{edge_id}`.")
+            stations[-1]["features"] = sorted({*stations[-1]["features"], feature})
+            stations[-1]["edgeIds"] = [*stations[-1]["edgeIds"], edge_id]
+            return len(stations) - 1
+        stations.append(
+            {
+                "index": len(stations),
+                "xM": round(x_m, 12),
+                "radiusM": round(radius_m, 12),
+                "features": [feature],
+                "edgeIds": [edge_id],
+            }
+        )
+        return len(stations) - 1
+
+    for edge_index, edge in enumerate(ordered_edges):
+        edge_id = str(edge.get("id"))
+        edge_type = str(edge.get("type") or "")
+        shape = edge.get("shape") if isinstance(edge.get("shape"), dict) else {}
+        if edge_type not in AXISYMMETRIC_ALLOWED_EDGE_TYPES:
+            raise ValueError(
+                "Axisymmetric mesh mode supports only straight circular pipe, venturi, expansion, contraction, and nozzle edges; "
+                f"`{edge_id}` is `{edge_type or 'unknown'}`."
+            )
+        if shape.get("kind") != "circular":
+            raise ValueError(f"Axisymmetric edge `{edge_id}` must have a circular section.")
+        inlet_diameter = _axisymmetric_positive_number(shape.get("diameter"), f"diameter for edge `{edge_id}`")
+        outlet_diameter = _axisymmetric_positive_number(
+            edge.get("outletDiameter", inlet_diameter),
+            f"outletDiameter for edge `{edge_id}`",
+        )
+        if edge_type == "expansion" and outlet_diameter <= inlet_diameter:
+            raise ValueError(f"Axisymmetric expansion edge `{edge_id}` requires outletDiameter greater than its inlet diameter.")
+        if edge_type in {"contraction", "nozzle"} and outlet_diameter >= inlet_diameter:
+            raise ValueError(f"Axisymmetric {edge_type} edge `{edge_id}` requires outletDiameter smaller than its inlet diameter.")
+        if previous_outlet_diameter is not None and not math.isclose(
+            previous_outlet_diameter,
+            inlet_diameter,
+            rel_tol=1.0e-6,
+            abs_tol=1.0e-9,
+        ):
+            raise ValueError(f"Axisymmetric path has a diameter discontinuity before edge `{edge_id}`.")
+
+        length_m = (
+            float(benchmark_request["lengthM"])
+            if benchmark_request is not None
+            else _edge_effective_length(edge, nodes_by_id)
+        )
+        region = region_by_edge.get(edge_id)
+        if not isinstance(region, dict):
+            raise ValueError(f"Axisymmetric mesh source is missing region metadata for edge `{edge_id}`.")
+        try:
+            edge_axial_cells = exact_cells[0] if exact_cells is not None else int(region.get("segmentCount"))
+            edge_radial_cells = exact_cells[1] if exact_cells is not None else int(region.get("transverseDivisions"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Axisymmetric mesh source has invalid cell controls for edge `{edge_id}`.") from exc
+        if edge_axial_cells < 1 or edge_radial_cells < 1:
+            raise ValueError(f"Axisymmetric mesh controls must be positive for edge `{edge_id}`.")
+        radial_counts.add(edge_radial_cells)
+
+        local_profile: list[tuple[float, float, str]] = [(0.0, inlet_diameter, "inlet" if edge_index == 0 else "junction")]
+        if edge_type == "venturi":
+            throat_diameter = _axisymmetric_positive_number(
+                edge.get("throatDiameter"),
+                f"throatDiameter for Venturi edge `{edge_id}`",
+            )
+            if throat_diameter >= min(inlet_diameter, outlet_diameter):
+                raise ValueError(f"Venturi edge `{edge_id}` throatDiameter must be smaller than its inlet and outlet diameters.")
+            throat_position = float(edge.get("throatPosition", 0.5))
+            if not math.isfinite(throat_position) or not 0.0 < throat_position < 1.0:
+                raise ValueError(f"Venturi edge `{edge_id}` throatPosition must be between 0 and 1.")
+            throat_length = _axisymmetric_nonnegative_number(
+                edge.get("throatLength", 0.0),
+                f"throatLength for Venturi edge `{edge_id}`",
+            )
+            throat_center = throat_position * length_m
+            throat_start = throat_center - throat_length / 2.0
+            throat_end = throat_center + throat_length / 2.0
+            if throat_start <= 0 or throat_end >= length_m:
+                raise ValueError(f"Venturi edge `{edge_id}` throat must remain inside its physical edge length.")
+            local_profile.append((throat_start, throat_diameter, "throat"))
+            if throat_length > 1.0e-12:
+                local_profile.append((throat_end, throat_diameter, "throat"))
+            sampling_surfaces.append(
+                {
+                    "name": f"throat_{edge_id}",
+                    "role": "internal-sampling-plane",
+                    "xM": round(cumulative_x + throat_center, 12),
+                    "edgeId": edge_id,
+                }
+            )
+        local_profile.append((length_m, outlet_diameter, "outlet" if edge_index == len(ordered_edges) - 1 else "junction"))
+
+        local_lengths = [local_profile[index + 1][0] - local_profile[index][0] for index in range(len(local_profile) - 1)]
+        cell_counts = _axisymmetric_cell_distribution(edge_axial_cells, local_lengths)
+        station_indices = [
+            add_station(cumulative_x + local_x, diameter, feature, edge_id)
+            for local_x, diameter, feature in local_profile
+        ]
+        for segment_index, cells in enumerate(cell_counts):
+            start_index = station_indices[segment_index]
+            end_index = station_indices[segment_index + 1]
+            segments.append(
+                {
+                    "index": len(segments),
+                    "edgeId": edge_id,
+                    "fromStation": start_index,
+                    "toStation": end_index,
+                    "nAxial": cells,
+                }
+            )
+        cumulative_x += length_m
+        previous_outlet_diameter = outlet_diameter
+
+    if len(radial_counts) != 1:
+        raise ValueError("Axisymmetric multi-edge paths require one consistent radial cell count.")
+    n_radial = next(iter(radial_counts))
+    profile = {
+        "schema": AXISYMMETRIC_PROFILE_SCHEMA,
+        "requestedMeshMode": "axisymmetric",
+        "effectiveMeshMode": "axisymmetric-wedge",
+        "coordinateSystem": "axisymmetric-x-r",
+        "units": {"length": "m", "angle": "deg"},
+        "wedge": {"halfAngleDeg": AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG, "totalAngleDeg": 2.0 * AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG},
+        "pathEdgeIds": [str(edge.get("id")) for edge in ordered_edges],
+        "totalLengthM": round(cumulative_x, 12),
+        "nRadial": n_radial,
+        "stations": stations,
+        "segments": segments,
+        "samplingSurfaces": sampling_surfaces,
+        "boundaryRoles": {
+            "inlet": "cyclic" if benchmark_request is not None else "patch",
+            "outlet": "cyclic" if benchmark_request is not None else "patch",
+            "walls": "wall",
+            "front": "wedge",
+            "back": "wedge",
+            "axis": "empty",
+        },
+    }
+    if benchmark_request is not None:
+        conditions = _case_conditions(project)
+        radius_m = float(stations[0]["radiusM"])
+        angle_rad = math.radians(float(profile["wedge"]["totalAngleDeg"]))
+        # The blockMesh wedge cross-section is the triangle bounded by the
+        # collapsed axis and the chord joining the two wall vertices. Its exact
+        # area is R^2*tan(halfAngle), not the circular-sector area.
+        wedge_area_m2 = radius_m * radius_m * math.tan(angle_rad / 2.0)
+        full_circle_scale = 2.0 * math.pi / angle_rad
+        full_equivalent_area_m2 = wedge_area_m2 * full_circle_scale
+        circular_area_m2 = math.pi * radius_m * radius_m
+        flow_rate = float(benchmark_request["volumetricFlowRateM3PerS"])
+        mean_velocity = flow_rate / full_equivalent_area_m2
+        reynolds_number = (
+            conditions.density
+            * (flow_rate / circular_area_m2)
+            * (2.0 * radius_m)
+            / conditions.dynamic_viscosity
+        )
+        profile["benchmarkContract"] = {
+            "schema": AXISYMMETRIC_BENCHMARK_SCHEMA,
+            "fixtureId": "straight-pipe",
+            "fixtureStatus": "pending-real-run",
+            "scientificStatus": "experimental-candidate",
+            "boundaryCondition": "periodic-pressure-gradient",
+            "physicalLengthM": float(benchmark_request["lengthM"]),
+            "targetFullCircleVolumetricFlowRateM3PerS": flow_rate,
+            "fullCircleScale": full_circle_scale,
+            "wedgeCrossSectionAreaM2": wedge_area_m2,
+            "wedgeCrossSectionAreaMethod": "blockMesh triangle R^2*tan(halfAngle)",
+            "fullEquivalentMeshAreaM2": full_equivalent_area_m2,
+            "analyticCircularAreaM2": circular_area_m2,
+            "meanVelocityTargetMPerS": mean_velocity,
+            "densityKgPerM3": conditions.density,
+            "dynamicViscosityPaS": conditions.dynamic_viscosity,
+            "reynoldsNumber": reynolds_number,
+            "pressureFieldUnits": "m^2/s^2",
+            "pressureToPascalMultiplier": conditions.density,
+            "qoiExtraction": {
+                "pressureDrop": "final meanVelocityForce kinematic pressure gradient times physicalLengthM and densityKgPerM3",
+                "volumetricFlowRate": "signed wedge patch phi times fullCircleScale",
+                "massFlowRate": "signed full-circle volumetric flow rate times densityKgPerM3",
+            },
+        }
+    return profile
+
+
+def _openfoam_axisymmetric_block_mesh_dict(profile: dict[str, Any]) -> str:
+    """Generate a conformal multi-block wedge from a compiled SI radius profile."""
+    stations = profile.get("stations") if isinstance(profile.get("stations"), list) else []
+    segments = profile.get("segments") if isinstance(profile.get("segments"), list) else []
+    n_radial = int(profile.get("nRadial") or 0)
+    if len(stations) < 2 or not segments or n_radial < 1:
+        raise ValueError("Axisymmetric profile is missing stations, segments, or radial mesh controls.")
+
+    vertices: list[str] = []
+    for station in stations:
+        x_m = float(station["xM"])
+        radius_m = float(station["radiusM"])
+        radius_tangent = radius_m * math.tan(math.radians(AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG))
+        vertices.extend(
+            [
+                f"    ({x_m:.12g} 0 0)",
+                f"    ({x_m:.12g} {radius_m:.12g} {-radius_tangent:.12g})",
+                f"    ({x_m:.12g} 0 0)",
+                f"    ({x_m:.12g} {radius_m:.12g} {radius_tangent:.12g})",
+            ]
+        )
+
+    blocks: list[str] = []
+    wall_faces: list[str] = []
+    front_faces: list[str] = []
+    back_faces: list[str] = []
+    for segment in segments:
+        start = int(segment["fromStation"])
+        end = int(segment["toStation"])
+        n_axial = int(segment["nAxial"])
+        start_base = start * 4
+        end_base = end * 4
+        vertices_for_block = (
+            start_base,
+            end_base,
+            end_base + 1,
+            start_base + 1,
+            start_base + 2,
+            end_base + 2,
+            end_base + 3,
+            start_base + 3,
+        )
+        blocks.append(
+            "    hex "
+            + "("
+            + " ".join(str(value) for value in vertices_for_block)
+            + f") ({n_axial} {n_radial} 1) simpleGrading (1 1 1)"
+        )
+        wall_faces.append(f"        ({end_base + 1} {start_base + 1} {start_base + 3} {end_base + 3})")
+        front_faces.append(f"        ({start_base + 2} {end_base + 2} {end_base + 3} {start_base + 3})")
+        back_faces.append(f"        ({start_base} {start_base + 1} {end_base + 1} {end_base})")
+
+    first_base = int(segments[0]["fromStation"]) * 4
+    last_base = int(segments[-1]["toStation"]) * 4
+    periodic = isinstance(profile.get("benchmarkContract"), dict)
+    inlet_type = "cyclic" if periodic else "patch"
+    outlet_type = "cyclic" if periodic else "patch"
+    inlet_neighbour = "\n        neighbourPatch outlet;" if periodic else ""
+    outlet_neighbour = "\n        neighbourPatch inlet;" if periodic else ""
     return (
         _foam_header("dictionary", "blockMeshDict")
-        + f"""convertToMeters 1;
+        + """convertToMeters 1;
 
 vertices
 (
-    (0 0 0)
-    ({length:.9g} 0 0)
-    ({length:.9g} {radius:.9g} {-rt:.9g})
-    (0 {radius:.9g} {-rt:.9g})
-    (0 0 0)
-    ({length:.9g} 0 0)
-    ({length:.9g} {radius:.9g} {rt:.9g})
-    (0 {radius:.9g} {rt:.9g})
+"""
+        + "\n".join(vertices)
+        + """
 );
 
 blocks
 (
-    hex (0 1 2 3 4 5 6 7) ({n_axial} {n_radial} 1) simpleGrading (1 1 1)
+"""
+        + "\n".join(blocks)
+        + """
 );
 
 edges
@@ -489,18 +980,71 @@ edges
 );
 
 defaultPatch
-{{
+{
     name axis;
     type empty;
-}}
+}
 
 boundary
 (
-    inlet  {{ type patch; faces ( (0 4 7 3) ); }}
-    outlet {{ type patch; faces ( (1 2 6 5) ); }}
-    walls  {{ type wall;  faces ( (2 3 7 6) ); }}
-    front  {{ type wedge; faces ( (4 5 6 7) ); }}
-    back   {{ type wedge; faces ( (0 3 2 1) ); }}
+    inlet
+    {
+        type """
+        + inlet_type
+        + ";"
+        + inlet_neighbour
+        + """
+        faces
+        (
+"""
+        + f"            ({first_base} {first_base + 2} {first_base + 3} {first_base + 1})"
+        + """
+        );
+    }
+    outlet
+    {
+        type """
+        + outlet_type
+        + ";"
+        + outlet_neighbour
+        + """
+        faces
+        (
+"""
+        + f"            ({last_base} {last_base + 1} {last_base + 3} {last_base + 2})"
+        + """
+        );
+    }
+    walls
+    {
+        type wall;
+        faces
+        (
+"""
+        + "\n".join(wall_faces)
+        + """
+        );
+    }
+    front
+    {
+        type wedge;
+        faces
+        (
+"""
+        + "\n".join(front_faces)
+        + """
+        );
+    }
+    back
+    {
+        type wedge;
+        faces
+        (
+"""
+        + "\n".join(back_faces)
+        + """
+        );
+    }
 );
 
 mergePatchPairs
@@ -508,6 +1052,94 @@ mergePatchPairs
 );
 """
     )
+
+
+def _openfoam_axisymmetric_preview_mesh(profile: dict[str, Any]) -> dict[str, Any]:
+    """Return a deterministic 3D inspection mesh derived from the blockMesh profile.
+
+    This is the intended pre-solve wedge geometry. Runtime evidence must still use
+    the actual constant/polyMesh and foamToVTK artifacts produced by OpenFOAM.
+    """
+    stations = profile.get("stations") if isinstance(profile.get("stations"), list) else []
+    segments = profile.get("segments") if isinstance(profile.get("segments"), list) else []
+    n_radial = int(profile.get("nRadial") or 0)
+    if len(stations) < 2 or not segments or n_radial < 1:
+        raise ValueError("Axisymmetric preview requires a complete compiled profile.")
+
+    axial_planes: list[tuple[float, float]] = []
+    for segment in segments:
+        start = stations[int(segment["fromStation"])]
+        end = stations[int(segment["toStation"])]
+        start_x = float(start["xM"])
+        end_x = float(end["xM"])
+        start_radius = float(start["radiusM"])
+        end_radius = float(end["radiusM"])
+        n_axial = int(segment["nAxial"])
+        if not axial_planes:
+            axial_planes.append((start_x, start_radius))
+        elif not (
+            math.isclose(axial_planes[-1][0], start_x, rel_tol=0.0, abs_tol=1.0e-12)
+            and math.isclose(axial_planes[-1][1], start_radius, rel_tol=1.0e-9, abs_tol=1.0e-12)
+        ):
+            raise ValueError("Axisymmetric preview segments are not conformally ordered.")
+        for cell_index in range(1, n_axial + 1):
+            fraction = cell_index / n_axial
+            axial_planes.append(
+                (
+                    start_x + (end_x - start_x) * fraction,
+                    start_radius + (end_radius - start_radius) * fraction,
+                )
+            )
+
+    tangent = math.tan(math.radians(AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG))
+    points: list[list[float]] = []
+    for x_m, radius_m in axial_planes:
+        for radial_index in range(n_radial + 1):
+            radial_m = radius_m * radial_index / n_radial
+            tangent_m = radial_m * tangent
+            points.append([round(x_m, 12), round(radial_m, 12), round(-tangent_m, 12)])
+            points.append([round(x_m, 12), round(radial_m, 12), round(tangent_m, 12)])
+
+    points_per_plane = (n_radial + 1) * 2
+
+    def point_index(plane: int, radial: int, side: int) -> int:
+        return plane * points_per_plane + radial * 2 + side
+
+    cells: list[list[int]] = []
+    for plane_index in range(len(axial_planes) - 1):
+        for radial_index in range(n_radial):
+            cells.append(
+                [
+                    point_index(plane_index, radial_index, 0),
+                    point_index(plane_index + 1, radial_index, 0),
+                    point_index(plane_index + 1, radial_index + 1, 0),
+                    point_index(plane_index, radial_index + 1, 0),
+                    point_index(plane_index, radial_index, 1),
+                    point_index(plane_index + 1, radial_index, 1),
+                    point_index(plane_index + 1, radial_index + 1, 1),
+                    point_index(plane_index, radial_index + 1, 1),
+                ]
+            )
+
+    spans = [
+        max(point[axis] for point in points) - min(point[axis] for point in points)
+        for axis in range(3)
+    ]
+    return {
+        "format": "flowlab-axisymmetric-wedge-preview-v1",
+        "coordinateSystem": "axisymmetric-x-r-theta",
+        "spatialDimension": 3,
+        "representation": "pre-solve-blockMesh-equivalent-wedge",
+        "runtimeSolverMesh": False,
+        "proxyGeometry": False,
+        "profileSchema": profile.get("schema"),
+        "wedge": profile.get("wedge"),
+        "boundsSpanM": [round(value, 12) for value in spans],
+        "points": points,
+        "cells": cells,
+        "cellTypes": [VTK_HEXAHEDRON for _ in cells],
+        "regions": profile.get("segments"),
+    }
 
 
 def _openfoam_water_hammer_pressure_field(conditions: CaseConditions, handoff: dict[str, Any]) -> str:
@@ -623,7 +1255,8 @@ boundaryField
     )
 
 
-def _openfoam_temperature_field(temperature: float = 293.15) -> str:
+def _openfoam_temperature_field(temperature: float = 293.15, far_patches: str | None = None) -> str:
+    far = _PLANAR_FAR_FIELD_PATCHES if far_patches is None else far_patches
     return (
         _foam_header("volScalarField", "T")
         + f"""dimensions      [0 0 0 1 0 0 0];
@@ -645,10 +1278,7 @@ boundaryField
     {{
         type            zeroGradient;
     }}
-    frontAndBack
-    {{
-        type            empty;
-    }}
+{far}
 }}
 """
     )
@@ -1119,10 +1749,34 @@ def _openfoam_function_object_runtime_manifest(project: dict[str, Any]) -> dict[
     }
 
 
-def _openfoam_function_object_entries(mesh: dict[str, Any] | None, advanced_mode: str, project: dict[str, Any] | None = None) -> str:
+def _openfoam_axisymmetric_probe_locations(profile: dict[str, Any]) -> list[tuple[float, float, float]]:
+    stations = profile.get("stations") if isinstance(profile.get("stations"), list) else []
+    segments = profile.get("segments") if isinstance(profile.get("segments"), list) else []
+    locations: list[tuple[float, float, float]] = []
+    for segment in segments:
+        start = stations[int(segment["fromStation"])]
+        end = stations[int(segment["toStation"])]
+        x_m = (float(start["xM"]) + float(end["xM"])) / 2.0
+        radius_m = (float(start["radiusM"]) + float(end["radiusM"])) / 2.0
+        locations.append((x_m, radius_m * 0.5, 0.0))
+    return locations
+
+
+def _openfoam_function_object_entries(
+    mesh: dict[str, Any] | None,
+    advanced_mode: str,
+    project: dict[str, Any] | None = None,
+    axisymmetric_profile: dict[str, Any] | None = None,
+) -> str:
     project = project or {}
     fields = " ".join(_openfoam_field_list(advanced_mode))
-    probe_locations = "\n".join(f"            ({x:.6f} {y:.6f} {z:.6f})" for x, y, z in _openfoam_probe_locations(mesh))
+    compiled_probe_locations = (
+        _openfoam_axisymmetric_probe_locations(axisymmetric_profile)
+        if axisymmetric_profile is not None
+        else _openfoam_probe_locations(mesh)
+    )
+    probe_locations = "\n".join(f"            ({x:.9g} {y:.9g} {z:.9g})" for x, y, z in compiled_probe_locations)
+    probe_object_name = "axisymmetricProfileProbes" if axisymmetric_profile is not None else "centerlineProbes"
     patch_plan = _openfoam_metric_patch_plan(project)
     metric_patches = _foam_word_list(patch_plan["flow"])
     wall_patches = _foam_word_list(patch_plan["wall"])
@@ -1155,7 +1809,7 @@ def _openfoam_function_object_entries(mesh: dict[str, Any] | None, advanced_mode
         fields          ({fields});
     }}
 
-    centerlineProbes
+    {probe_object_name}
     {{
         type            probes;
         libs            ("libsampling.so");
@@ -1213,11 +1867,16 @@ def _openfoam_function_object_entries(mesh: dict[str, Any] | None, advanced_mode
 """
 
 
-def _openfoam_function_objects(mesh: dict[str, Any] | None, advanced_mode: str, project: dict[str, Any] | None = None) -> str:
+def _openfoam_function_objects(
+    mesh: dict[str, Any] | None,
+    advanced_mode: str,
+    project: dict[str, Any] | None = None,
+    axisymmetric_profile: dict[str, Any] | None = None,
+) -> str:
     return f"""
 functions
 {{
-{_openfoam_function_object_entries(mesh, advanced_mode, project)}
+{_openfoam_function_object_entries(mesh, advanced_mode, project, axisymmetric_profile)}
 }}
 """
 
@@ -1281,7 +1940,13 @@ def _openfoam_steady_requested(advanced_mode: str, project: dict[str, Any] | Non
     return str(solver.get("runMode", "transient")).strip().lower() == "steady"
 
 
-def _openfoam_control_dict(solver: str, mesh: dict[str, Any] | None, advanced_mode: str, project: dict[str, Any] | None = None) -> str:
+def _openfoam_control_dict(
+    solver: str,
+    mesh: dict[str, Any] | None,
+    advanced_mode: str,
+    project: dict[str, Any] | None = None,
+    axisymmetric_profile: dict[str, Any] | None = None,
+) -> str:
     if _openfoam_steady_requested(advanced_mode, project):
         # Steady SIMPLE: deltaT is an iteration counter and residualControl in
         # fvSolution stops the solve early once residuals fall below tolerance.
@@ -1322,7 +1987,7 @@ timeFormat      general;
 timePrecision   6;
 runTimeModifiable true;
 """
-        + _openfoam_function_objects(mesh, advanced_mode, project)
+        + _openfoam_function_objects(mesh, advanced_mode, project, axisymmetric_profile)
     )
 
 
@@ -1384,7 +2049,147 @@ wallDist
     )
 
 
-def _openfoam_fv_solution(steady: bool = False) -> str:
+def _openfoam_axisymmetric_benchmark_fv_constraints(profile: dict[str, Any]) -> str:
+    contract = profile.get("benchmarkContract")
+    if not isinstance(contract, dict):
+        raise ValueError("Axisymmetric benchmark fvConstraints require a compiled benchmark contract.")
+    mean_velocity = float(contract["meanVelocityTargetMPerS"])
+    return (
+        _foam_header("dictionary", "fvConstraints")
+        + f"""momentumForce
+{{
+    type            meanVelocityForce;
+    select          all;
+    Ubar            ({mean_velocity:.17g} 0 0);
+    relaxation      1;
+}}
+"""
+    )
+
+
+def _openfoam_axisymmetric_benchmark_fv_schemes() -> str:
+    return (
+        _foam_header("dictionary", "fvSchemes")
+        + """ddtSchemes
+{
+    default         steadyState;
+}
+gradSchemes
+{
+    default         cellLimited Gauss linear 1;
+}
+divSchemes
+{
+    default         none;
+    div(phi,U)      Gauss linearUpwind grad(U);
+    div((nuEff*dev2(T(grad(U))))) Gauss linear;
+}
+laplacianSchemes
+{
+    default         Gauss linear corrected;
+}
+interpolationSchemes
+{
+    default         linear;
+}
+snGradSchemes
+{
+    default         corrected;
+}
+"""
+    )
+
+
+def _openfoam_fv_solution(steady: bool = False, periodic_pressure_reference: bool = False) -> str:
+    if periodic_pressure_reference:
+        return (
+            _foam_header("dictionary", "fvSolution")
+            + """solvers
+{
+    p
+    {
+        solver          GAMG;
+        smoother        GaussSeidel;
+        tolerance       1e-10;
+        relTol          0;
+    }
+    U
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-10;
+        relTol          0;
+    }
+}
+
+SIMPLE
+{
+    nNonOrthogonalCorrectors 0;
+    consistent      yes;
+    pRefCell        0;
+    pRefValue       0;
+    residualControl
+    {
+        p               1e-8;
+        U               1e-8;
+    }
+}
+
+relaxationFactors
+{
+    equations
+    {
+        U               0.9;
+    }
+}
+"""
+        )
+    reference_controls = (
+        """    consistent      yes;
+    pRefCell        0;
+    pRefValue       0;
+"""
+        if periodic_pressure_reference
+        else ""
+    )
+    residual_tolerance = "1e-8" if periodic_pressure_reference else "1e-5"
+    coupling = (
+        f"""SIMPLE
+{{
+    nNonOrthogonalCorrectors 1;
+{reference_controls}    residualControl
+    {{
+        p               {residual_tolerance};
+        U               {residual_tolerance};
+    }}
+}}
+
+relaxationFactors
+{{
+    fields
+    {{
+        p               0.3;
+    }}
+    equations
+    {{
+        U               0.7;
+    }}
+}}
+"""
+        if steady
+        else """PIMPLE
+{
+    nOuterCorrectors 1;
+    nCorrectors      2;
+    nNonOrthogonalCorrectors 0;
+}
+
+SIMPLE
+{
+    nNonOrthogonalCorrectors 0;
+}
+"""
+    )
     return (
         _foam_header("dictionary", "fvSolution")
         + """solvers
@@ -1459,44 +2264,8 @@ def _openfoam_fv_solution(steady: bool = False) -> str:
     }
 }
 
-PIMPLE
-{
-    nOuterCorrectors 1;
-    nCorrectors      2;
-    nNonOrthogonalCorrectors 0;
-}
-
 """
-        + (
-            """SIMPLE
-{
-    nNonOrthogonalCorrectors 1;
-    residualControl
-    {
-        p               1e-5;
-        U               1e-5;
-    }
-}
-
-relaxationFactors
-{
-    fields
-    {
-        p               0.3;
-    }
-    equations
-    {
-        U               0.7;
-    }
-}
-"""
-            if steady
-            else """SIMPLE
-{
-    nNonOrthogonalCorrectors 0;
-}
-"""
-        )
+        + coupling
     )
 
 
@@ -2964,8 +3733,12 @@ else
   blockMesh
 fi"""
         if fitted_poly_mesh
-        else """echo "FlowLab OpenFOAM run: blockMesh"
-blockMesh"""
+        else """if [ -f constant/polyMesh/points ] && [ -f constant/polyMesh/faces ] && [ -f constant/polyMesh/owner ] && [ -f constant/polyMesh/boundary ]; then
+  echo "FlowLab OpenFOAM run: using existing blockMesh polyMesh"
+else
+  echo "FlowLab OpenFOAM run: blockMesh"
+  blockMesh
+fi"""
     )
     if solver == "foamMultiRun" and guarded_preflight:
         run_step = """echo "FlowLab OpenFOAM CHT preflight complete; full foamMultiRun remains blocked."
@@ -4678,6 +5451,7 @@ class OpenFOAMAdapter(SolverAdapter):
 
     def generate_case(self, request: CaseRequest) -> SolverCase:
         conditions = _case_conditions(request.project)
+        axisymmetric_requested = _openfoam_axisymmetric_mode_requested(request.project)
         parallel_settings = _openfoam_parallel_settings(request.project, request.advancedMode)
         parallel_plan = _openfoam_parallel_plan(parallel_settings)
         parallel_readme = (
@@ -4707,6 +5481,8 @@ class OpenFOAMAdapter(SolverAdapter):
                 else {}
             )
         except ValueError as exc:
+            if axisymmetric_requested:
+                raise ValueError(f"Axisymmetric case generation failed closed: {exc}") from exc
             mesh_files = {
                 "mesh/README.md": (
                     "# FlowLab mesh\n\n"
@@ -4718,10 +5494,37 @@ class OpenFOAMAdapter(SolverAdapter):
             mesh = None
             openfoam_mesh_files = {}
             cht_region_mesh_files = {}
-        axisymmetric = _openfoam_axisymmetric_requested(request.project, request.advancedMode, mesh)
-        if axisymmetric:
+        axisymmetric_profile = _openfoam_axisymmetric_profile(request.project, request.advancedMode, mesh)
+        axisymmetric = axisymmetric_profile is not None
+        axisymmetric_benchmark = (
+            axisymmetric_profile.get("benchmarkContract")
+            if isinstance(axisymmetric_profile, dict)
+            and isinstance(axisymmetric_profile.get("benchmarkContract"), dict)
+            else None
+        )
+        if axisymmetric_profile is not None:
             # Skip the fitted planar polyMesh so Allrun runs blockMesh on the wedge dict.
             openfoam_mesh_files = {}
+            axisymmetric_preview = _openfoam_axisymmetric_preview_mesh(axisymmetric_profile)
+            source_strip_paths = {
+                "mesh/flowlab_mesh.json": "mesh/flowlab_source_strip.json",
+                "mesh/flowlab_mesh.vtk": "mesh/flowlab_source_strip.vtk",
+                "mesh/flowlab_mesh.vtu": "mesh/flowlab_source_strip.vtu",
+            }
+            for source_path, retained_path in source_strip_paths.items():
+                if source_path in mesh_files:
+                    mesh_files[retained_path] = mesh_files[source_path]
+            mesh_files["mesh/flowlab_mesh.json"] = json.dumps(axisymmetric_preview, indent=2, sort_keys=True) + "\n"
+            mesh_files["mesh/flowlab_mesh.vtk"] = mesh_to_legacy_vtk(
+                axisymmetric_preview,
+                "FlowLab axisymmetric blockMesh-equivalent wedge preview",
+            )
+            mesh_files["mesh/flowlab_mesh.vtu"] = mesh_to_vtu(axisymmetric_preview)
+            mesh_provenance = [
+                *mesh_provenance,
+                "Axisymmetric case inspection VTK/VTU is a non-planar blockMesh-equivalent wedge derived from the canonical SI profile.",
+                "The original canvas quad strip is retained separately as flowlab_source_strip and is not solver-result geometry.",
+            ]
         wedge_far = _WEDGE_FAR_FIELD_PATCHES if axisymmetric else None
         mode_files, mode_provenance = _openfoam_mode_files(request.advancedMode, conditions, request.project)
         pressure_dimensions = (
@@ -4759,28 +5562,70 @@ class OpenFOAMAdapter(SolverAdapter):
                 parallel_settings=parallel_settings,
             ),
             "system/blockMeshDict": (
-                _openfoam_axisymmetric_block_mesh_dict(mesh) if axisymmetric else _openfoam_block_mesh_dict(mesh)
+                _openfoam_axisymmetric_block_mesh_dict(axisymmetric_profile)
+                if axisymmetric_profile is not None
+                else _openfoam_block_mesh_dict(mesh)
             ),
-            "system/controlDict": _openfoam_control_dict(solver, mesh, request.advancedMode, request.project),
-            "system/functions": _openfoam_function_object_entries(mesh, request.advancedMode, request.project),
-            "system/fvSchemes": _openfoam_fv_schemes(steady=_openfoam_steady_requested(request.advancedMode, request.project)),
-            "system/fvSolution": _openfoam_fv_solution(steady=_openfoam_steady_requested(request.advancedMode, request.project)),
-            "0/U": _openfoam_vector_field("U", f"({conditions.inlet_velocity:.9g} 0 0)", far_patches=wedge_far),
-            "0/p": _openfoam_pressure_field(
-                "p",
-                pressure_dimensions,
-                internal=f"{outlet_pressure_value:.9g}",
-                outlet=f"{outlet_pressure_value:.9g}",
-                far_patches=wedge_far,
+            "system/controlDict": _openfoam_control_dict(
+                solver,
+                mesh,
+                request.advancedMode,
+                request.project,
+                axisymmetric_profile,
             ),
-            "0/p_rgh": _openfoam_pressure_field(
-                "p_rgh",
-                pressure_dimensions,
-                internal=f"{outlet_pressure_value:.9g}",
-                outlet=f"{outlet_pressure_value:.9g}",
-                far_patches=wedge_far,
+            "system/functions": _openfoam_function_object_entries(
+                mesh,
+                request.advancedMode,
+                request.project,
+                axisymmetric_profile,
             ),
-            "0/T": _openfoam_temperature_field(conditions.temperature),
+            "system/fvSchemes": (
+                _openfoam_axisymmetric_benchmark_fv_schemes()
+                if axisymmetric_benchmark is not None
+                else _openfoam_fv_schemes(steady=_openfoam_steady_requested(request.advancedMode, request.project))
+            ),
+            "system/fvSolution": _openfoam_fv_solution(
+                steady=_openfoam_steady_requested(request.advancedMode, request.project),
+                periodic_pressure_reference=axisymmetric_benchmark is not None,
+            ),
+            "0/U": (
+                _openfoam_axisymmetric_periodic_vector_field(
+                    f"({float(axisymmetric_benchmark['meanVelocityTargetMPerS']):.17g} 0 0)"
+                )
+                if axisymmetric_benchmark is not None
+                else _openfoam_vector_field("U", f"({conditions.inlet_velocity:.9g} 0 0)", far_patches=wedge_far)
+            ),
+            "0/p": (
+                _openfoam_axisymmetric_periodic_scalar_field("p", pressure_dimensions, "0")
+                if axisymmetric_benchmark is not None
+                else _openfoam_pressure_field(
+                    "p",
+                    pressure_dimensions,
+                    internal=f"{outlet_pressure_value:.9g}",
+                    outlet=f"{outlet_pressure_value:.9g}",
+                    far_patches=wedge_far,
+                )
+            ),
+            "0/p_rgh": (
+                _openfoam_axisymmetric_periodic_scalar_field("p_rgh", pressure_dimensions, "0")
+                if axisymmetric_benchmark is not None
+                else _openfoam_pressure_field(
+                    "p_rgh",
+                    pressure_dimensions,
+                    internal=f"{outlet_pressure_value:.9g}",
+                    outlet=f"{outlet_pressure_value:.9g}",
+                    far_patches=wedge_far,
+                )
+            ),
+            "0/T": (
+                _openfoam_axisymmetric_periodic_scalar_field(
+                    "T",
+                    "[0 0 0 1 0 0 0]",
+                    f"{conditions.temperature:.6g}",
+                )
+                if axisymmetric_benchmark is not None
+                else _openfoam_temperature_field(conditions.temperature, far_patches=wedge_far)
+            ),
             "constant/transportProperties": _openfoam_transport_properties(request.advancedMode, conditions),
             "constant/physicalProperties": physical_properties,
             "constant/turbulenceProperties": _openfoam_turbulence_properties(turbulent),
@@ -4799,6 +5644,27 @@ class OpenFOAMAdapter(SolverAdapter):
                 sort_keys=True,
             )
             + "\n",
+            **(
+                {
+                    "constant/flowlab_axisymmetric_profile.json": json.dumps(
+                        axisymmetric_profile,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n"
+                }
+                if axisymmetric_profile is not None
+                else {}
+            ),
+            **(
+                {
+                    "system/fvConstraints": _openfoam_axisymmetric_benchmark_fv_constraints(
+                        axisymmetric_profile
+                    )
+                }
+                if axisymmetric_benchmark is not None and axisymmetric_profile is not None
+                else {}
+            ),
             "mesh/openfoam_review.json": json.dumps(_openfoam_mesh_review_manifest(mesh, openfoam_mesh_files), indent=2, sort_keys=True) + "\n",
             **(
                 {"system/decomposeParDict": _openfoam_decompose_par_dict(parallel_settings)}
@@ -4820,11 +5686,22 @@ class OpenFOAMAdapter(SolverAdapter):
         )
         command = ["bash", "Allrun"]
         status = "generated" if self.capability().installed else "blocked"
+        geometry_provenance = (
+            [
+                "FlowLab compiled one straight, non-branching circular source-to-sink path into an SI axisymmetric radius profile.",
+                "OpenFOAM blockMesh realizes that profile as a conformal five-degree wedge; the throat is an internal sampling plane, not a boundary patch.",
+                "The retained FlowLab canvas mesh remains an inspection proxy until the actual wedge polyMesh/foamToVTK artifact is loaded for 3D visualization.",
+            ]
+            if axisymmetric
+            else [
+                "FlowLab v1 OpenFOAM volume mesh extrudes the port-aware FlowLab quad strip into one hexahedral layer with inlet, outlet, walls, and empty front/back patches."
+            ]
+        )
         provenance = [
             "OpenFOAM selected as broad advanced CFD backend.",
             "Case includes field files, transport/turbulence dictionaries, an Allrun workflow, and a fitted OpenFOAM polyMesh when FlowLab graph geometry is available.",
             "Boundary and fluid dictionaries are initialized from FlowLab project fluid, inlet demand, and outlet pressure where available.",
-            "FlowLab v1 OpenFOAM volume mesh extrudes the port-aware FlowLab quad strip into one hexahedral layer with inlet, outlet, walls, and empty front/back patches.",
+            *geometry_provenance,
             *mode_provenance,
             *boundary_condition_provenance,
             *mesh_provenance,

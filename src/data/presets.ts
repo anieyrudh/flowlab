@@ -70,6 +70,7 @@ export const venturiPreset: FluidProject = {
       length: 6,
       shape: { kind: "circular", diameter: 0.18 },
       throatDiameter: 0.075,
+      outletDiameter: 0.16,
       dischargeCoefficient: 0.97,
       roughness: 0.000045,
       minorLossK: 0.15
@@ -82,6 +83,7 @@ export const venturiPreset: FluidProject = {
       to: "sink",
       length: 7,
       shape: { kind: "circular", diameter: 0.16 },
+      outletDiameter: 0.18,
       roughness: 0.000045,
       minorLossK: 0.28
     }

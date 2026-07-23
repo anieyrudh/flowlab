@@ -64,6 +64,9 @@ export type FluidEdge = {
   roughness: number;
   minorLossK: number;
   throatDiameter?: number;
+  outletDiameter?: number;
+  throatPosition?: number;
+  throatLength?: number;
   dischargeCoefficient?: number;
   valveOpening?: number;
 };
@@ -180,16 +183,23 @@ export type SolverSettings = {
   // solve; "steady" runs steady-state SIMPLE to convergence so the case yields a
   // fully-developed pressure drop. Honored only for incompressible-navier-stokes.
   runMode?: "transient" | "steady";
-  // OpenFOAM mesh topology for a "pipe" edge. "planar-2d" (default) is a 2D
-  // one-cell-thick channel strip; "axisymmetric" builds a true 3D circular-pipe
-  // wedge that satisfies the 3D Hagen-Poiseuille law. Incompressible-navier-stokes
-  // on a single straight circular pipe only; otherwise the planar strip is used.
+  // OpenFOAM mesh topology. "planar-2d" (default) is a one-cell-thick channel
+  // strip; "axisymmetric" compiles one straight, non-branching circular path
+  // (including varying-diameter/Venturi edges) into a true 3D wedge.
   meshMode?: "planar-2d" | "axisymmetric";
+  axisymmetricBenchmark?: {
+    fixtureId: "straight-pipe";
+    boundaryCondition: "periodic-pressure-gradient";
+    lengthM: number;
+    volumetricFlowRateM3PerS: number;
+  };
   reviewedGeometry?: ReviewedGeometrySource;
   meshControls?: {
     longitudinalRefinement?: number;
     boundaryLayerLayers?: number;
     boundaryLayerGrowthRate?: number;
+    axisymmetricAxialCells?: number;
+    axisymmetricRadialCells?: number;
     // Transverse (across-gap) cell distribution. "boundary-layer" (default)
     // clusters cells at the walls for near-wall/turbulent resolution; "uniform"
     // spaces them evenly, which resolves a laminar parabolic core far better and

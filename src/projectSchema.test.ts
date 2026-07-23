@@ -101,6 +101,41 @@ describe("project network validation", () => {
     expect(parsed.ok).toBe(true);
   });
 
+  it("accepts bounded asymmetric Venturi dimensions", () => {
+    const project = structuredClone(venturiPreset);
+    const edge = project.edges.inlet;
+    edge.outletDiameter = 0.09;
+    edge.throatDiameter = 0.05;
+    edge.throatPosition = 0.4;
+    edge.throatLength = 0.2;
+
+    const parsed = parseProject(project);
+
+    expect(parsed.ok).toBe(true);
+  });
+
+  it("rejects a Venturi throat that is not smaller than both end diameters", () => {
+    const project = structuredClone(venturiPreset);
+    const edge = project.edges.inlet;
+    edge.outletDiameter = 0.07;
+    edge.throatDiameter = 0.08;
+
+    const parsed = parseProject(project);
+
+    expect(parsed).toMatchObject({ ok: false, message: expect.stringContaining("throatDiameter must be smaller") });
+  });
+
+  it("rejects a Venturi throat section that extends outside the edge", () => {
+    const project = structuredClone(venturiPreset);
+    const edge = project.edges.inlet;
+    edge.throatPosition = 0.1;
+    edge.throatLength = edge.length;
+
+    const parsed = parseProject(project);
+
+    expect(parsed).toMatchObject({ ok: false, message: expect.stringContaining("throatLength must fit") });
+  });
+
   it("accepts the narrow OpenFOAM parallel-candidate configuration", () => {
     const project = structuredClone(venturiPreset);
     project.solver.performance = {
@@ -114,6 +149,41 @@ describe("project network validation", () => {
     const parsed = parseProject(project);
 
     expect(parsed.ok).toBe(true);
+  });
+
+  it("accepts a prospectively frozen axisymmetric straight-pipe benchmark contract", () => {
+    const project = structuredClone(venturiPreset);
+    project.solver.meshMode = "axisymmetric";
+    project.solver.runMode = "steady";
+    project.solver.turbulence = "laminar";
+    project.solver.meshControls = {
+      axisymmetricAxialCells: 16,
+      axisymmetricRadialCells: 4
+    };
+    project.solver.axisymmetricBenchmark = {
+      fixtureId: "straight-pipe",
+      boundaryCondition: "periodic-pressure-gradient",
+      lengthM: 0.024,
+      volumetricFlowRateM3PerS: 1e-5
+    };
+
+    const parsed = parseProject(project);
+
+    expect(parsed.ok).toBe(true);
+  });
+
+  it("rejects an incomplete exact axisymmetric refinement pair", () => {
+    const project = structuredClone(venturiPreset);
+    project.solver.meshControls = {
+      axisymmetricAxialCells: 16
+    };
+
+    const parsed = parseProject(project);
+
+    expect(parsed).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("axial and radial cell counts must be supplied together")
+    });
   });
 
   it("rejects ambiguous imported networks without source and sink boundaries", () => {

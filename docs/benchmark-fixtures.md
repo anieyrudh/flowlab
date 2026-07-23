@@ -12,7 +12,10 @@ The registry lives under `benchmarks/` and currently lists:
 
 `straight-pipe` and `plane-channel` are deliberately distinct geometries.
 `straight-pipe` is a **true 3D circular pipe** with a Hagen-Poiseuille reference
-(`128*mu*L*Q/(pi*D^4)`), targeting the dedicated 3D O-grid reference runner.
+(`128*mu*L*Q/(pi*D^4)`). Its promotion contract now requires the product
+axisymmetric wedge path (`adapters.generate_case` through `JobManager.queue_job`)
+and solver-produced 3D mesh evidence. The dedicated 3D O-grid runner remains a
+useful independent reference, but it does not by itself prove the product path.
 `plane-channel` is a **2D one-cell-thick planar channel** (`frontAndBack` type
 `empty`, gap `H = diameter*3.6`) with a plane-Poiseuille reference
 (`12*mu*U*L/H^2`) -- this is the geometry FlowLab's ordinary product pipeline
@@ -41,6 +44,11 @@ The contract fixes the comparison before a run is promoted:
   evidence must record a fully developed inlet profile, periodic pressure
   gradient, or a documented entrance-length exclusion before the comparison is
   applicable.
+- The geometry realization is frozen as a nonzero-volume 3D axisymmetric wedge.
+  Captured evidence must prove three solution directions, retain the runtime
+  `polyMesh` or `foamToVTK` geometry, include inlet/outlet/walls/front/back/axis
+  patches, and scale wedge integrals to full-circle values using
+  `360 / wedgeAngleDegrees`. A pre-solve preview is not runtime mesh evidence.
 - Required QoIs are pressure drop (`Pa`) and mass flow rate (`kg/s`), with SI
   units for all governing geometry, material, and flow inputs.
 - The current first-milestone validator accepts exactly three uniformly refined
@@ -85,6 +93,23 @@ solutions. See [NASA's CFD verification assessment](https://www.grc.nasa.gov/www
 The fixture files are scaffolds. Their acceptance criteria stay
 `pending-real-run`, and `realOutputs.files` stays empty until Track A captures
 solver-produced fields, logs, diagnostics, and mesh-quality evidence.
+
+The new product-path mesh family can be frozen without starting a solver:
+
+```bash
+PYTHONPATH=. python3 -m server.flowlab.axisymmetric_straight_pipe_campaign \
+  /path/to/new-empty-campaign --materialize-only
+```
+
+This writes exact 16x4, 32x8, and 64x16 wedge cases and source hashes through
+`adapters.generate_case`. It refuses a non-empty output directory and cannot
+run, promote, or edit the fixture. Completed JobManager case directories can be
+checked with `evaluate_completed_level`, which independently recomputes the
+mean-velocity-controller, pressure-gradient-tail, continuity, final-linear-
+residual, runtime-3D-mesh, pressure-drop, full-circle flow, and mass-balance
+quantities. A passing level evaluation is still only an experimental candidate;
+all three levels, Richardson/GCI, immutable packaging, and independent review
+remain mandatory.
 
 Do not promote a fixture to `validated` unless the promoted artifact set
 contains real solver evidence:

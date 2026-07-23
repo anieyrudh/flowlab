@@ -365,6 +365,8 @@ export const useFlowStore = create<FlowStore>((set, get) => {
           length: type === "bend" ? 4 : 12,
           shape: { kind: "circular", diameter: type === "venturi" ? 0.16 : 0.1 },
           throatDiameter: type === "venturi" ? 0.07 : undefined,
+          outletDiameter:
+            type === "expansion" ? 0.15 : type === "contraction" || type === "nozzle" ? 0.06 : undefined,
           dischargeCoefficient: type === "venturi" ? 0.97 : undefined,
           roughness: 0.000045,
           minorLossK: type === "valve" ? 2.5 : type === "bend" ? 0.9 : 0.2,

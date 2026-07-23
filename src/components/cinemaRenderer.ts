@@ -189,8 +189,70 @@ function datasetBounds(dataset: VtkResultDataset) {
     min,
     max,
     center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2] as [number, number, number],
-    span: Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1)
+    span: Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-9)
   };
+}
+
+export type ExteriorCellFace = {
+  pointIndices: number[];
+  ownerCellIndex: number;
+};
+
+function cellFaces(cell: number[], cellType: number): number[][] {
+  const face = (...indices: number[]) => indices.map((index) => cell[index]);
+  if (cellType === 5 && cell.length === 3) return [face(0, 1, 2)];
+  if ((cellType === 7 || cellType === 9) && cell.length >= 3) return [[...cell]];
+  if (cellType === 10 && cell.length === 4) {
+    return [face(0, 2, 1), face(0, 1, 3), face(1, 2, 3), face(2, 0, 3)];
+  }
+  if (cellType === 12 && cell.length === 8) {
+    return [face(0, 3, 2, 1), face(4, 5, 6, 7), face(0, 1, 5, 4), face(1, 2, 6, 5), face(2, 3, 7, 6), face(3, 0, 4, 7)];
+  }
+  if (cellType === 13 && cell.length === 6) {
+    return [face(0, 2, 1), face(3, 4, 5), face(0, 1, 4, 3), face(1, 2, 5, 4), face(2, 0, 3, 5)];
+  }
+  if (cellType === 14 && cell.length === 5) {
+    return [face(0, 3, 2, 1), face(0, 1, 4), face(1, 2, 4), face(2, 3, 4), face(3, 0, 4)];
+  }
+  return [];
+}
+
+function orientedAwayFromCell(face: number[], cell: number[], points: VtkResultDataset["points"]): number[] {
+  const unique = Array.from(new Set(face));
+  if (unique.length < 3) return [];
+  const a = new THREE.Vector3(...points[face[0]]);
+  const b = new THREE.Vector3(...points[face[1]]);
+  const c = new THREE.Vector3(...points[face[2]]);
+  const normal = b.clone().sub(a).cross(c.clone().sub(a));
+  if (normal.lengthSq() <= 1e-20) return [];
+  const faceCenter = face.reduce((sum, index) => sum.add(new THREE.Vector3(...points[index])), new THREE.Vector3()).multiplyScalar(1 / face.length);
+  const cellCenter = cell.reduce((sum, index) => sum.add(new THREE.Vector3(...points[index])), new THREE.Vector3()).multiplyScalar(1 / cell.length);
+  return normal.dot(cellCenter.sub(faceCenter)) > 0 ? [...face].reverse() : face;
+}
+
+export function extractExteriorCellFaces(dataset: VtkResultDataset): ExteriorCellFace[] {
+  const byKey = new Map<string, { count: number; face: ExteriorCellFace }>();
+  dataset.cells.forEach((cell, ownerCellIndex) => {
+    const cellType = dataset.cellTypes[ownerCellIndex];
+    cellFaces(cell, cellType).forEach((candidate) => {
+      const pointIndices = orientedAwayFromCell(candidate, cell, dataset.points);
+      if (pointIndices.length < 3) return;
+      const key = [...pointIndices].sort((left, right) => left - right).join(":");
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        byKey.set(key, { count: 1, face: { pointIndices, ownerCellIndex } });
+      }
+    });
+  });
+  return Array.from(byKey.values())
+    .filter((entry) => entry.count === 1)
+    .map((entry) => entry.face);
+}
+
+export function exteriorTriangleCount(dataset: VtkResultDataset): number {
+  return extractExteriorCellFaces(dataset).reduce((count, face) => count + Math.max(0, face.pointIndices.length - 2), 0);
 }
 
 function fieldValueForDatasetPoint(values: number[], location: "point" | "cell", pointIndex: number, cellIndex: number, cell: number[]) {
@@ -214,12 +276,14 @@ function addResultSurfaceMesh(
   const colors: number[] = [];
   const meshScale = 5.2 / bounds.span;
 
-  dataset.cells.forEach((cell, cellIndex) => {
-    if (cell.length < 3) return;
-    for (let i = 1; i < cell.length - 1; i += 1) {
-      [cell[0], cell[i], cell[i + 1]].forEach((pointIndex) => {
+  extractExteriorCellFaces(dataset).forEach(({ pointIndices, ownerCellIndex }) => {
+    const cell = dataset.cells[ownerCellIndex];
+    for (let i = 1; i < pointIndices.length - 1; i += 1) {
+      [pointIndices[0], pointIndices[i], pointIndices[i + 1]].forEach((pointIndex) => {
         const point = dataset.points[pointIndex];
-        const color = new THREE.Color(resultValueColor(fieldValueForDatasetPoint(fieldValues.values, fieldValues.location, pointIndex, cellIndex, cell), maxValue, resultColorMap));
+        const color = new THREE.Color(
+          resultValueColor(fieldValueForDatasetPoint(fieldValues.values, fieldValues.location, pointIndex, ownerCellIndex, cell), maxValue, resultColorMap)
+        );
         positions.push((point[0] - bounds.center[0]) * meshScale, (point[1] - bounds.center[1]) * meshScale, (point[2] - bounds.center[2]) * meshScale + 0.16);
         colors.push(color.r, color.g, color.b);
       });
@@ -234,13 +298,12 @@ function addResultSurfaceMesh(
   const material = new THREE.MeshBasicMaterial({
     vertexColors: true,
     transparent: true,
-    opacity: 0.66,
+    opacity: 0.82,
     side: THREE.DoubleSide,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending
+    depthWrite: true
   });
   const surface = new THREE.Mesh(geometry, material);
-  surface.name = `VTK ${fieldValues.field} projected surface`;
+  surface.name = `VTK ${fieldValues.field} exterior surface`;
   scene.add(surface);
 }
 

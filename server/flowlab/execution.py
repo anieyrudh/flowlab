@@ -3354,6 +3354,63 @@ def validate_solver_case(case: SolverCase) -> list[str]:
         # of a single empty frontAndBack; its fitted polyMesh is skipped so blockMesh
         # builds the wedge (and handles the singular axis) at run time.
         is_axisymmetric_wedge = "type wedge" in block_mesh
+        if is_axisymmetric_wedge:
+            try:
+                axisymmetric_profile = json.loads(files.get("constant/flowlab_axisymmetric_profile.json", ""))
+            except json.JSONDecodeError:
+                axisymmetric_profile = {}
+            if not isinstance(axisymmetric_profile, dict) or axisymmetric_profile.get("schema") != "flowlab.axisymmetric-profile.v1":
+                issues.append("OpenFOAM axisymmetric wedge requires a valid canonical axisymmetric profile manifest.")
+            else:
+                if axisymmetric_profile.get("effectiveMeshMode") != "axisymmetric-wedge":
+                    issues.append("OpenFOAM axisymmetric profile must declare effectiveMeshMode=axisymmetric-wedge.")
+                if not axisymmetric_profile.get("stations") or not axisymmetric_profile.get("segments"):
+                    issues.append("OpenFOAM axisymmetric profile must declare physical stations and conformal block segments.")
+                benchmark_contract = axisymmetric_profile.get("benchmarkContract")
+                if isinstance(benchmark_contract, dict):
+                    if benchmark_contract.get("schema") != "flowlab.axisymmetric-straight-pipe-contract.v1":
+                        issues.append("OpenFOAM axisymmetric benchmark contract has an unsupported schema.")
+                    if (
+                        benchmark_contract.get("fixtureId") != "straight-pipe"
+                        or benchmark_contract.get("fixtureStatus") != "pending-real-run"
+                        or benchmark_contract.get("boundaryCondition") != "periodic-pressure-gradient"
+                    ):
+                        issues.append("OpenFOAM axisymmetric benchmark contract must remain a pending periodic straight-pipe candidate.")
+                    if (
+                        not isinstance(benchmark_contract.get("fullCircleScale"), (int, float))
+                        or isinstance(benchmark_contract.get("fullCircleScale"), bool)
+                        or float(benchmark_contract["fullCircleScale"]) <= 1.0
+                    ):
+                        issues.append("OpenFOAM axisymmetric benchmark contract requires a positive wedge-to-full-circle scale.")
+                    fv_constraints = files.get("system/fvConstraints", "")
+                    if "type            meanVelocityForce;" not in fv_constraints or "Ubar" not in fv_constraints:
+                        issues.append("OpenFOAM axisymmetric benchmark requires meanVelocityForce flow control.")
+                    if (
+                        "type cyclic;" not in block_mesh
+                        or "neighbourPatch outlet;" not in block_mesh
+                        or "neighbourPatch inlet;" not in block_mesh
+                    ):
+                        issues.append("OpenFOAM axisymmetric benchmark requires paired cyclic inlet/outlet mesh patches.")
+                    for field in ("0/U", "0/p", "0/T"):
+                        if files.get(field, "").count("type            cyclic;") < 2:
+                            issues.append(f"OpenFOAM axisymmetric benchmark field `{field}` requires cyclic inlet and outlet conditions.")
+                    fv_solution = files.get("system/fvSolution", "")
+                    if "residualControl" not in fv_solution or "PIMPLE" in fv_solution:
+                        issues.append("OpenFOAM axisymmetric benchmark requires direct steady SIMPLE residual controls.")
+            try:
+                axisymmetric_preview = json.loads(files.get("mesh/flowlab_mesh.json", ""))
+            except json.JSONDecodeError:
+                axisymmetric_preview = {}
+            spans = axisymmetric_preview.get("boundsSpanM") if isinstance(axisymmetric_preview, dict) else None
+            if (
+                not isinstance(axisymmetric_preview, dict)
+                or axisymmetric_preview.get("spatialDimension") != 3
+                or axisymmetric_preview.get("representation") != "pre-solve-blockMesh-equivalent-wedge"
+                or not isinstance(spans, list)
+                or len(spans) != 3
+                or any(not isinstance(value, int | float) or value <= 0 for value in spans)
+            ):
+                issues.append("OpenFOAM axisymmetric wedge requires a non-degenerate 3D blockMesh-equivalent inspection artifact.")
         expected_block_patches = (
             ("inlet", "outlet", "walls", "front", "back")
             if is_axisymmetric_wedge
@@ -3454,13 +3511,14 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                     if patch_name not in listed:
                         issues.append(f"`constant/flowlab_patch_metrics.json` is missing {role} patch `{patch_name}`.")
             manifest_functions = patch_metrics_manifest.get("functionObjects") if isinstance(patch_metrics_manifest.get("functionObjects"), list) else []
-        required_function_objects = ["residuals", "centerlineProbes", "wallForces", "patchFlowRate", "patchAverage", "wallShearStress"]
+        profile_probe_name = "axisymmetricProfileProbes" if is_axisymmetric_wedge else "centerlineProbes"
+        required_function_objects = ["residuals", profile_probe_name, "wallForces", "patchFlowRate", "patchAverage", "wallShearStress"]
         if has_probe_nodes:
             required_function_objects.append("pressureProbes")
         for function_object in required_function_objects:
             if function_object not in function_object_text:
                 issues.append(f"OpenFOAM `system/controlDict` is missing `{function_object}` function object.")
-            if patch_metrics_text is not None and function_object not in {"residuals", "centerlineProbes"} and function_object not in manifest_functions:
+            if patch_metrics_text is not None and function_object not in {"residuals", profile_probe_name} and function_object not in manifest_functions:
                 issues.append(f"`constant/flowlab_patch_metrics.json` is missing `{function_object}` function object.")
         patch_flow_block = _control_dict_function_block(function_object_text, "patchFlowRate") or ""
         patch_average_block = _control_dict_function_block(function_object_text, "patchAverage") or ""
@@ -4666,6 +4724,11 @@ def _apply_openfoam_runtime_style(case_dir: Path, style: str, lines: list[str]) 
 
 
 def _openfoam_required_mesh_commands(case_dir: Path, *, skip_snappy: bool = False) -> list[str]:
+    if _openfoam_case_is_axisymmetric_wedge(case_dir):
+        commands = ["checkMesh"]
+        if not _openfoam_has_base_mesh(case_dir):
+            commands.insert(0, "blockMesh")
+        return commands
     commands = ["surfaceFeatureExtract", "snappyHexMesh", "checkMesh"]
     if not _openfoam_has_base_mesh(case_dir):
         commands.insert(1, "blockMesh")
@@ -4681,6 +4744,17 @@ def _openfoam_case_is_axisymmetric_wedge(case_dir: Path) -> bool:
     must be skipped (blockMesh + checkMesh only), exactly like the fitted starter
     polyMesh path. blockMesh also handles the singular collapsed axis natively.
     """
+    try:
+        profile = json.loads((case_dir / "constant" / "flowlab_axisymmetric_profile.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        profile = {}
+    if (
+        isinstance(profile, dict)
+        and profile.get("schema") == "flowlab.axisymmetric-profile.v1"
+        and profile.get("effectiveMeshMode") == "axisymmetric-wedge"
+    ):
+        return True
+    # Backward-compatible recognition for retained pre-manifest development cases.
     try:
         text = (case_dir / "system" / "blockMeshDict").read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -5307,6 +5381,9 @@ class JobManager:
         _, missing_boundary_tags, _ = _reviewed_boundary_tag_status(starter_geometry)
         _, missing_surface_roles, _, required_patch_names = _reviewed_surface_status(surface_geometry)
         missing_boundary_tags = sorted({*missing_boundary_tags, *missing_surface_roles})
+        if is_axisymmetric_wedge:
+            required_patch_names = ["inlet", "outlet", "walls", "front", "back", "axis"]
+            missing_boundary_tags = []
 
         command_runs: list[dict[str, Any]] = []
         if execution == "native":
@@ -5339,26 +5416,40 @@ class JobManager:
                 blockers = acceptance.get("solverAcceptance", {}).get("openfoam", {}).get("blockingReasons", [])
                 return "; ".join(str(item) for item in blockers) or "Missing OpenFOAM native mesh command."
 
-        command_runs.append(
-            self._run_openfoam_mesh_command(
-                job_id,
-                case_dir,
-                execution,
-                ["surfaceFeatureExtract"],
-                "log.surfaceFeatureExtract",
+        if is_axisymmetric_wedge:
+            command_runs.append(
+                {
+                    "command": "surfaceFeatureExtract",
+                    "execution": execution or "native",
+                    "required": False,
+                    "status": "skipped",
+                    "exitCode": None,
+                    "logPath": None,
+                    "reason": "Axisymmetric wedge geometry is defined directly by blockMesh and has no triangulated surface feature stage.",
+                }
             )
-        )
-        if command_runs[-1]["exitCode"] != 0:
-            _update_openfoam_production_mesh_acceptance(
-                case_dir,
-                command_runs=command_runs,
-                checkmesh_metrics={},
-                layer_summary=_openfoam_layer_summary(command_runs[-1].get("lines", [])),
-                yplus_evidence=_openfoam_yplus_evidence(case_dir),
-                cad_reviewed=cad_reviewed,
-                missing_boundary_tags=missing_boundary_tags,
+            self._append_log(job_id, "OpenFOAM native mesh: skipping surfaceFeatureExtract for axisymmetric blockMesh wedge.")
+        else:
+            command_runs.append(
+                self._run_openfoam_mesh_command(
+                    job_id,
+                    case_dir,
+                    execution,
+                    ["surfaceFeatureExtract"],
+                    "log.surfaceFeatureExtract",
+                )
             )
-            return "OpenFOAM native mesh command `surfaceFeatureExtract` failed before solver launch."
+            if command_runs[-1]["exitCode"] != 0:
+                _update_openfoam_production_mesh_acceptance(
+                    case_dir,
+                    command_runs=command_runs,
+                    checkmesh_metrics={},
+                    layer_summary=_openfoam_layer_summary(command_runs[-1].get("lines", [])),
+                    yplus_evidence=_openfoam_yplus_evidence(case_dir),
+                    cad_reviewed=cad_reviewed,
+                    missing_boundary_tags=missing_boundary_tags,
+                )
+                return "OpenFOAM native mesh command `surfaceFeatureExtract` failed before solver launch."
 
         if _openfoam_has_base_mesh(case_dir):
             command_runs.append(
@@ -5417,6 +5508,11 @@ class JobManager:
                 return "OpenFOAM native mesh command `blockMesh` failed before solver launch."
 
         if skip_snappy_for_starter:
+            skip_reason = (
+                "Axisymmetric wedge geometry is fully defined by blockMesh; surface extraction and snappyHexMesh are not applicable."
+                if is_axisymmetric_wedge
+                else "Skipped for FlowLab-generated fitted starter polyMesh with empty front/back patches; production reviewed STL meshing still requires snappyHexMesh evidence."
+            )
             command_runs.append(
                 {
                     "command": "snappyHexMesh -overwrite",
@@ -5425,13 +5521,16 @@ class JobManager:
                     "status": "skipped",
                     "exitCode": None,
                     "logPath": None,
-                    "reason": "Skipped for FlowLab-generated fitted starter polyMesh with empty front/back patches; production reviewed STL meshing still requires snappyHexMesh evidence.",
+                    "reason": skip_reason,
                 }
             )
-            self._append_log(
-                job_id,
-                "OpenFOAM native mesh: skipping snappyHexMesh for generated fitted starter polyMesh; running checkMesh on existing constant/polyMesh.",
-            )
+            if is_axisymmetric_wedge:
+                self._append_log(job_id, "OpenFOAM native mesh: skipping snappyHexMesh for axisymmetric blockMesh wedge.")
+            else:
+                self._append_log(
+                    job_id,
+                    "OpenFOAM native mesh: skipping snappyHexMesh for generated fitted starter polyMesh; running checkMesh on existing constant/polyMesh.",
+                )
         else:
             command_runs.append(
                 self._run_openfoam_mesh_command(
@@ -5849,6 +5948,7 @@ class JobManager:
             stdout = process.stdout
             if stdout is not None:
                 last_snapshot_at = 0.0
+                residual_snapshot_seen = False
                 for raw_line in stdout:
                     line = raw_line.rstrip()
                     solver_output_lines.append(line)
@@ -5856,9 +5956,15 @@ class JobManager:
                         self._append_log(job_id, line)
                         now = time.monotonic()
                         residual_line = "residual" in line.lower() or "Solving for" in line
-                        if residual_line or now - last_snapshot_at >= 0.25:
+                        # OpenFOAM can emit several residual lines per iteration.
+                        # Re-parsing the complete growing log and filesystem on
+                        # every residual makes long steady runs quadratic in log
+                        # size and can dominate the actual solve. Capture the
+                        # first residual immediately, then throttle to 4 Hz.
+                        if (residual_line and not residual_snapshot_seen) or now - last_snapshot_at >= 0.25:
                             self._refresh_result_snapshot(job_id, case_dir)
                             last_snapshot_at = now
+                            residual_snapshot_seen = residual_snapshot_seen or residual_line
 
             exit_code = process.wait()
             if solver_log_path is not None:

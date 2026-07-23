@@ -9,6 +9,7 @@ from typing import Any
 
 
 VTK_QUAD = 9
+VTK_HEXAHEDRON = 12
 GMSH_LINE = 1
 GMSH_QUAD = 3
 GMSH_HEXAHEDRON = 5
@@ -61,16 +62,32 @@ def _edge_width(edge: dict[str, Any], station: float) -> float:
         return height
     if kind != "circular":
         raise ValueError(f"Unsupported edge shape for {edge.get('id', '<unknown>')}: {kind}")
-    diameter = float(shape.get("diameter") or 0.0)
-    if diameter <= 0:
+    inlet_diameter = float(shape.get("diameter") or 0.0)
+    outlet_diameter = float(edge.get("outletDiameter") or inlet_diameter)
+    if inlet_diameter <= 0 or outlet_diameter <= 0:
         raise ValueError(f"Circular edge {edge.get('id', '<unknown>')} needs a positive diameter.")
     if edge.get("type") == "venturi" and edge.get("throatDiameter"):
         throat = float(edge["throatDiameter"])
         if throat <= 0:
             raise ValueError(f"Venturi edge {edge.get('id', '<unknown>')} needs a positive throatDiameter.")
-        throat_influence = max(0.0, 1.0 - abs(station - 0.5) * 2.0)
-        return diameter * (1.0 - throat_influence) + throat * throat_influence
-    return diameter
+        throat_position = float(edge.get("throatPosition", 0.5))
+        edge_length = float(edge.get("length") or 0.0)
+        throat_length = float(edge.get("throatLength", 0.0))
+        if edge_length <= 0 or not 0 < throat_position < 1 or throat_length < 0:
+            raise ValueError(f"Venturi edge {edge.get('id', '<unknown>')} has invalid throat geometry.")
+        half_fraction = throat_length / (2.0 * edge_length)
+        throat_start = throat_position - half_fraction
+        throat_end = throat_position + half_fraction
+        if throat_start <= 0 or throat_end >= 1:
+            raise ValueError(f"Venturi edge {edge.get('id', '<unknown>')} throat must fit inside the edge.")
+        if station <= throat_start:
+            fraction = station / throat_start
+            return inlet_diameter + (throat - inlet_diameter) * fraction
+        if station <= throat_end:
+            return throat
+        fraction = (station - throat_end) / (1.0 - throat_end)
+        return throat + (outlet_diameter - throat) * fraction
+    return inlet_diameter + (outlet_diameter - inlet_diameter) * station
 
 
 def _segments(project: dict[str, Any]) -> int:
@@ -420,13 +437,15 @@ def _hydraulic_diameter(edge: dict[str, Any]) -> float:
             return 0.0
         return 2.0 * width * height / (width + height)
     diameter = float(shape.get("diameter") or 0.0)
+    if edge.get("outletDiameter"):
+        diameter = min(diameter, float(edge.get("outletDiameter") or diameter))
     if edge.get("type") == "venturi" and edge.get("throatDiameter"):
         diameter = min(diameter, float(edge.get("throatDiameter") or diameter))
     return max(0.0, diameter)
 
 
 def _minimum_wall_normal_width(edge: dict[str, Any]) -> float:
-    stations = [0.0, 0.5, 1.0] if edge.get("type") == "venturi" else [0.0]
+    stations = [0.0, float(edge.get("throatPosition", 0.5)), 1.0] if edge.get("type") == "venturi" else [0.0, 1.0]
     widths = []
     for station in stations:
         try:
@@ -3099,6 +3118,9 @@ def _append_two_port_node_connectors(
 def mesh_to_legacy_vtk(mesh: dict[str, Any], title: str) -> str:
     points = mesh["points"]
     cells = mesh["cells"]
+    cell_types = mesh.get("cellTypes")
+    if not isinstance(cell_types, list) or len(cell_types) != len(cells):
+        cell_types = [VTK_QUAD for _ in cells]
     lines = [
         "# vtk DataFile Version 3.0",
         title,
@@ -3111,20 +3133,23 @@ def mesh_to_legacy_vtk(mesh: dict[str, Any], title: str) -> str:
     lines.append(f"CELLS {len(cells)} {total}")
     lines.extend(" ".join([str(len(cell)), *(str(index) for index in cell)]) for cell in cells)
     lines.append(f"CELL_TYPES {len(cells)}")
-    lines.extend(str(VTK_QUAD) for _ in cells)
+    lines.extend(str(cell_type) for cell_type in cell_types)
     return "\n".join(lines) + "\n"
 
 
 def mesh_to_vtu(mesh: dict[str, Any]) -> str:
     points = mesh["points"]
     cells = mesh["cells"]
+    cell_types = mesh.get("cellTypes")
+    if not isinstance(cell_types, list) or len(cell_types) != len(cells):
+        cell_types = [VTK_QUAD for _ in cells]
     connectivity = " ".join(str(index) for cell in cells for index in cell)
     offsets: list[str] = []
     offset = 0
     for cell in cells:
         offset += len(cell)
         offsets.append(str(offset))
-    types = " ".join(str(VTK_QUAD) for _ in cells)
+    types = " ".join(str(cell_type) for cell_type in cell_types)
     point_text = " ".join(f"{point[0]} {point[1]} {point[2]}" for point in points)
     return f"""<?xml version="1.0"?>
 <VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">

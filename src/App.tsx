@@ -192,8 +192,11 @@ const canvasRenderModeOptions: { id: CanvasRenderMode; label: string }[] = [
   { id: "schematic", label: "Schematic" }
 ];
 
-const defaultCinemaCamera: CinemaCameraState = initialCinemaCamera;
 const defaultResultCamera: ResultCamera = { yaw: -32, pitch: 24, zoom: 1 };
+const defaultCinemaCamera: CinemaCameraState = {
+  ...initialCinemaCamera,
+  ...defaultResultCamera
+};
 
 export function validatedRunStatusLabel(
   evidenceStatus: string,
@@ -1210,12 +1213,19 @@ export default function App() {
       setJobRecord(null);
       return;
     }
-    const solverCase = await generateSolverCase(project, project.solver.tier, project.solver.advancedMode);
-    setCaseRecord(solverCase);
-    const queued = await queueJob(solverCase);
-    setJobRecord(queued);
-    rememberRun(solverCase, queued);
-    ingestJobResultFiles(queued);
+    try {
+      const solverCase = await generateSolverCase(project, project.solver.tier, project.solver.advancedMode);
+      setCaseRecord(solverCase);
+      const queued = await queueJob(solverCase);
+      setJobRecord(queued);
+      rememberRun(solverCase, queued);
+      ingestJobResultFiles(queued);
+      setProjectMessage(`${solverLabels[queued.solver]} case queued as ${queued.id}.`);
+    } catch (error) {
+      setCaseRecord(null);
+      setJobRecord(null);
+      setProjectMessage(error instanceof Error ? error.message : "Could not generate or queue the solver case.");
+    }
   }
 
   async function launchValidatedPreset(benchmarkId: string) {
@@ -2000,6 +2010,7 @@ export default function App() {
                   onClick={() => {
                     setResultMode("3d");
                     setResultCamera(defaultResultCamera);
+                    setCinemaCamera(defaultCinemaCamera);
                   }}
                 >
                   <RotateCcw size={13} />
@@ -2015,10 +2026,14 @@ export default function App() {
                       min="-180"
                       max="180"
                       step="1"
-                      value={resultCamera.yaw}
-                      onChange={(event) => setResultCamera((camera) => ({ ...camera, yaw: Number(event.target.value) }))}
+                      value={cinemaCamera.yaw}
+                      onChange={(event) => {
+                        const yaw = Number(event.target.value);
+                        setCinemaCamera((camera) => ({ ...camera, yaw }));
+                        setResultCamera((camera) => ({ ...camera, yaw }));
+                      }}
                     />
-                    <strong>{Math.round(resultCamera.yaw)} deg</strong>
+                    <strong>{Math.round(cinemaCamera.yaw)} deg</strong>
                   </label>
                   <label>
                     Pitch
@@ -2028,10 +2043,14 @@ export default function App() {
                       min="-80"
                       max="80"
                       step="1"
-                      value={resultCamera.pitch}
-                      onChange={(event) => setResultCamera((camera) => ({ ...camera, pitch: Number(event.target.value) }))}
+                      value={cinemaCamera.pitch}
+                      onChange={(event) => {
+                        const pitch = Number(event.target.value);
+                        setCinemaCamera((camera) => ({ ...camera, pitch }));
+                        setResultCamera((camera) => ({ ...camera, pitch }));
+                      }}
                     />
-                    <strong>{Math.round(resultCamera.pitch)} deg</strong>
+                    <strong>{Math.round(cinemaCamera.pitch)} deg</strong>
                   </label>
                   <label>
                     Zoom
@@ -2041,10 +2060,14 @@ export default function App() {
                       min="0.5"
                       max="2.2"
                       step="0.05"
-                      value={resultCamera.zoom}
-                      onChange={(event) => setResultCamera((camera) => ({ ...camera, zoom: Number(event.target.value) }))}
+                      value={cinemaCamera.zoom}
+                      onChange={(event) => {
+                        const zoom = Number(event.target.value);
+                        setCinemaCamera((camera) => ({ ...camera, zoom }));
+                        setResultCamera((camera) => ({ ...camera, zoom }));
+                      }}
                     />
-                    <strong>{formatNumber(resultCamera.zoom, 2)}x</strong>
+                    <strong>{formatNumber(cinemaCamera.zoom, 2)}x</strong>
                   </label>
                 </div>
               ) : null}
@@ -3620,16 +3643,30 @@ function EdgeInspector({
         <input type="number" value={edge.length} min={0.1} step={0.5} onChange={(event) => onChange({ length: Number(event.target.value) })} />
       </label>
       {edge.shape.kind === "circular" ? (
-        <label>
-          Diameter m
-          <input
-            type="number"
-            value={edge.shape.diameter}
-            min={0.005}
-            step={0.005}
-            onChange={(event) => onChange({ shape: { kind: "circular", diameter: Number(event.target.value) } })}
-          />
-        </label>
+        <>
+          <label>
+            Inlet diameter m
+            <input
+              type="number"
+              value={edge.shape.diameter}
+              min={0.005}
+              step={0.005}
+              onChange={(event) => onChange({ shape: { kind: "circular", diameter: Number(event.target.value) } })}
+            />
+          </label>
+          {["pipe", "venturi", "expansion", "contraction", "nozzle"].includes(edge.type) && (
+            <label>
+              Outlet diameter m
+              <input
+                type="number"
+                value={edge.outletDiameter ?? edge.shape.diameter}
+                min={0.005}
+                step={0.005}
+                onChange={(event) => onChange({ outletDiameter: Number(event.target.value) })}
+              />
+            </label>
+          )}
+        </>
       ) : (
         <>
           <label>
@@ -3655,16 +3692,39 @@ function EdgeInspector({
         </>
       )}
       {edge.type === "venturi" ? (
-        <label>
-          Throat diameter m
-          <input
-            type="number"
-            value={edge.throatDiameter ?? 0.06}
-            min={0.005}
-            step={0.005}
-            onChange={(event) => onChange({ throatDiameter: Number(event.target.value) })}
-          />
-        </label>
+        <>
+          <label>
+            Throat diameter m
+            <input
+              type="number"
+              value={edge.throatDiameter ?? 0.06}
+              min={0.005}
+              step={0.005}
+              onChange={(event) => onChange({ throatDiameter: Number(event.target.value) })}
+            />
+          </label>
+          <label>
+            Throat position
+            <input
+              type="number"
+              value={edge.throatPosition ?? 0.5}
+              min={0.05}
+              max={0.95}
+              step={0.05}
+              onChange={(event) => onChange({ throatPosition: Number(event.target.value) })}
+            />
+          </label>
+          <label>
+            Throat length m
+            <input
+              type="number"
+              value={edge.throatLength ?? 0}
+              min={0}
+              step={0.05}
+              onChange={(event) => onChange({ throatLength: Number(event.target.value) })}
+            />
+          </label>
+        </>
       ) : null}
       <label>
         Minor loss K

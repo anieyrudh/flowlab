@@ -29,6 +29,7 @@ QUANTITATIVE_STATUSES = {QUANTITATIVE_PENDING_STATUS, QUANTITATIVE_CAPTURED_STAT
 QUANTITATIVE_VERIFICATION_FIELDS = (
     "reference",
     "applicability",
+    "geometryRealization",
     "quantitiesOfInterest",
     "units",
     "meshRefinement",
@@ -374,6 +375,61 @@ def _validate_straight_pipe_quantitative_verification(case: dict[str, Any], issu
         _require_string_list(
             applicability.get("evidenceRequired"),
             label="applicability.evidenceRequired",
+            case_id=case_id,
+            issues=issues,
+        )
+
+    geometry = _require_pending_quantitative_status(
+        contract.get("geometryRealization"),
+        label="geometryRealization",
+        case_status=case.get("status"),
+        case_id=case_id,
+        issues=issues,
+    )
+    if geometry:
+        if geometry.get("representation") != "axisymmetric-wedge":
+            issues.append(f"{case_id}: geometryRealization.representation must be axisymmetric-wedge.")
+        if geometry.get("spatialDimension") != 3:
+            issues.append(f"{case_id}: geometryRealization.spatialDimension must be 3.")
+        if geometry.get("minimumSolutionDirections") != 3:
+            issues.append(f"{case_id}: geometryRealization.minimumSolutionDirections must be 3.")
+        if geometry.get("nonzeroCellVolumeRequired") is not True:
+            issues.append(f"{case_id}: geometryRealization.nonzeroCellVolumeRequired must be true.")
+        if geometry.get("runtimeMeshSource") != "solver-produced-polyMesh":
+            issues.append(f"{case_id}: geometryRealization.runtimeMeshSource must be solver-produced-polyMesh.")
+        if geometry.get("fullCircleScaling") != "wedge-integral-times-360-over-wedge-angle":
+            issues.append(
+                f"{case_id}: geometryRealization.fullCircleScaling must declare the wedge-to-full-circle integral convention."
+            )
+        patches = set(
+            _require_string_list(
+                geometry.get("requiredRuntimePatches"),
+                label="geometryRealization.requiredRuntimePatches",
+                case_id=case_id,
+                issues=issues,
+            )
+        )
+        missing_patches = sorted({"inlet", "outlet", "walls", "front", "back", "axis"} - patches)
+        if missing_patches:
+            issues.append(
+                f"{case_id}: geometryRealization.requiredRuntimePatches is missing {', '.join(missing_patches)}."
+            )
+        execution_path = _require_string_list(
+            geometry.get("requiredProductExecutionPath"),
+            label="geometryRealization.requiredProductExecutionPath",
+            case_id=case_id,
+            issues=issues,
+        )
+        if execution_path != [
+            "server.flowlab.adapters.generate_case",
+            "server.flowlab.execution.JobManager.queue_job",
+        ]:
+            issues.append(
+                f"{case_id}: geometryRealization.requiredProductExecutionPath must bind evidence to the application adapter and JobManager."
+            )
+        _require_string_list(
+            geometry.get("evidenceRequired"),
+            label="geometryRealization.evidenceRequired",
             case_id=case_id,
             issues=issues,
         )
@@ -906,6 +962,43 @@ def _validate_straight_pipe_captured_evidence(
             issues.append(
                 f"{case_id}: evidence applicability Reynolds number must match the verified QoI extraction reference inputs."
             )
+
+    geometry = evidence.get("geometryRealization")
+    if not isinstance(geometry, dict):
+        issues.append(f"{case_id}: evidence package requires geometryRealization.")
+    else:
+        if geometry.get("representation") != "axisymmetric-wedge":
+            issues.append(f"{case_id}: evidence geometryRealization.representation must be axisymmetric-wedge.")
+        if geometry.get("spatialDimension") != 3 or geometry.get("solutionDirections") != 3:
+            issues.append(f"{case_id}: evidence geometryRealization must record a three-dimensional, three-solution-direction mesh.")
+        if geometry.get("nonzeroCellVolume") is not True:
+            issues.append(f"{case_id}: evidence geometryRealization.nonzeroCellVolume must be true.")
+        if geometry.get("runtimeMeshSource") != "solver-produced-polyMesh":
+            issues.append(f"{case_id}: evidence geometryRealization.runtimeMeshSource must be solver-produced-polyMesh.")
+        if geometry.get("fullCircleScaling") != "wedge-integral-times-360-over-wedge-angle":
+            issues.append(f"{case_id}: evidence geometryRealization must record the frozen full-circle scaling convention.")
+        if not _finite_number(geometry.get("wedgeAngleDegrees")) or not 0.0 < float(
+            geometry["wedgeAngleDegrees"]
+        ) < 360.0:
+            issues.append(f"{case_id}: evidence geometryRealization.wedgeAngleDegrees must be between 0 and 360.")
+        expected_scale = (
+            360.0 / float(geometry["wedgeAngleDegrees"])
+            if _finite_number(geometry.get("wedgeAngleDegrees"))
+            and float(geometry["wedgeAngleDegrees"]) != 0.0
+            else None
+        )
+        if expected_scale is None or not _numbers_match(geometry.get("fullCircleScale"), expected_scale):
+            issues.append(f"{case_id}: evidence geometryRealization.fullCircleScale must equal 360/wedgeAngleDegrees.")
+        patches = geometry.get("runtimePatches")
+        if not isinstance(patches, list) or not {"inlet", "outlet", "walls", "front", "back", "axis"}.issubset(
+            {str(value) for value in patches}
+        ):
+            issues.append(f"{case_id}: evidence geometryRealization.runtimePatches must include every axisymmetric wedge patch.")
+        if geometry.get("productExecutionPath") != [
+            "server.flowlab.adapters.generate_case",
+            "server.flowlab.execution.JobManager.queue_job",
+        ]:
+            issues.append(f"{case_id}: evidence geometryRealization must bind the captured run to the product execution path.")
 
     mesh = evidence.get("meshRefinement")
     if not isinstance(mesh, dict):

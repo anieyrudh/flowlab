@@ -1556,6 +1556,35 @@ def test_openfoam_axisymmetric_mesh_mode_emits_valid_wedge_pipe(monkeypatch) -> 
     assert "constant/polyMesh/points" not in case.files
     assert "wedge" in case.files["0/U"] and "axis" in case.files["0/U"]
     assert "wedge" in case.files["0/p"] and "frontAndBack" not in case.files["0/p"]
+    assert "wedge" in case.files["0/T"] and "frontAndBack" not in case.files["0/T"]
+    profile = json.loads(case.files["constant/flowlab_axisymmetric_profile.json"])
+    assert profile["schema"] == "flowlab.axisymmetric-profile.v1"
+    assert profile["pathEdgeIds"] == ["pipe"]
+    assert profile["totalLengthM"] == pytest.approx(6.92)
+    assert profile["stations"] == [
+        {
+            "edgeIds": ["pipe"],
+            "features": ["inlet"],
+            "index": 0,
+            "radiusM": 0.05,
+            "xM": 0.0,
+        },
+        {
+            "edgeIds": ["pipe"],
+            "features": ["outlet"],
+            "index": 1,
+            "radiusM": 0.05,
+            "xM": 6.92,
+        },
+    ]
+    assert "(6.92 0.05" in block_mesh
+    preview = json.loads(case.files["mesh/flowlab_mesh.json"])
+    assert preview["spatialDimension"] == 3
+    assert preview["representation"] == "pre-solve-blockMesh-equivalent-wedge"
+    assert preview["boundsSpanM"][2] > 0
+    assert set(preview["cellTypes"]) == {12}
+    source_strip = json.loads(case.files["mesh/flowlab_source_strip.json"])
+    assert all(point[2] == 0 for point in source_strip["points"])
     # The wedge-aware validator must accept the case with no issues.
     assert validate_solver_case(case) == []
 
@@ -1577,16 +1606,124 @@ def test_openfoam_default_mesh_mode_stays_planar_2d(monkeypatch) -> None:
     assert "constant/polyMesh/points" in case.files
 
 
-def test_openfoam_axisymmetric_ignored_for_transient_physics(monkeypatch) -> None:
+def test_openfoam_axisymmetric_fails_closed_for_transient_physics(monkeypatch) -> None:
     monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
     monkeypatch.setattr(adapters, "_docker_available", lambda: False)
 
-    # meshMode=axisymmetric must NOT apply to inherently transient modes.
+    with pytest.raises(ValueError, match="supports only incompressible Navier-Stokes"):
+        adapters.generate_case(
+            CaseRequest.model_construct(
+                project=_circular_pipe_project("axisymmetric"),
+                solver="openfoam",
+                advancedMode="water-hammer",
+            )
+        )
+
+
+def _axisymmetric_venturi_chain_project() -> dict:
+    project = _circular_pipe_project("axisymmetric")
+    project["name"] = "Axisymmetric Venturi chain"
+    project["nodes"] = {
+        "source": {"id": "source", "type": "source", "position": {"x": 0, "y": 0}, "pressure": 101325.0},
+        "junction": {"id": "junction", "type": "junction", "position": {"x": 200, "y": 0}},
+        "sink": {"id": "sink", "type": "sink", "position": {"x": 400, "y": 0}, "pressure": 101325.0},
+    }
+    project["edges"] = {
+        "inlet-pipe": {
+            "id": "inlet-pipe",
+            "type": "pipe",
+            "from": "source",
+            "to": "junction",
+            "fromPort": "outlet",
+            "toPort": "inlet",
+            "length": 2.0,
+            "shape": {"kind": "circular", "diameter": 0.1},
+        },
+        "venturi": {
+            "id": "venturi",
+            "type": "venturi",
+            "from": "junction",
+            "to": "sink",
+            "fromPort": "outlet",
+            "toPort": "inlet",
+            "length": 3.0,
+            "shape": {"kind": "circular", "diameter": 0.1},
+            "throatDiameter": 0.05,
+            "outletDiameter": 0.08,
+            "throatPosition": 0.4,
+            "throatLength": 0.2,
+        },
+    }
+    return project
+
+
+def test_openfoam_axisymmetric_multi_edge_venturi_emits_conformal_profile(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+
     case = adapters.generate_case(
         CaseRequest.model_construct(
-            project=_circular_pipe_project("axisymmetric"),
+            project=_axisymmetric_venturi_chain_project(),
             solver="openfoam",
-            advancedMode="water-hammer",
+            advancedMode="incompressible-navier-stokes",
         )
     )
-    assert "type wedge" not in case.files["system/blockMeshDict"]
+
+    profile = json.loads(case.files["constant/flowlab_axisymmetric_profile.json"])
+    assert profile["pathEdgeIds"] == ["inlet-pipe", "venturi"]
+    assert profile["effectiveMeshMode"] == "axisymmetric-wedge"
+    assert len(profile["segments"]) == 4
+    assert sum(segment["nAxial"] for segment in profile["segments"]) == 12
+    assert profile["samplingSurfaces"] == [
+        {
+            "edgeId": "venturi",
+            "name": "throat_venturi",
+            "role": "internal-sampling-plane",
+            "xM": pytest.approx(2.384),
+        }
+    ]
+    block_mesh = case.files["system/blockMeshDict"]
+    assert block_mesh.count("    hex (") == 4
+    assert "throat_venturi" not in block_mesh
+    assert "type wedge" in block_mesh
+    functions = case.files["system/functions"]
+    assert "axisymmetricProfileProbes" in functions
+    assert "(4.006800" not in functions
+    preview = json.loads(case.files["mesh/flowlab_mesh.json"])
+    assert len(preview["cells"]) == sum(segment["nAxial"] for segment in profile["segments"]) * profile["nRadial"]
+    assert preview["boundsSpanM"][0] == pytest.approx(profile["totalLengthM"])
+    assert preview["boundsSpanM"][1] > 0
+    assert preview["boundsSpanM"][2] > 0
+    assert validate_solver_case(case) == []
+
+
+def test_openfoam_axisymmetric_rejects_diameter_discontinuity(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+    project = _axisymmetric_venturi_chain_project()
+    project["edges"]["venturi"]["shape"]["diameter"] = 0.09
+
+    with pytest.raises(ValueError, match="diameter discontinuity"):
+        adapters.generate_case(
+            CaseRequest.model_construct(
+                project=project,
+                solver="openfoam",
+                advancedMode="incompressible-navier-stokes",
+            )
+        )
+
+
+def test_openfoam_axisymmetric_rejects_non_collinear_path(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+    project = _axisymmetric_venturi_chain_project()
+    project["nodes"]["junction"]["position"]["y"] = 25
+
+    with pytest.raises(ValueError, match="straight, collinear"):
+        adapters.generate_case(
+            CaseRequest.model_construct(
+                project=project,
+                solver="openfoam",
+                advancedMode="incompressible-navier-stokes",
+            )
+        )

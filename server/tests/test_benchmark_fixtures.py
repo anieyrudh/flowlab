@@ -159,6 +159,21 @@ def _captured_straight_pipe_case(tmp_path: Path) -> tuple[dict, Path, Path]:
             "reynoldsNumber": reynolds,
             "boundaryCondition": "fully-developed-profile",
         },
+        "geometryRealization": {
+            "representation": "axisymmetric-wedge",
+            "spatialDimension": 3,
+            "solutionDirections": 3,
+            "nonzeroCellVolume": True,
+            "runtimeMeshSource": "solver-produced-polyMesh",
+            "wedgeAngleDegrees": 5.0,
+            "fullCircleScale": 72.0,
+            "fullCircleScaling": "wedge-integral-times-360-over-wedge-angle",
+            "runtimePatches": ["inlet", "outlet", "walls", "front", "back", "axis"],
+            "productExecutionPath": [
+                "server.flowlab.adapters.generate_case",
+                "server.flowlab.execution.JobManager.queue_job",
+            ],
+        },
         "meshRefinement": {
             "levels": [
                 {
@@ -262,6 +277,9 @@ def test_straight_pipe_has_a_complete_pending_quantitative_vv_contract() -> None
 
     assert contract["reference"]["id"] == "hagen-poiseuille-pressure-drop"
     assert contract["reference"]["kind"] == "analytic"
+    assert contract["geometryRealization"]["representation"] == "axisymmetric-wedge"
+    assert contract["geometryRealization"]["spatialDimension"] == 3
+    assert contract["geometryRealization"]["runtimeMeshSource"] == "solver-produced-polyMesh"
     assert {qoi["id"] for qoi in contract["quantitiesOfInterest"]} == {"pressure-drop", "mass-flow-rate"}
     assert contract["units"]["pressureDrop"] == "Pa"
     assert contract["units"]["massFlowRate"] == "kg/s"
@@ -272,6 +290,7 @@ def test_straight_pipe_has_a_complete_pending_quantitative_vv_contract() -> None
     assert contract["conservation"]["maximum"] == 0.001
     assert all(section["status"] == PENDING_STATUS for section in (
         contract["applicability"],
+        contract["geometryRealization"],
         contract["meshRefinement"],
         contract["timeRefinement"],
         contract["errorAssessment"],

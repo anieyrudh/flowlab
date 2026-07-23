@@ -53,6 +53,26 @@
         "documented entrance-length exclusion if a uniform inlet is used"
       ]
     },
+    "geometryRealization": {
+      "status": "pending-real-run",
+      "representation": "axisymmetric-wedge",
+      "spatialDimension": 3,
+      "minimumSolutionDirections": 3,
+      "nonzeroCellVolumeRequired": true,
+      "runtimeMeshSource": "solver-produced-polyMesh",
+      "fullCircleScaling": "wedge-integral-times-360-over-wedge-angle",
+      "requiredRuntimePatches": ["inlet", "outlet", "walls", "front", "back", "axis"],
+      "requiredProductExecutionPath": [
+        "server.flowlab.adapters.generate_case",
+        "server.flowlab.execution.JobManager.queue_job"
+      ],
+      "evidenceRequired": [
+        "runtime checkMesh report proving a three-dimensional nonzero-volume mesh",
+        "solver-produced polyMesh or foamToVTK artifact with three nonzero coordinate spans",
+        "captured wedge angle and full-circle flow scaling calculation",
+        "generated case and JobManager records binding the run to the application execution path"
+      ]
+    },
     "quantitiesOfInterest": [
       {
         "id": "pressure-drop",

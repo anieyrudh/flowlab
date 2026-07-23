@@ -1,19 +1,24 @@
-# Axisymmetric wedge pipe meshing — validated approach + integration plan (2026-07-22)
+# Axisymmetric wedge pipe meshing — product status and remaining gates (updated 2026-07-23)
 
 Goal: let a FlowLab "pipe" edge produce a **true 3D circular-pipe** mesh that satisfies
 the 3D Hagen–Poiseuille law `Δp = 128·μ·L·Q/(π·D⁴)`, instead of the current 2D
 one-cell-thick planar strip (`frontAndBack empty`, gap `H = diameter·3.6`).
 
-## Status: INTEGRATED into the product pipeline and validated end-to-end.
+## Status: integrated software path; scientific fixture still pending
 
-`solver.meshMode: "axisymmetric"` is live. A straight circular pipe generated through
-the FlowLab pipeline (`generate_case` -> `JobManager`, `runMode: "steady"`) passes
-`validate_solver_case` with **0 issues**, runs (blockMesh + checkMesh, snappy skipped),
-conserves mass to ~1e-8, and reports **Δp = 199.40 vs Hagen-Poiseuille 199.30 (0.1%)**.
-Exposed as a UI toggle (Advanced solvers -> Mesh mode). The default `planar-2d` path is
-byte-identical (full backend suite: 486 pass, only pre-existing evidence failures).
+`solver.meshMode: "axisymmetric"` is live for incompressible flow. It now compiles
+one straight, collinear, non-branching circular source-to-sink path with pipe,
+Venturi, expansion, contraction, and nozzle edges into a conformal multi-block
+wedge. Invalid topology, unsupported physics, and diameter discontinuities fail
+closed. `validate_solver_case` checks the canonical SI profile and the non-planar
+3D inspection artifact before execution.
 
-## What was validated
+The software path has passed local `blockMesh`, `checkMesh`, and steady solver
+smokes in the pinned OpenFOAM container. Those runs are experimental smoke
+evidence only. They are not the governed three-grid campaign, independent
+validation, promotion authorization, or external release evidence.
+
+## What the smoke established
 
 A minimal **axisymmetric wedge** (a ~5° wedge revolved about the pipe axis, OpenFOAM
 `wedge` front/back patches, collapsed axis) was run through the pinned container
@@ -28,9 +33,10 @@ A minimal **axisymmetric wedge** (a ~5° wedge revolved about the pipe axis, Ope
   The 2D plane-channel law for the same inputs gives 0.12 — so the wedge is
   unambiguously producing the **circular** `πD⁴` result, not the planar one.
 
-**Conclusion:** the axisymmetric wedge is the correct, low-code path to true 3D
-circular-pipe physics. Full all-hex O-grid (as in `straight_pipe_runner.py`) is the
-gold standard but far more code; defer it until non-axisymmetric geometry is needed.
+**Conclusion:** the axisymmetric wedge is a viable true-3D circular-pipe software
+path. The full all-hex O-grid remains an independent topology reference and the
+natural route for non-axisymmetric geometry. Neither topology is promoted by this
+smoke.
 
 ## Proven reference: the wedge blockMeshDict (single straight pipe, R, L)
 
@@ -58,32 +64,32 @@ boundary
 Field BCs (`0/U`, `0/p`): `front`/`back` → `type wedge`; `axis` → `type empty`;
 inlet/outlet/wall as usual (no `frontAndBack`).
 
-## Integration plan (behind `solver.meshMode`, default `planar-2d`)
+## Current implementation
 
-Keep the default `planar-2d` path byte-identical so all existing tests pass; branch
-only when `meshMode == "axisymmetric"`.
-
-1. **`mesh.py` `_mesh_controls`** — read `meshMode ∈ {planar-2d (default), axisymmetric}`.
-2. **`mesh.py`** — add `axisymmetric_pipe_block_mesh_dict(mesh, controls)` that maps a
-   single straight circular-pipe region to the wedge dict above: `R = diameter/2`
-   (physical), `L` from the axial station extent, `nAxial = segmentCount`,
-   `nRadial` from the transverse cell count (reuse `_transverse_fractions` for radial
-   grading; uniform recommended).
-3. **`adapters.py` (`OpenFOAMAdapter.generate_case`, ~line 4580)** — when axisymmetric:
-   set `system/blockMeshDict` to the wedge dict, set `openfoam_mesh_files = {}` (skip
-   the fitted `constant/polyMesh` so Allrun runs blockMesh), and emit wedge field BCs.
-4. **`adapters.py` field writers** (`_openfoam_vector_field` ~323, `_openfoam_pressure_field`
-   ~354) — emit `front`/`back` `type wedge` + `axis` `type empty` instead of
-   `frontAndBack empty` when axisymmetric.
-5. **`execution.py` `validate_solver_case` (~3352-3360)** — make the required patch set
-   `meshMode`-aware: axisymmetric expects `inlet/outlet/wall/front/back` (not `frontAndBack`).
-6. **Tests + validation** — new test for axisymmetric generation; validate end-to-end by
-   generating an axisymmetric pipe through the pipeline and comparing the computed Δp to
-   `128·μ·L·Q/(π·D⁴)` (harness: `scratchpad/wedge-proto/`).
+- `adapters.py` emits a canonical `flowlab.axisymmetric-profile.v1` SI profile,
+  conformal multi-block `blockMeshDict`, wedge-aware fields and physical probes.
+- `mesh.py` retains the original 2D source strip while exporting a 3D
+  blockMesh-equivalent VTK/VTU preview with hexahedral cell types.
+- `execution.py` skips the planar surface/snappy stage, requires the
+  inlet/outlet/walls/front/back/axis patch contract, and validates the 3D preview.
+- The result renderer extracts only exterior faces from hex, wedge, tetrahedron,
+  pyramid, quad, triangle, and polygon cells instead of drawing internal faces.
+- `axisymmetricAxialCells` and `axisymmetricRadialCells` freeze exact single-edge
+  logical refinements.
+- `axisymmetricBenchmark` switches the frozen straight-pipe candidate to cyclic
+  inlet/outlet patches with `meanVelocityForce`, records pressure/flow unit and
+  full-circle scaling rules, and remains explicitly `pending-real-run`.
+- `axisymmetric_straight_pipe_campaign.py --materialize-only` produces coarse
+  16x4, medium 32x8, and fine 64x16 cases through the product adapter without
+  running or promoting them.
 
 ## Scope notes / limitations
-- Axisymmetric only (circular pipes/ducts). Non-axisymmetric geometry needs the O-grid.
-- VTK preview still exports the 2D strip (`mesh_to_legacy_vtk` is strip-based); the 3D
-  shape shows only in the solved fields, not the editor preview.
-- The straight-pipe 3D Hagen–Poiseuille benchmark fixture becomes satisfiable by the
-  product pipeline once this lands (today only the science runner can).
+- Axisymmetric paths must remain circular, straight, collinear, non-branching, and
+  incompressible. Elbows, branches, and non-circular sections need a full 3D
+  topology such as the O-grid/native CAD meshing path.
+- The editor/result canvas displays the real 3D wedge surface, but XYZ-aware
+  ray-cast probing is still pending.
+- The straight-pipe fixture now formally requires this product path and its 3D
+  runtime evidence. It stays `pending-real-run` until the three cases execute,
+  the postprocessor reconstructs full-circle QoIs, every frozen gate passes, and
+  an independent review approves the immutable evidence package.

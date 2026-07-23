@@ -20,7 +20,7 @@ export default defineConfig({
     }
   },
   test: {
-    exclude: ["e2e/**", "tests/e2e/**", "node_modules/**", "dist/**"],
+    exclude: ["e2e/**", "tests/e2e/**", ".claude/**", "node_modules/**", "dist/**"],
     environment: "jsdom",
     globals: true
   }
