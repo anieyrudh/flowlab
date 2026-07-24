@@ -51,7 +51,10 @@ and a launch test on a clean supported arm64 Mac. The historical
 axisymmetric/XYZ internal-package evidence is recorded in
 [docs/desktop-axisymmetric-qa-2026-07-23.md](docs/desktop-axisymmetric-qa-2026-07-23.md);
 the self-contained packaging disposition is tracked separately in
-[docs/desktop-release-qa-2026-07-23.md](docs/desktop-release-qa-2026-07-23.md).
+[docs/desktop-release-qa-2026-07-23.md](docs/desktop-release-qa-2026-07-23.md);
+the bounded full O-grid package QA and its separate scientific stop are recorded
+in
+[docs/desktop-full-ogrid-qa-2026-07-24.md](docs/desktop-full-ogrid-qa-2026-07-24.md).
 
 ## Run Locally
 

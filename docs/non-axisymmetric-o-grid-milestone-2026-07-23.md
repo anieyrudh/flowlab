@@ -1,6 +1,37 @@
 # Non-axisymmetric full O-grid milestone
 
-Status: **next separate geometry milestone; not inherited from axisymmetric evidence**
+Status: **software path complete; frozen scientific campaign stopped at failed
+coarse solver gates; independent review pending**
+
+## Current disposition — 2026-07-24
+
+The bounded full-revolution software path is implemented on
+`codex/full-ogrid-product-milestone`. It covers editor validation, deterministic
+five-block all-hex generation, OpenFOAM case generation and JobManager
+execution, full-volume VTK preview, exterior-surface triangulation, and
+solver-space XYZ probing. Unsupported topology and physics fail closed.
+
+The prospective v1 verification contract was frozen before the definitive
+scientific run. The retained `2026-07-24-v1-r2` coarse level passed
+deterministic generation, every mesh gate, and every pressure, flow,
+conservation, and profile gate. It failed the frozen solver group:
+
+- no SIMPLE convergence declaration by the 2,000-iteration limit;
+- final linear residual `1.3859648e-07` exceeded `1e-07`; and
+- absolute global continuity error `1.3146633e-08` exceeded `1e-08`.
+
+The contract's mandatory-stop rule therefore prohibited medium and fine runs.
+Observed order and GCI are unqualified. The immutable partial-failure package is
+review-ready, but no controlled independent reviewer has yet been identified.
+No fixture, registry, validation state, promotion flag, product claim, or
+release state was changed.
+
+The source and desktop verification surfaces passed: 581 backend tests, 81
+frontend tests, lint, production build, 16 Playwright desktop E2E tests,
+portable macOS package build/QA, and a native packaged interaction that exposed
+the exact medium O-grid controls. See
+`docs/desktop-full-ogrid-qa-2026-07-24.md` and
+`docs/validation/full-ogrid-straight-pipe/REVIEW_HANDOFF_2026-07-24.md`.
 
 The current axisymmetric path is a three-dimensional wedge realization of a
 straight, collinear, circular source-to-sink profile. It supports varying
