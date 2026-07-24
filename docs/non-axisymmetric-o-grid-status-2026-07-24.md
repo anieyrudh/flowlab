@@ -167,6 +167,52 @@ synthetic retained-level evaluation, and combined-geometry GCI tests passed:
 - O-grid promotion: **not authorized**.
 - External release: **blocked independently**.
 
-The next gate is to commit this prospective freeze, verify the frozen paths are
-clean, and only then start the retained coarse, medium, and fine product-path
-campaign.
+That gate was satisfied by commit
+`5e370d1f1d1b322cc5ac17b4dad7e567fa1ce241` before the first retained
+campaign attempt.
+
+## Retained campaign attempt `v1-r1`
+
+The first retained attempt started from clean source commit
+`5e370d1f1d1b322cc5ac17b4dad7e567fa1ce241`, contract SHA-256
+`4ba46eb81f442fdd3dceb2cff44d6820a51e26d9b4b7159391089430710a5b0d`,
+and immutable image ID
+`sha256:4fa4e4961b90b0df2781d70b6c033be7e67d324c17e129667469099abf6568fe`.
+
+The coarse JobManager level completed with solver exit `0`, but the campaign
+stopped before evaluation and before medium or fine began. The evaluator
+expected an alternate `checkMesh` label for determinant, interpolation-weight,
+and face-volume-ratio metrics. Foundation OpenFOAM 11 retained the same
+contracted quantities as:
+
+- `Cell determinant (wellposedness) : minimum: ...`;
+- `Face interpolation weight : minimum: ...`; and
+- `Face volume ratio : minimum: ...`.
+
+Disposition: **retained evaluation-infrastructure failure; not a scientific
+gate result**. The `v1-r1` tree remains untouched at
+`benchmarks/cases/full-ogrid-straight-pipe/campaigns/2026-07-24-v1-r1`.
+No evidence was deleted, resumed, or rewritten. A parser-only successor may
+accept both labels without changing the frozen operator, value, threshold, or
+contract hash, but it must use a new output directory and committed source.
+
+A read-only diagnostic application of that parser-only repair to the retained
+coarse artifacts found:
+
+- every frozen mesh gate passed;
+- every frozen pressure, flow, conservation, and velocity-profile gate passed;
+- pressure-drop relative error: `0.012195952442234873`;
+- velocity-profile relative L2 error: `0.015023886681146731`;
+- velocity-profile relative Linf error: `0.016628754253039706`;
+- relative flow imbalance: `2.0000001343099295e-09`;
+- no SIMPLE convergence declaration by the frozen 2,000-iteration limit;
+- maximum final linear residual: `1.3859648e-07`, above the frozen `1e-07`
+  limit; and
+- maximum absolute global continuity error: `1.3146633e-08`, above the frozen
+  `1e-08` limit.
+
+These diagnostic values do not retroactively turn `v1-r1` into a completed
+scientific evaluation. They do establish that a clean parser-only successor
+must enforce the runbook's mandatory per-level stop rule if the same solver
+gates recur. No gate, threshold, iteration limit, or observation operator will
+be changed after observing them.

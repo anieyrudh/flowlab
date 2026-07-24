@@ -679,17 +679,26 @@ def evaluate_completed_level(
         "maximumSkewness": _require_float(check_mesh, (r"Max skewness\s*=\s*([0-9.eE+-]+)",), "maximum skewness"),
         "minimumCellDeterminant": _require_float(
             check_mesh,
-            (r"minimum determinant\s*=\s*([0-9.eE+-]+)",),
+            (
+                r"minimum determinant\s*=\s*([0-9.eE+-]+)",
+                r"Cell determinant\b.*?\bminimum:\s*([0-9.eE+-]+)",
+            ),
             "minimum determinant",
         ),
         "minimumFaceInterpolationWeight": _require_float(
             check_mesh,
-            (r"minimum face interpolation weight\s*=\s*([0-9.eE+-]+)",),
+            (
+                r"minimum face interpolation weight\s*=\s*([0-9.eE+-]+)",
+                r"Face interpolation weight\s*:\s*minimum:\s*([0-9.eE+-]+)",
+            ),
             "minimum face interpolation weight",
         ),
         "minimumFaceVolumeRatio": _require_float(
             check_mesh,
-            (r"minimum face volume ratio\s*=\s*([0-9.eE+-]+)",),
+            (
+                r"minimum face volume ratio\s*=\s*([0-9.eE+-]+)",
+                r"Face volume ratio\s*:\s*minimum:\s*([0-9.eE+-]+)",
+            ),
             "minimum face volume ratio",
         ),
     }
@@ -980,12 +989,20 @@ def execute_campaign(
                 f"{level['id']} product-path level did not complete: status={terminal.status}, "
                 f"exitCode={terminal.exitCode}, error={terminal.error}"
             )
-        evaluation = evaluate_completed_level(
-            case_dir,
-            level,
-            solver_exit_code=int(terminal.exitCode),
-            contract=contract,
-        )
+        try:
+            evaluation = evaluate_completed_level(
+                case_dir,
+                level,
+                solver_exit_code=int(terminal.exitCode),
+                contract=contract,
+            )
+        except Exception as exc:
+            record["evaluationError"] = str(exc)
+            record["evaluationErrorType"] = type(exc).__name__
+            state["status"] = "failed-retained-evaluation-infrastructure"
+            state["finishedAt"] = datetime.now(timezone.utc).isoformat()
+            _write_json(output_dir / "campaign-run-state.json", state)
+            raise
         evaluation["jobId"] = terminal.id
         evaluation["solverCaseId"] = case.id
         evaluation["characteristicCellSizeM"] = next(
@@ -999,6 +1016,27 @@ def execute_campaign(
         record["evaluationSha256"] = _sha256_file(evaluation_path)
         record["allPerLevelGatesPassed"] = bool(evaluation["allPerLevelGatesPassed"])
         _write_json(output_dir / "campaign-run-state.json", state)
+        if not evaluation["allPerLevelGatesPassed"]:
+            result = {
+                **state,
+                "status": "scientific-gate-failed-retained",
+                "scientificStatus": "verification-candidate-gates-failed",
+                "finishedAt": datetime.now(timezone.utc).isoformat(),
+                "failedLevel": level["id"],
+                "allPerLevelGatesPassed": False,
+                "requiredNextActions": [
+                    "freeze and hash the partial-failure evidence package",
+                    "do not launch later levels or tune the observed frozen gates",
+                    "obtain controlled independent review of the exact failure package",
+                ],
+            }
+            _write_json(output_dir / "campaign-result.json", result)
+            state["status"] = result["status"]
+            state["scientificStatus"] = result["scientificStatus"]
+            state["finishedAt"] = result["finishedAt"]
+            state["failedLevel"] = result["failedLevel"]
+            _write_json(output_dir / "campaign-run-state.json", state)
+            return result
 
     result = {
         **state,
@@ -1056,6 +1094,8 @@ def _residual_history(case_dirs: dict[str, Path]) -> dict[str, Any]:
     )
     levels = []
     for level in ("coarse", "medium", "fine"):
+        if level not in case_dirs:
+            continue
         path = _solver_log_path(case_dirs[level])
         rows = [
             {
@@ -1155,13 +1195,17 @@ def build_evidence_package(campaign_dir: Path, *, freeze: bool = True) -> dict[s
 
     campaign_dir = campaign_dir.resolve()
     run_result = _read_json(campaign_dir / "campaign-result.json")
+    accepted_statuses = {
+        "completed-evaluated-experimental-candidate",
+        "scientific-gate-failed-retained",
+    }
     if (
         run_result.get("schema") != RUN_RESULT_SCHEMA
-        or run_result.get("status") != "completed-evaluated-experimental-candidate"
-        or len(run_result.get("levels", [])) != 3
+        or run_result.get("status") not in accepted_statuses
+        or not 1 <= len(run_result.get("levels", [])) <= 3
     ):
         raise FullOGridCampaignError(
-            "immutable packaging requires one completed evaluated three-level campaign"
+            "immutable packaging requires an evaluated frozen campaign or a retained per-level gate failure"
         )
     package_dir = campaign_dir / "immutable-evidence-package"
     if package_dir.exists():
@@ -1171,13 +1215,18 @@ def build_evidence_package(campaign_dir: Path, *, freeze: bool = True) -> dict[s
     run_levels = {
         str(item["level"]): item
         for item in run_result["levels"]
-        if isinstance(item, dict) and item.get("level") in {"coarse", "medium", "fine"}
+        if isinstance(item, dict)
+        and item.get("level") in {"coarse", "medium", "fine"}
+        and isinstance(item.get("evaluationPath"), str)
     }
-    if set(run_levels) != {"coarse", "medium", "fine"}:
-        raise FullOGridCampaignError("campaign result is missing a frozen mesh level")
+    ordered_levels = [level for level in ("coarse", "medium", "fine") if level in run_levels]
+    if not ordered_levels or ordered_levels != list(("coarse", "medium", "fine")[: len(ordered_levels)]):
+        raise FullOGridCampaignError(
+            "campaign result must contain an evaluated coarse-to-fine prefix of frozen levels"
+        )
     case_dirs: dict[str, Path] = {}
     evaluations: dict[str, dict[str, Any]] = {}
-    for level in ("coarse", "medium", "fine"):
+    for level in ordered_levels:
         record = run_levels[level]
         case_dir = (campaign_dir / str(record["caseDirectory"])).resolve()
         evaluation_path = (campaign_dir / str(record["evaluationPath"])).resolve()
@@ -1197,7 +1246,7 @@ def build_evidence_package(campaign_dir: Path, *, freeze: bool = True) -> dict[s
         "runtime-provenance": [],
         "patch-metrics": [],
     }
-    for level in ("coarse", "medium", "fine"):
+    for level in ordered_levels:
         case_dir = case_dirs[level]
         archive_specs["case-manifest"].append(
             (case_dir / adapters.CASE_MANIFEST_PATH, f"{level}/{adapters.CASE_MANIFEST_PATH}")
@@ -1257,29 +1306,67 @@ def build_evidence_package(campaign_dir: Path, *, freeze: bool = True) -> dict[s
     _write_json(residual_path, _residual_history(case_dirs))
     artifact_paths["residual-history"] = residual_path
 
-    sequence = _sequence_assessment(evaluations, contract)
-    fine = evaluations["fine"]
+    if ordered_levels == ["coarse", "medium", "fine"]:
+        sequence = _sequence_assessment(evaluations, contract)
+    else:
+        sequence = {
+            "gridConvergence": {
+                "qualified": False,
+                "method": "three-grid-Richardson-extrapolation-with-GCI",
+                "reason": (
+                    "The frozen campaign stopped after a mandatory per-level gate failure "
+                    "before all three levels were executed."
+                ),
+            },
+            "pressureDropPa": [
+                float(evaluations[level]["qoi"]["pressureDropPa"]) for level in ordered_levels
+            ],
+            "polygonAreaRelativeDeficits": [
+                float(evaluations[level]["mesh"]["wallGeometry"]["areaRelativeDeficit"])
+                for level in ordered_levels
+            ],
+            "polygonAreaDeficitRatios": [],
+            "gates": {
+                "threeLevelsComplete": False,
+                "gciMathematicallyQualified": False,
+            },
+            "passed": False,
+            "interpretation": contract["refinementInterpretation"]["geometryTreatment"],
+        }
     fine_limits = contract["gates"]["fineLevel"]
-    fine_gates = {
-        "pressureDropRelativeError": float(fine["qoi"]["pressureDropRelativeError"])
-        <= float(fine_limits["maximumPressureDropRelativeError"]),
-        "velocityProfileRelativeL2": float(fine["qoi"]["velocityProfile"]["relativeL2"])
-        <= float(fine_limits["maximumVelocityProfileRelativeL2"]),
-        "velocityProfileRelativeLinf": float(fine["qoi"]["velocityProfile"]["relativeLinf"])
-        <= float(fine_limits["maximumVelocityProfileRelativeLinf"]),
-        "polygonAreaRelativeDeficit": float(fine["mesh"]["wallGeometry"]["areaRelativeDeficit"])
-        <= float(fine_limits["maximumPolygonAreaRelativeDeficit"]),
-    }
+    if "fine" in evaluations:
+        fine = evaluations["fine"]
+        fine_checks = {
+            "pressureDropRelativeError": float(fine["qoi"]["pressureDropRelativeError"])
+            <= float(fine_limits["maximumPressureDropRelativeError"]),
+            "velocityProfileRelativeL2": float(fine["qoi"]["velocityProfile"]["relativeL2"])
+            <= float(fine_limits["maximumVelocityProfileRelativeL2"]),
+            "velocityProfileRelativeLinf": float(fine["qoi"]["velocityProfile"]["relativeLinf"])
+            <= float(fine_limits["maximumVelocityProfileRelativeLinf"]),
+            "polygonAreaRelativeDeficit": float(
+                fine["mesh"]["wallGeometry"]["areaRelativeDeficit"]
+            )
+            <= float(fine_limits["maximumPolygonAreaRelativeDeficit"]),
+        }
+        fine_gates = {"evaluated": True, "checks": fine_checks, "passed": all(fine_checks.values())}
+    else:
+        fine_gates = {
+            "evaluated": False,
+            "checks": {},
+            "passed": False,
+            "reason": "fine level was not launched after a mandatory earlier-level gate failure",
+        }
     campaign_gates = {
         "deterministicGeneration": all(
             bool(item["determinism"]["generatedFileHashesMatch"])
             for item in _read_json(campaign_dir / "campaign-manifest.json")["levels"]
         ),
+        "threeLevelsComplete": ordered_levels == ["coarse", "medium", "fine"],
         "allPerLevelGates": all(
             bool(evaluations[level]["allPerLevelGatesPassed"])
-            for level in ("coarse", "medium", "fine")
+            for level in ordered_levels
         ),
-        "allFineLevelGates": all(fine_gates.values()),
+        "allFineLevelGates": bool(fine_gates["passed"]),
         "sequence": bool(sequence["passed"]),
     }
     evidence = {
@@ -1305,7 +1392,7 @@ def build_evidence_package(campaign_dir: Path, *, freeze: bool = True) -> dict[s
                 "solver": evaluations[level]["solver"],
                 "qoi": evaluations[level]["qoi"],
             }
-            for level in ("coarse", "medium", "fine")
+            for level in ordered_levels
         ],
         "fineLevelGates": fine_gates,
         "sequenceAssessment": sequence,

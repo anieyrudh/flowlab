@@ -16,6 +16,7 @@ from server.flowlab.full_ogrid_straight_pipe_campaign import (
     FullOGridCampaignError,
     _reference,
     _sequence_assessment,
+    build_evidence_package,
     build_level_case,
     evaluate_completed_level,
     load_contract,
@@ -281,6 +282,37 @@ def test_completed_level_uses_frozen_mesh_patch_profile_and_conservation_operato
     assert evaluation["mesh"]["runtimeVtkSpansM"] == pytest.approx([0.024, 0.012, 0.012])
 
 
+def test_completed_level_accepts_native_foundation_checkmesh_metric_wording(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case_dir = tmp_path / "case"
+    contract, level = _write_completed_coarse_case(case_dir, monkeypatch)
+    check_mesh_path = case_dir / "log.checkMesh"
+    native_text = (
+        check_mesh_path.read_text(encoding="utf-8")
+        .replace(
+            "minimum determinant = 0.10455798",
+            "Cell determinant (wellposedness) : minimum: 0.36785994 average: 3.2887974",
+        )
+        .replace(
+            "minimum face interpolation weight = 0.16487075",
+            "Face interpolation weight : minimum: 0.16487075 average: 0.47528808",
+        )
+        .replace(
+            "minimum face volume ratio = 0.151744",
+            "Face volume ratio : minimum: 0.151744 average: 0.89130191",
+        )
+    )
+    check_mesh_path.write_text(native_text, encoding="utf-8")
+
+    evaluation = evaluate_completed_level(case_dir, level, contract=contract)
+
+    assert evaluation["mesh"]["quality"]["minimumCellDeterminant"] == pytest.approx(0.36785994)
+    assert evaluation["mesh"]["quality"]["minimumFaceInterpolationWeight"] == pytest.approx(0.16487075)
+    assert evaluation["mesh"]["quality"]["minimumFaceVolumeRatio"] == pytest.approx(0.151744)
+
+
 def test_sequence_assessment_reports_combined_geometry_and_solution_gci() -> None:
     contract = load_contract()
     deficits = [
@@ -309,3 +341,79 @@ def test_sequence_assessment_reports_combined_geometry_and_solution_gci() -> Non
     assert assessment["gates"]["polygonAreaDeficitMonotone"] is True
     assert assessment["gates"]["polygonAreaDeficitRatios"] is True
     assert "combined solution-discretization and wall-geometry-realization" in assessment["interpretation"]
+
+
+def test_partial_failure_package_is_immutable_review_candidate_not_promotion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _offline_adapters(monkeypatch)
+    campaign_dir = tmp_path / "campaign"
+    manifest = materialize_campaign(campaign_dir)
+    job_dir = campaign_dir / "runtime" / "jobs" / "job-coarse"
+    case_dir = job_dir / "case"
+    contract, level = _write_completed_coarse_case(case_dir, monkeypatch)
+    (case_dir / "constant" / "flowlab_openfoam_runtime.json").write_text(
+        json.dumps(
+            {
+                "schema": "flowlab.openfoam_runtime_detection.v1",
+                "detectedStyle": "foundation",
+                "detectedVersion": "11",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (job_dir / "flowlab_job_record.json").write_text(
+        json.dumps({"id": "job-coarse", "status": "complete", "exitCode": 0}) + "\n",
+        encoding="utf-8",
+    )
+    (job_dir / "flowlab_case_record.json").write_text(
+        json.dumps({"jobId": "job-coarse", "caseId": "case-coarse"}) + "\n",
+        encoding="utf-8",
+    )
+    evaluation = evaluate_completed_level(case_dir, level, contract=contract)
+    evaluation["characteristicCellSizeM"] = manifest["levels"][0]["mesh"]["characteristicCellSizeM"]
+    evaluation_path = campaign_dir / "evaluations" / "coarse.json"
+    evaluation_path.parent.mkdir(parents=True)
+    evaluation_path.write_text(json.dumps(evaluation) + "\n", encoding="utf-8")
+    campaign_result = {
+        "schema": "flowlab.full-ogrid-straight-pipe-run-result.v1",
+        "caseId": CASE_ID,
+        "status": "scientific-gate-failed-retained",
+        "scientificStatus": "verification-candidate-gates-failed",
+        "validated": False,
+        "promotionAuthorized": False,
+        "sourceControl": {"commit": "a" * 40},
+        "runtimeEnvironment": {
+            "container": {
+                "imageTag": "flowlab/openfoam11-gmsh:2026-07-13",
+                "imageId": "sha256:" + "b" * 64,
+            }
+        },
+        "levels": [
+            {
+                "level": "coarse",
+                "caseDirectory": str(case_dir.relative_to(campaign_dir)),
+                "evaluationPath": str(evaluation_path.relative_to(campaign_dir)),
+            }
+        ],
+    }
+    (campaign_dir / "campaign-result.json").write_text(
+        json.dumps(campaign_result) + "\n",
+        encoding="utf-8",
+    )
+
+    package = build_evidence_package(campaign_dir, freeze=False)
+
+    assert package["status"] == "candidate-gates-failed"
+    assert package["allCandidateGatesPassed"] is False
+    assert package["campaignGates"]["threeLevelsComplete"] is False
+    assert package["fineLevelGates"]["evaluated"] is False
+    assert package["sequenceAssessment"]["gridConvergence"]["qualified"] is False
+    assert package["promotionAuthorized"] is False
+    assert package["fixtureMutationAuthorized"] is False
+    assert (campaign_dir / "immutable-evidence-package" / "package-manifest.json").is_file()
+    review = json.loads((campaign_dir / "independent-review-request.json").read_text())
+    assert review["status"] == "pending-controlled-independent-review"
+    assert review["packageTreeDigestSha256"] == package["treeDigestSha256"]
