@@ -1,12 +1,44 @@
 # Non-axisymmetric full O-grid status — 2026-07-24
 
-Status: **software path implemented and natively exercised; retained campaign
-stopped at a frozen coarse solver gate; controlled review pending**
+Status: **software path implemented and natively exercised; v1 retained as a
+coarse scientific-gate failure; prospective v2 QoI-stability successor frozen
+before execution**
 
 This record keeps software completeness, native mesh verification, solver
 execution, numerical verification, independent validation, promotion, and
 release separate. Nothing in this record changes a benchmark fixture, registry
 entry, validation state, promotion state, or product claim.
+
+## Prospective v2 successor
+
+After reviewing the v1 discrepancy, the user directed the work to proceed
+without treating the narrow residual and continuity misses as catastrophic.
+That direction does not reclassify v1. It authorizes a new prospective
+campaign with a decision operator tied directly to the bounded engineering
+quantities.
+
+V2 preserves the v1 physical case, boundary conditions, three meshes,
+discretization, relaxation, `p`/`U` residual controls, and 2,000-iteration
+budget. It adds per-iteration inlet/outlet pressure and flow histories and
+requires the final 100 consecutive iterations to satisfy:
+
+- pressure-drop relative span at most `0.0005`;
+- measured-flow relative span at most `0.000025`;
+- maximum relative mass-flow imbalance at most `0.0001`;
+- normal termination without fatal or non-finite markers; and
+- either a SIMPLE convergence declaration or completion of the exact declared
+  iteration budget.
+
+The pressure threshold is one thirtieth of the frozen 1.5% fine-grid GCI gate.
+The flow threshold is one quarter of the existing 0.01% conservation and
+target-flow gates. Residual and continuity tails remain retained diagnostics
+but are not v2 pass/fail gates.
+
+The prospective authority is
+`docs/validation/full-ogrid-straight-pipe/VERIFICATION_CONTRACT_V2.json` with
+runbook `docs/validation/full-ogrid-straight-pipe/RUNBOOK_V2.md`. No retained
+v2 execution may begin until those files and their transitive implementation
+and tests are committed and clean.
 
 ## Prerequisite disposition
 

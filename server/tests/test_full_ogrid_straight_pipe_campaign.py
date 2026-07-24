@@ -58,7 +58,7 @@ def test_contract_freezes_independent_bounded_full_ogrid_claim() -> None:
         assert current["expectedCellCount"] == 8 * previous["expectedCellCount"]
 
 
-def test_level_case_uses_strict_product_verification_path(
+def test_level_case_uses_qoi_stability_product_verification_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _offline_adapters(monkeypatch)
@@ -69,13 +69,40 @@ def test_level_case_uses_strict_product_verification_path(
     assert profile["effectiveMeshMode"] == "full-revolution-five-block-ogrid"
     assert profile["topology"]["blockCount"] == 5
     assert profile["topology"]["collapsedAxisCells"] == 0
-    assert profile["verificationContract"]["contractId"] == "straight-circular-pipe-hagen-poiseuille-v1"
+    assert profile["verificationContract"]["contractId"] == "straight-circular-pipe-hagen-poiseuille-v2"
+    assert profile["verificationContract"]["qoiHistoryWriteIntervalIterations"] == 1
     assert "type codedFixedValue;" in case.files["0/U"]
     assert "targetFlow = 1.0000000000000001e-05;" in case.files["0/U"]
     assert "p               1e-8;" in case.files["system/fvSolution"]
     assert "U               1e-8;" in case.files["system/fvSolution"]
+    assert case.files["system/functions"].count("writeControl    timeStep;") >= 4
+    assert "writeInterval   1;" in case.files["system/functions"]
     assert "meanVelocityForce" not in "".join(case.files.values())
     assert "fullCircleScale" not in profile["verificationContract"]
+
+
+def test_foundation_runtime_preserves_v2_qoi_sampling_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.flowlab import execution
+
+    _offline_adapters(monkeypatch)
+    contract = load_contract()
+    case = build_level_case(contract["levels"][0], contract)
+    functions_text = case.files["system/functions"]
+    functions_text = execution._foundation_patch_flow_rate_objects(functions_text)
+    functions_text = execution._foundation_patch_average_objects(functions_text)
+
+    for object_name in (
+        "patchFlowRate_inlet",
+        "patchFlowRate_outlet",
+        "patchAverage_inlet",
+        "patchAverage_outlet",
+    ):
+        block = execution._control_dict_function_block(functions_text, object_name)
+        assert block is not None
+        assert "writeControl    timeStep;" in block
+        assert "writeInterval   1;" in block
 
 
 def test_materialization_checks_two_independent_builds_and_all_dimensions(
@@ -121,7 +148,7 @@ def test_clean_source_gate_includes_contract_and_not_axisymmetric_fixture(
     identity = campaign._source_control_identity()
 
     assert identity["frozenPathsClean"] is True
-    assert "docs/validation/full-ogrid-straight-pipe/VERIFICATION_CONTRACT_V1.json" in FROZEN_SOURCE_PATHS
+    assert "docs/validation/full-ogrid-straight-pipe/VERIFICATION_CONTRACT_V2.json" in FROZEN_SOURCE_PATHS
     assert "server/flowlab/full_ogrid.py" in FROZEN_SOURCE_PATHS
     assert "benchmarks/cases/straight-pipe/benchmark.json" not in FROZEN_SOURCE_PATHS
     assert commands[-1][:4] == ["git", "status", "--porcelain", "--"]
@@ -247,6 +274,37 @@ walls
     diagnostics_path = case_dir / "postProcessing" / "flowlab_diagnostics_acceptance.json"
     diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
     diagnostics_path.write_text(json.dumps(diagnostics) + "\n", encoding="utf-8")
+    history_rows = "\n".join(f"{iteration} {{value:.17g}}" for iteration in range(1, 101))
+    for object_name, patch_name, value in (
+        (
+            "patchAverage",
+            "inlet",
+            reference["pressureDropPa"] / contract["physicalCase"]["densityKgPerM3"],
+        ),
+        ("patchAverage", "outlet", 0.0),
+        (
+            "patchFlowRate",
+            "inlet",
+            -contract["physicalCase"]["volumetricFlowRateM3PerS"],
+        ),
+        (
+            "patchFlowRate",
+            "outlet",
+            contract["physicalCase"]["volumetricFlowRateM3PerS"],
+        ),
+    ):
+        history_path = (
+            case_dir
+            / "postProcessing"
+            / f"{object_name}_{patch_name}"
+            / "0"
+            / "surfaceFieldValue.dat"
+        )
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history_path.write_text(
+            "# Time value\n" + history_rows.format(value=value) + "\n",
+            encoding="utf-8",
+        )
     vtk_path = case_dir / "VTK" / "case_50.vtk"
     vtk_path.parent.mkdir(parents=True)
     vtk_path.write_text(
@@ -280,6 +338,60 @@ def test_completed_level_uses_frozen_mesh_patch_profile_and_conservation_operato
     assert evaluation["qoi"]["velocityProfile"]["relativeL2"] < 1e-12
     assert evaluation["qoi"]["velocityProfile"]["transverseVelocityRmsRatio"] == pytest.approx(0.0)
     assert evaluation["mesh"]["runtimeVtkSpansM"] == pytest.approx([0.024, 0.012, 0.012])
+    assert evaluation["solver"]["qoiTailStability"]["pressureDropRelativeSpan"] == pytest.approx(0.0)
+    assert evaluation["solver"]["qoiTailStability"]["measuredFlowRateRelativeSpan"] == pytest.approx(0.0)
+    assert evaluation["solver"]["residualAndContinuityRole"] == "diagnostic-not-v2-pass-fail-gates"
+
+
+def test_v2_solver_gate_uses_stable_qoi_not_absolute_transverse_residual(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case_dir = tmp_path / "case"
+    contract, level = _write_completed_coarse_case(case_dir, monkeypatch)
+    solver_log = case_dir / "postProcessing" / "solverLogs" / "solve.log"
+    solver_log.write_text(
+        solver_log.read_text(encoding="utf-8").replace(
+            "Final residual = 1e-10",
+            "Final residual = 1.4e-7",
+        ),
+        encoding="utf-8",
+    )
+
+    evaluation = evaluate_completed_level(case_dir, level, contract=contract)
+
+    assert evaluation["solver"]["maximumFinalLinearResidual"] == pytest.approx(1.4e-7)
+    assert evaluation["gates"]["solver"]["passed"] is True
+
+
+def test_v2_solver_gate_fails_closed_when_pressure_qoi_tail_is_not_stable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case_dir = tmp_path / "case"
+    contract, level = _write_completed_coarse_case(case_dir, monkeypatch)
+    history_path = (
+        case_dir
+        / "postProcessing"
+        / "patchAverage_inlet"
+        / "0"
+        / "surfaceFieldValue.dat"
+    )
+    rows = ["# Time value"]
+    reference_value = (
+        _reference(contract)["pressureDropPa"]
+        / contract["physicalCase"]["densityKgPerM3"]
+    )
+    for iteration in range(1, 101):
+        multiplier = 1.0 if iteration <= 50 else 1.01
+        rows.append(f"{iteration} {reference_value * multiplier:.17g}")
+    history_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    evaluation = evaluate_completed_level(case_dir, level, contract=contract)
+
+    assert evaluation["solver"]["qoiTailStability"]["pressureDropRelativeSpan"] > 0.0005
+    assert evaluation["gates"]["solver"]["passed"] is False
+    assert evaluation["allPerLevelGatesPassed"] is False
 
 
 def test_completed_level_accepts_native_foundation_checkmesh_metric_wording(
@@ -378,7 +490,7 @@ def test_partial_failure_package_is_immutable_review_candidate_not_promotion(
     evaluation_path.parent.mkdir(parents=True)
     evaluation_path.write_text(json.dumps(evaluation) + "\n", encoding="utf-8")
     campaign_result = {
-        "schema": "flowlab.full-ogrid-straight-pipe-run-result.v1",
+        "schema": "flowlab.full-ogrid-straight-pipe-run-result.v2",
         "caseId": CASE_ID,
         "status": "scientific-gate-failed-retained",
         "scientificStatus": "verification-candidate-gates-failed",

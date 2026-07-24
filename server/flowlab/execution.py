@@ -4722,6 +4722,14 @@ def _foundation_patch_flow_rate_objects(functions_text: str) -> str:
     patches = [patch for patch in re.split(r"\s+", match.group("patches").strip()) if patch] if match else []
     if not patches:
         return functions_text
+    write_control_match = re.search(r"\bwriteControl\s+(\w+)\s*;", block)
+    write_control = write_control_match.group(1) if write_control_match else "writeTime"
+    write_interval_match = re.search(r"\bwriteInterval\s+(\d+)\s*;", block)
+    write_interval = (
+        f"\n        writeInterval   {write_interval_match.group(1)};"
+        if write_interval_match
+        else ""
+    )
     objects = []
     for patch in patches:
         patch_word = _openfoam_word(patch)
@@ -4730,7 +4738,7 @@ def _foundation_patch_flow_rate_objects(functions_text: str) -> str:
     {{
         type            surfaceFieldValue;
         libs            ("libfieldFunctionObjects.so");
-        writeControl    writeTime;
+        writeControl    {write_control};{write_interval}
         log             true;
         writeFields     false;
         regionType      patch;
@@ -4755,6 +4763,14 @@ def _foundation_patch_average_objects(functions_text: str) -> str:
         return functions_text
     fields_match = re.search(r"\bfields\s*\((?P<fields>[^)]*)\)", block, re.DOTALL)
     fields = fields_match.group("fields").strip() if fields_match else "p"
+    write_control_match = re.search(r"\bwriteControl\s+(\w+)\s*;", block)
+    write_control = write_control_match.group(1) if write_control_match else "writeTime"
+    write_interval_match = re.search(r"\bwriteInterval\s+(\d+)\s*;", block)
+    write_interval = (
+        f"\n        writeInterval   {write_interval_match.group(1)};"
+        if write_interval_match
+        else ""
+    )
     objects = []
     for patch in patches:
         patch_word = _openfoam_word(patch)
@@ -4763,7 +4779,7 @@ def _foundation_patch_average_objects(functions_text: str) -> str:
     {{
         type            surfaceFieldValue;
         libs            ("libfieldFunctionObjects.so");
-        writeControl    writeTime;
+        writeControl    {write_control};{write_interval}
         log             true;
         writeFields     false;
         regionType      patch;

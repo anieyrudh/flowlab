@@ -979,7 +979,12 @@ def _full_ogrid_verification_request(
             "The full O-grid verification contract requires exact axial, annular-radial, "
             "circumferential, and core cell counts."
         )
-    if raw.get("contractId") != "straight-circular-pipe-hagen-poiseuille-v1":
+    contract_id = raw.get("contractId")
+    supported_contract_ids = {
+        "straight-circular-pipe-hagen-poiseuille-v1",
+        "straight-circular-pipe-hagen-poiseuille-v2",
+    }
+    if contract_id not in supported_contract_ids:
         raise ValueError("The full O-grid verification request has an unsupported contractId.")
     boundary = "fully-developed-parabolic-inlet-pressure-outlet"
     if raw.get("boundaryCondition") != boundary:
@@ -1002,9 +1007,9 @@ def _full_ogrid_verification_request(
     conditions = _case_conditions(project)
     analytic_area = math.pi * radius_m**2
     mean_velocity = flow_rate / analytic_area
-    return {
+    verification = {
         "schema": FULL_OGRID_VERIFICATION_SCHEMA,
-        "contractId": "straight-circular-pipe-hagen-poiseuille-v1",
+        "contractId": contract_id,
         "status": "prospective-request-not-validation",
         "boundaryCondition": boundary,
         "physicalLengthM": length_m,
@@ -1025,6 +1030,15 @@ def _full_ogrid_verification_request(
             "velocityProfile": "solver-space XYZ samples compared with 2*meanVelocity*(1-r^2/R^2)",
         },
     }
+    if contract_id == "straight-circular-pipe-hagen-poiseuille-v2":
+        history_interval = raw.get("qoiHistoryWriteIntervalIterations")
+        if history_interval != 1:
+            raise ValueError(
+                "The v2 full O-grid verification contract requires "
+                "qoiHistoryWriteIntervalIterations=1."
+            )
+        verification["qoiHistoryWriteIntervalIterations"] = history_interval
+    return verification
 
 
 def _openfoam_full_ogrid_profile(
@@ -2101,6 +2115,17 @@ def _openfoam_function_object_entries(
     patch_plan = _openfoam_metric_patch_plan(project)
     metric_patches = _foam_word_list(patch_plan["flow"])
     wall_patches = _foam_word_list(patch_plan["wall"])
+    verification = (
+        full_ogrid_profile.get("verificationContract")
+        if isinstance(full_ogrid_profile, dict)
+        and isinstance(full_ogrid_profile.get("verificationContract"), dict)
+        else {}
+    )
+    qoi_history_interval = verification.get("qoiHistoryWriteIntervalIterations")
+    qoi_write_control = "timeStep" if qoi_history_interval == 1 else "writeTime"
+    qoi_write_interval = (
+        "\n        writeInterval   1;" if qoi_history_interval == 1 else ""
+    )
     pressure_probe_locations = _openfoam_project_probe_locations(project)
     pressure_probe_block = ""
     if pressure_probe_locations:
@@ -2160,7 +2185,7 @@ def _openfoam_function_object_entries(
     {{
         type            patchFlowRate;
         libs            ("libfieldFunctionObjects.so");
-        writeControl    writeTime;
+        writeControl    {qoi_write_control};{qoi_write_interval}
         patches         {metric_patches};
         phi             phi;
     }}
@@ -2169,7 +2194,7 @@ def _openfoam_function_object_entries(
     {{
         type            surfaceFieldValue;
         libs            ("libfieldFunctionObjects.so");
-        writeControl    writeTime;
+        writeControl    {qoi_write_control};{qoi_write_interval}
         log             true;
         writeFields     false;
         regionType      patch;

@@ -1,7 +1,7 @@
 # Non-axisymmetric full O-grid milestone
 
-Status: **software path complete; frozen scientific campaign stopped at failed
-coarse solver gates; independent review pending**
+Status: **software path complete; v1 stopped at failed coarse solver gates;
+prospective v2 QoI-stability campaign frozen before execution**
 
 ## Current disposition — 2026-07-24
 
@@ -25,6 +25,15 @@ Observed order and GCI are unqualified. The immutable partial-failure package is
 review-ready, but no controlled independent reviewer has yet been identified.
 No fixture, registry, validation state, promotion flag, product claim, or
 release state was changed.
+
+The v1 discrepancy was subsequently judged non-catastrophic for this bounded
+engineering use, without changing its frozen failure disposition. A
+prospective v2 contract now preserves the same physics, meshes, numerical
+controls, and 2,000-iteration budget while sampling pressure and flow every
+iteration. Its solver decision requires stable pressure drop, stable flow,
+conservation, normal termination, and the declared stop condition. Residual
+and continuity tails are diagnostic. V2 must be committed cleanly before a new
+coarse run; medium and fine remain gated by each preceding level.
 
 The source and desktop verification surfaces passed: 581 backend tests, 81
 frontend tests, lint, production build, 16 Playwright desktop E2E tests,

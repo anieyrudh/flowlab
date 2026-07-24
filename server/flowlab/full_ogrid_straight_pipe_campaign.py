@@ -1,6 +1,6 @@
 """Govern the bounded full-revolution O-grid straight-pipe campaign.
 
-The frozen v1 campaign uses the same adapter and ``JobManager`` path as the
+The frozen v2 campaign uses the same adapter and ``JobManager`` path as the
 desktop product. Materialization, execution, numerical assessment, immutable
 packaging, independent review, and any later fixture mutation remain separate
 states.
@@ -43,12 +43,12 @@ from .verification import (
 )
 
 
-CAMPAIGN_SCHEMA = "flowlab.full-ogrid-straight-pipe-campaign.v1"
-LEVEL_SCHEMA = "flowlab.full-ogrid-straight-pipe-level.v1"
-RUN_RESULT_SCHEMA = "flowlab.full-ogrid-straight-pipe-run-result.v1"
-PACKAGE_MANIFEST_SCHEMA = "flowlab.full-ogrid-straight-pipe-package-manifest.v1"
-CONTRACT_SCHEMA = "flowlab.full-ogrid-straight-pipe-verification-contract.v1"
-CASE_ID = "full-ogrid-straight-pipe-v1"
+CAMPAIGN_SCHEMA = "flowlab.full-ogrid-straight-pipe-campaign.v2"
+LEVEL_SCHEMA = "flowlab.full-ogrid-straight-pipe-level.v2"
+RUN_RESULT_SCHEMA = "flowlab.full-ogrid-straight-pipe-run-result.v2"
+PACKAGE_MANIFEST_SCHEMA = "flowlab.full-ogrid-straight-pipe-package-manifest.v2"
+CONTRACT_SCHEMA = "flowlab.full-ogrid-straight-pipe-verification-contract.v2"
+CASE_ID = "full-ogrid-straight-pipe-v2"
 CONVERGENCE_TAIL_SAMPLES = 50
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -57,9 +57,9 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "full-ogrid-straight-pipe"
-    / "VERIFICATION_CONTRACT_V1.json"
+    / "VERIFICATION_CONTRACT_V2.json"
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK.md")
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V2.md")
 FROZEN_SOURCE_PATHS = (
     "server/flowlab/adapters.py",
     "server/flowlab/execution.py",
@@ -69,8 +69,8 @@ FROZEN_SOURCE_PATHS = (
     "server/flowlab/results.py",
     "server/flowlab/schemas.py",
     "server/flowlab/verification.py",
-    "docs/validation/full-ogrid-straight-pipe/VERIFICATION_CONTRACT_V1.json",
-    "docs/validation/full-ogrid-straight-pipe/RUNBOOK.md",
+    "docs/validation/full-ogrid-straight-pipe/VERIFICATION_CONTRACT_V2.json",
+    "docs/validation/full-ogrid-straight-pipe/RUNBOOK_V2.md",
 )
 
 
@@ -210,6 +210,9 @@ def _project(contract: dict[str, Any], level: dict[str, Any]) -> dict[str, Any]:
                 "boundaryCondition": contract["productRequest"]["verificationBoundaryCondition"],
                 "lengthM": length,
                 "volumetricFlowRateM3PerS": float(physical["volumetricFlowRateM3PerS"]),
+                "qoiHistoryWriteIntervalIterations": int(
+                    contract["productRequest"]["qoiHistoryWriteIntervalIterations"]
+                ),
             },
             "maxIterations": int(contract["productRequest"]["maxIterations"]),
             "tolerance": float(contract["productRequest"]["residualControl"]["p"]),
@@ -611,6 +614,119 @@ def _patch_metrics(case_dir: Path) -> dict[str, Any]:
     return collect_patch_metrics(case_dir)
 
 
+def _surface_metric_history(case_dir: Path, object_name: str, patch_name: str) -> list[tuple[float, float]]:
+    root = case_dir / "postProcessing"
+    candidates = sorted(
+        path
+        for path in root.rglob("surfaceFieldValue.dat")
+        if object_name.lower() in str(path.relative_to(root)).lower()
+        and patch_name.lower() in str(path.relative_to(root)).lower()
+    )
+    if not candidates:
+        raise FullOGridCampaignError(
+            f"retained {object_name} history for patch {patch_name} is unavailable"
+        )
+    values_by_time: dict[float, float] = {}
+    for path in candidates:
+        for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            columns = re.split(r"\s+", line)
+            if len(columns) != 2:
+                continue
+            try:
+                time_value, metric_value = (float(column) for column in columns)
+            except ValueError:
+                continue
+            if math.isfinite(time_value) and math.isfinite(metric_value):
+                values_by_time[time_value] = metric_value
+    if not values_by_time:
+        raise FullOGridCampaignError(
+            f"retained {object_name} history for patch {patch_name} has no finite samples"
+        )
+    return sorted(values_by_time.items())
+
+
+def _relative_span(values: list[float]) -> float:
+    mean = sum(values) / len(values)
+    return (max(values) - min(values)) / max(abs(mean), 1.0e-30)
+
+
+def _qoi_tail_stability(case_dir: Path, contract: dict[str, Any]) -> dict[str, Any]:
+    limits = contract["gates"]["solverPerLevel"]["qoiTailStability"]
+    sample_count = int(limits["sampleCount"])
+    histories = {
+        "inletPressure": _surface_metric_history(case_dir, "patchAverage", "inlet"),
+        "outletPressure": _surface_metric_history(case_dir, "patchAverage", "outlet"),
+        "inletFlow": _surface_metric_history(case_dir, "patchFlowRate", "inlet"),
+        "outletFlow": _surface_metric_history(case_dir, "patchFlowRate", "outlet"),
+    }
+    by_name = {name: dict(rows) for name, rows in histories.items()}
+    common_times = sorted(set.intersection(*(set(rows) for rows in by_name.values())))
+    positive_times = [value for value in common_times if value > 0.0]
+    if len(positive_times) < sample_count:
+        raise FullOGridCampaignError(
+            f"retained QoI history has {len(positive_times)} common positive-time samples; "
+            f"{sample_count} are required"
+        )
+    times = positive_times[-sample_count:]
+    expected_interval = int(contract["productRequest"]["qoiHistoryWriteIntervalIterations"])
+    intervals = [right - left for left, right in zip(times, times[1:], strict=False)]
+    consecutive = all(
+        math.isclose(value, expected_interval, rel_tol=0.0, abs_tol=1.0e-12)
+        for value in intervals
+    )
+    density = float(contract["physicalCase"]["densityKgPerM3"])
+    pressure_drops = [
+        (by_name["inletPressure"][time_value] - by_name["outletPressure"][time_value])
+        * density
+        for time_value in times
+    ]
+    measured_flows = [
+        0.5
+        * (
+            abs(by_name["inletFlow"][time_value])
+            + abs(by_name["outletFlow"][time_value])
+        )
+        for time_value in times
+    ]
+    imbalances = [
+        abs(
+            abs(by_name["outletFlow"][time_value])
+            - abs(by_name["inletFlow"][time_value])
+        )
+        / max(
+            abs(by_name["inletFlow"][time_value]),
+            abs(by_name["outletFlow"][time_value]),
+            1.0e-30,
+        )
+        for time_value in times
+    ]
+    pressure_span = _relative_span(pressure_drops)
+    flow_span = _relative_span(measured_flows)
+    return {
+        "sampleCount": sample_count,
+        "firstIteration": times[0],
+        "lastIteration": times[-1],
+        "expectedSampleIntervalIterations": expected_interval,
+        "consecutiveSamples": consecutive,
+        "pressureDropRelativeSpan": pressure_span,
+        "measuredFlowRateRelativeSpan": flow_span,
+        "maximumRelativeMassFlowImbalance": max(imbalances),
+        "checks": {
+            "sampleCount": len(times) == sample_count,
+            "consecutiveSamples": consecutive,
+            "pressureDropRelativeSpan": pressure_span
+            <= float(limits["maximumPressureDropRelativeSpan"]),
+            "measuredFlowRateRelativeSpan": flow_span
+            <= float(limits["maximumMeasuredFlowRateRelativeSpan"]),
+            "maximumRelativeMassFlowImbalance": max(imbalances)
+            <= float(limits["maximumRelativeMassFlowImbalance"]),
+        },
+    }
+
+
 def evaluate_completed_level(
     case_dir: Path,
     level: dict[str, Any],
@@ -660,6 +776,21 @@ def evaluate_completed_level(
     maximum_final_residual = max(final_residuals[-CONVERGENCE_TAIL_SAMPLES:])
     maximum_global_continuity = max(global_continuity[-CONVERGENCE_TAIL_SAMPLES:])
     simple_converged = bool(re.search(r"SIMPLE solution converged in \d+ iterations", solver_log))
+    solver_times = [float(value) for value in re.findall(r"^Time = ([0-9.eE+-]+)\s*$", solver_log, re.MULTILINE)]
+    if not solver_times:
+        raise FullOGridCampaignError("retained solver log is missing iteration markers")
+    last_solver_iteration = solver_times[-1]
+    reached_declared_stop = simple_converged or math.isclose(
+        last_solver_iteration,
+        float(selected["productRequest"]["maxIterations"]),
+        rel_tol=0.0,
+        abs_tol=1.0e-12,
+    )
+    fatal_solver_markers = bool(
+        re.search(r"\b(?:FOAM FATAL|Floating point exception|Segmentation fault|nan)\b", solver_log, re.IGNORECASE)
+    )
+    normal_termination = bool(re.search(r"^End\s*$", solver_log, re.MULTILINE)) and not fatal_solver_markers
+    qoi_tail = _qoi_tail_stability(case_dir, selected)
 
     cell_count = _require_int(check_mesh, (r"^\s*cells:\s+(\d+)\s*$",), "cell count")
     hex_count = _require_int(check_mesh, (r"^\s*hexahedra:\s+(\d+)\s*$",), "hexahedron count")
@@ -796,11 +927,12 @@ def evaluate_completed_level(
     }
     solver_gate_values = {
         "exitCode": solver_exit_code == int(solver_limits["exitCode"]),
-        "simpleConvergence": simple_converged,
-        "maximumFinalLinearResidual": maximum_final_residual
-        <= float(solver_limits["maximumFinalLinearResidual"]),
-        "maximumAbsoluteGlobalContinuityError": maximum_global_continuity
-        <= float(solver_limits["maximumAbsoluteGlobalContinuityError"]),
+        "normalTermination": normal_termination,
+        "reachedDeclaredStop": reached_declared_stop,
+        **{
+            f"qoiTail.{name}": passed
+            for name, passed in qoi_tail["checks"].items()
+        },
     }
     physics_gate_values = {
         "relativeFlowImbalance": mass_imbalance <= float(physics_limits["maximumRelativeFlowImbalance"]),
@@ -852,10 +984,16 @@ def evaluate_completed_level(
         "solver": {
             "exitCode": solver_exit_code,
             "simpleConverged": simple_converged,
+            "lastIteration": last_solver_iteration,
+            "reachedDeclaredStop": reached_declared_stop,
+            "normalTermination": normal_termination,
+            "fatalSolverMarkers": fatal_solver_markers,
             "maximumFinalLinearResidual": maximum_final_residual,
             "maximumAbsoluteGlobalContinuityError": maximum_global_continuity,
             "parsedFinalResidualCount": len(final_residuals),
             "parsedContinuityCount": len(global_continuity),
+            "residualAndContinuityRole": "diagnostic-not-v2-pass-fail-gates",
+            "qoiTailStability": qoi_tail,
         },
         "qoi": {
             "pressureDropPa": pressure_drop,
@@ -1370,7 +1508,7 @@ def build_evidence_package(campaign_dir: Path, *, freeze: bool = True) -> dict[s
         "sequence": bool(sequence["passed"]),
     }
     evidence = {
-        "schema": "flowlab.full-ogrid-straight-pipe-evidence.v1",
+        "schema": "flowlab.full-ogrid-straight-pipe-evidence.v2",
         "caseId": CASE_ID,
         "scientificStatus": (
             "verification-candidate-awaiting-independent-review"
@@ -1437,7 +1575,7 @@ def build_evidence_package(campaign_dir: Path, *, freeze: bool = True) -> dict[s
     _write_json(
         artifact_index_path,
         {
-            "schema": "flowlab.full-ogrid-straight-pipe-artifact-index.v1",
+            "schema": "flowlab.full-ogrid-straight-pipe-artifact-index.v2",
             "caseId": CASE_ID,
             "artifacts": artifact_records,
         },
@@ -1477,7 +1615,7 @@ def build_evidence_package(campaign_dir: Path, *, freeze: bool = True) -> dict[s
     package_manifest_path = package_dir / "package-manifest.json"
     _write_json(package_manifest_path, package_manifest)
     review_request = {
-        "schema": "flowlab.full-ogrid-straight-pipe-review-request.v1",
+        "schema": "flowlab.full-ogrid-straight-pipe-review-request.v2",
         "caseId": CASE_ID,
         "status": "pending-controlled-independent-review",
         "reviewerIndependenceRequired": True,

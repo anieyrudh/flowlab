@@ -1,0 +1,219 @@
+{
+  "schema": "flowlab.full-ogrid-straight-pipe-verification-contract.v2",
+  "contractId": "full-ogrid-straight-pipe-v2",
+  "frozenOn": "2026-07-24",
+  "status": "prospective-frozen-before-retained-scientific-execution",
+  "supersedesForNewRunsOnly": "full-ogrid-straight-pipe-v1",
+  "v1EvidenceDisposition": "immutable scientific-gate failure; not reclassified",
+  "claim": {
+    "candidate": "FlowLab's full-revolution five-block O-grid product path numerically verifies steady incompressible laminar flow in one straight constant-diameter circular pipe against the Hagen-Poiseuille solution.",
+    "geometry": "one full-360 straight circular pipe",
+    "physics": "steady incompressible laminar",
+    "solver": "OpenFOAM through FlowLab JobManager",
+    "boundaryCondition": "discrete-flux-normalized fully-developed parabolic velocity inlet, zero-kinematic-pressure outlet, and no-slip wall",
+    "excluded": [
+      "axisymmetric validation inheritance",
+      "independent experimental validation",
+      "benchmark or registry promotion",
+      "elbows",
+      "branches",
+      "arbitrary CAD",
+      "general Venturi validation",
+      "turbulence",
+      "transient flow",
+      "multiphase flow",
+      "compressible flow",
+      "hybrid meshes",
+      "external release"
+    ]
+  },
+  "physicalCase": {
+    "lengthM": 0.024,
+    "radiusM": 0.006,
+    "densityKgPerM3": 1000.0,
+    "dynamicViscosityPaS": 0.001,
+    "volumetricFlowRateM3PerS": 0.00001,
+    "analyticModel": "Hagen-Poiseuille fully developed circular-pipe flow",
+    "analyticPressureDropPa": 0.471570201753764,
+    "analyticMeanVelocityMPerS": 0.08841941282883074,
+    "analyticCenterlineVelocityMPerS": 0.17683882565766149,
+    "reynoldsNumber": 1061.032953945969,
+    "laminarUpperBound": 2100.0
+  },
+  "productRequest": {
+    "solver": "openfoam",
+    "advancedMode": "incompressible-navier-stokes",
+    "meshMode": "full-ogrid",
+    "runMode": "steady",
+    "turbulence": "laminar",
+    "verificationContractId": "straight-circular-pipe-hagen-poiseuille-v2",
+    "verificationBoundaryCondition": "fully-developed-parabolic-inlet-pressure-outlet",
+    "maxIterations": 2000,
+    "qoiHistoryWriteIntervalIterations": 1,
+    "residualControl": {
+      "p": 1e-08,
+      "U": 1e-08
+    }
+  },
+  "levels": [
+    {
+      "id": "coarse",
+      "axialCells": 16,
+      "annularRadialCells": 4,
+      "circumferentialCells": 32,
+      "coreCellsPerSide": 8,
+      "expectedCellCount": 3072,
+      "expectedInletFaces": 192,
+      "expectedOutletFaces": 192,
+      "expectedWallFaces": 512,
+      "refinementRatioFromPrevious": null
+    },
+    {
+      "id": "medium",
+      "axialCells": 32,
+      "annularRadialCells": 8,
+      "circumferentialCells": 64,
+      "coreCellsPerSide": 16,
+      "expectedCellCount": 24576,
+      "expectedInletFaces": 768,
+      "expectedOutletFaces": 768,
+      "expectedWallFaces": 2048,
+      "refinementRatioFromPrevious": 2.0
+    },
+    {
+      "id": "fine",
+      "axialCells": 64,
+      "annularRadialCells": 16,
+      "circumferentialCells": 128,
+      "coreCellsPerSide": 32,
+      "expectedCellCount": 196608,
+      "expectedInletFaces": 3072,
+      "expectedOutletFaces": 3072,
+      "expectedWallFaces": 8192,
+      "refinementRatioFromPrevious": 2.0
+    }
+  ],
+  "refinementInterpretation": {
+    "spatialDimension": 3,
+    "cellCountRatio": 8.0,
+    "characteristicCellSize": "(analytic pipe volume / cell count)^(1/3)",
+    "uniformLogicalRefinement": "Every axial, annular-radial, circumferential, and core-side count doubles.",
+    "geometryTreatment": "Circumferential wall faceting refines with the solution mesh. Observed order and GCI therefore quantify the combined solution-discretization and wall-geometry-realization sequence, not isolated solution discretization.",
+    "polygonAreaDeficitOperator": "1 - N*sin(2*pi/N)/(2*pi)",
+    "geometryErrorMayNotBeCancelled": true
+  },
+  "observationOperators": {
+    "pressureDrop": "Latest FlowLab-normalized OpenFOAM patchAverage(p) on inlet minus outlet, multiplied by densityKgPerM3 because p is kinematic pressure.",
+    "flowRate": "Latest absolute inlet and outlet surface sums of phi from FlowLab-normalized patch metrics; the reported flow is their arithmetic mean.",
+    "conservation": "abs(abs(Qout)-abs(Qin))/max(abs(Qin),abs(Qout)).",
+    "velocityProfile": "At the solver-VTK axial cell-centroid plane nearest x=L/2, compare cell-centred Ux to 2*Umean*(1-(y^2+z^2)/R^2). Relative L2 is the unweighted cell-centroid RMS error divided by the analytic cell-centroid RMS. Relative Linf is max absolute error divided by analytic centerline velocity. Transverse ratio is RMS(sqrt(Uy^2+Uz^2))/RMS(abs(Ux)).",
+    "meshExtent": "Solver-produced VTK point bounds in x, y, and z.",
+    "qoiTailStability": "Use the last 100 common positive-time samples, written every SIMPLE iteration, from inlet and outlet patchAverage(p) and sum(phi). Pressure stability is (max(deltaP)-min(deltaP))/abs(mean(deltaP)); flow stability is the same relative span applied to the arithmetic mean of absolute inlet and outlet flow. Require consecutive samples.",
+    "residualsAndContinuity": "Retained OpenFOAM solve-log final residual and global continuity tails are reported as solver-health diagnostics, not v2 pass/fail gates. Near-zero transverse-component residual ratios and worst-sample continuity spikes do not override stable pressure, flow, conservation, and profile quantities.",
+    "solverCompletion": "Require a zero exit code, an End marker without fatal or non-finite markers, and either a SIMPLE convergence declaration or the exact declared 2000-iteration budget.",
+    "observedOrderAndGci": "Three-grid Richardson extrapolation on pressure drop using coarse-to-fine characteristic cell size, uniform r=2, and safety factor 1.25. Report unqualified with the exact reason when the sequence is non-monotone, degenerate, or otherwise mathematically invalid."
+  },
+  "solverGateRationale": {
+    "maximumPressureDropRelativeSpan": "0.05 percent is one thirtieth of the 1.5 percent maximum fine-grid GCI, keeping iterative variation materially below the discretization claim.",
+    "maximumMeasuredFlowRateRelativeSpan": "0.0025 percent is one quarter of the existing 0.01 percent conservation and target-flow gates.",
+    "maximumRelativeMassFlowImbalance": "Unchanged from v1 and independently checked both over the QoI tail and at the retained final state.",
+    "solverControls": "Physics, boundary conditions, discretization, residualControl values, relaxation, and the 2000-iteration budget are unchanged from v1; v2 changes the prospectively frozen decision operator and QoI sampling only."
+  },
+  "gates": {
+    "determinism": {
+      "generatedCaseFileHashesMatchIndependentSecondBuild": true
+    },
+    "meshPerLevel": {
+      "blockMeshExitCode": 0,
+      "checkMeshExitCode": 0,
+      "meshOk": true,
+      "connectedRegions": 1,
+      "solutionDirections": 3,
+      "geometricDirections": 3,
+      "allCellsHex": true,
+      "collapsedAxisCells": 0,
+      "minimumCellVolumeM3ExclusiveLowerBound": 0.0,
+      "maximumAspectRatio": 20.0,
+      "maximumNonOrthogonalityDegrees": 45.0,
+      "maximumSkewness": 1.0,
+      "minimumCellDeterminant": 0.05,
+      "minimumFaceInterpolationWeight": 0.1,
+      "minimumFaceVolumeRatio": 0.1,
+      "requiredPatches": {
+        "inlet": "patch",
+        "outlet": "patch",
+        "walls": "wall"
+      },
+      "unexpectedBoundaryPatchesAllowed": false,
+      "exactCellAndPatchFaceCounts": true,
+      "allThreeVtkSpansPositive": true
+    },
+    "solverPerLevel": {
+      "exitCode": 0,
+      "normalTerminationRequired": true,
+      "declaredStopRequired": true,
+      "qoiTailStability": {
+        "sampleCount": 100,
+        "maximumPressureDropRelativeSpan": 0.0005,
+        "maximumMeasuredFlowRateRelativeSpan": 0.000025,
+        "maximumRelativeMassFlowImbalance": 0.0001
+      }
+    },
+    "physicsPerLevel": {
+      "maximumRelativeFlowImbalance": 0.0001,
+      "maximumRelativeFlowRateError": 0.0001,
+      "maximumPressureDropRelativeError": 0.05,
+      "maximumVelocityProfileRelativeL2": 0.03,
+      "maximumVelocityProfileRelativeLinf": 0.08,
+      "maximumTransverseVelocityRmsRatio": 0.005
+    },
+    "fineLevel": {
+      "maximumPressureDropRelativeError": 0.02,
+      "maximumVelocityProfileRelativeL2": 0.02,
+      "maximumVelocityProfileRelativeLinf": 0.05,
+      "maximumPolygonAreaRelativeDeficit": 0.0005
+    },
+    "sequence": {
+      "pressureDropMustConvergeMonotonically": true,
+      "minimumObservedOrder": 0.5,
+      "maximumObservedOrder": 4.0,
+      "maximumFineGridGciPercent": 1.5,
+      "polygonAreaDeficitMustDecreaseMonotonically": true,
+      "polygonAreaDeficitRatioMinimum": 3.9,
+      "polygonAreaDeficitRatioMaximum": 4.1,
+      "mathematicallyInvalidGciPasses": false
+    }
+  },
+  "provenanceRequirements": [
+    "clean committed source identity for every transitive scientific path",
+    "verification contract SHA-256",
+    "generated case manifest and per-file SHA-256",
+    "Docker image tag and immutable image ID",
+    "detected OpenFOAM style and version",
+    "JobManager record, command, exit code, and timestamps",
+    "blockMesh and checkMesh logs",
+    "solver log and residual history",
+    "per-iteration inlet and outlet pressure and flow histories",
+    "raw solver-produced VTK fields",
+    "FlowLab patch-metric outputs",
+    "per-level evaluation and campaign assessment",
+    "deterministic content-addressed package manifest"
+  ],
+  "retention": {
+    "rawCampaignLocation": "ignored benchmarks/cases/full-ogrid-straight-pipe/campaigns tree",
+    "overwriteAllowed": false,
+    "editRetainedEvidenceInPlaceAllowed": false,
+    "freezeImmutablePackageReadOnly": true,
+    "gitAdmission": "Only separately reviewed compact artifacts explicitly allowlisted in benchmarks/tracked-evidence.txt may be force-added."
+  },
+  "review": {
+    "controlledIndependentReviewRequired": true,
+    "reviewerMustBeIndependentOfImplementationAndExecution": true,
+    "reviewMustBindExactPackageDigest": true,
+    "benchmarkFixtureMutationAuthorizedBeforeAcceptance": false,
+    "registryMutationAuthorizedBeforeAcceptance": false,
+    "validationStateChangeAuthorizedBeforeAcceptance": false,
+    "productClaimChangeAuthorizedBeforeAcceptance": false
+  },
+  "promotionAuthorized": false
+}
