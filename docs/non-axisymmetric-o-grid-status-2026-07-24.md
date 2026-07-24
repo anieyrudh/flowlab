@@ -1,7 +1,7 @@
 # Non-axisymmetric full O-grid status — 2026-07-24
 
 Status: **software path implemented and natively exercised; prospective
-scientific campaign not yet frozen or run**
+scientific campaign frozen but not yet run**
 
 This record keeps software completeness, native mesh verification, solver
 execution, numerical verification, independent validation, promotion, and
@@ -115,19 +115,58 @@ remains blocked and was not reinterpreted.
 - Focused topology, geometry-contract, adapter, execution-router, API, schema,
   editor-control, preview-surface, and probing tests: passed.
 
-## States not yet reached
+## Prospective scientific freeze
 
-- Prospective O-grid scientific contract: **not frozen**.
+The separate O-grid campaign was frozen before any retained scientific
+execution:
+
+- contract:
+  `docs/validation/full-ogrid-straight-pipe/VERIFICATION_CONTRACT_V1.json`;
+- contract SHA-256:
+  `4ba46eb81f442fdd3dceb2cff44d6820a51e26d9b4b7159391089430710a5b0d`;
+- runbook:
+  `docs/validation/full-ogrid-straight-pipe/RUNBOOK.md`;
+- boundary operator: discrete-flux-normalized fully developed parabolic
+  velocity inlet, zero kinematic-pressure outlet, and no-slip wall;
+- physical case: length `0.024 m`, radius `0.006 m`, density
+  `1000 kg/m^3`, dynamic viscosity `0.001 Pa s`, and volumetric flow
+  `1e-5 m^3/s`;
+- analytical pressure drop: `0.471570201753764 Pa`;
+- Reynolds number: `1061.032953945969`;
+- observation operators: patch-average pressure, signed surface flux,
+  mid-plane cell-centred velocity profile, retained residual/continuity
+  history, solver VTK bounds, and wall-facet area deficit;
+- three-grid interpretation: combined solution-discretization and
+  wall-geometry-realization convergence, not isolated solution
+  discretization; and
+- review boundary: the exact immutable package digest must receive controlled
+  independent review before any fixture, registry, validation, or claim
+  mutation.
+
+The campaign runner independently rebuilds and hashes every generated level,
+requires committed clean transitive scientific paths and an immutable Docker
+image ID, executes through `JobManager`, evaluates the frozen per-level and
+three-grid gates, records mathematically invalid GCI as unqualified, and
+packages either a pass or a failure without overwriting evidence.
+
+Focused contract, materialization, strict case-generation, source-cleanliness,
+synthetic retained-level evaluation, and combined-geometry GCI tests passed:
+`17 passed`.
+
+## Updated states
+
+- Prospective O-grid scientific contract: **frozen before retained execution**.
 - Retained coarse/medium/fine scientific runs: **not started**.
-- Observed order and GCI: **not evaluated**.
-- Conservation/profile gates under a frozen operator: **not evaluated**.
-- Immutable scientific evidence package: **not assembled**.
+- Observed order and GCI: **not evaluated on retained outputs**.
+- Conservation/profile gates: **operators frozen; not evaluated on retained
+  outputs**.
+- Immutable scientific evidence package: **implementation complete; no
+  retained package assembled**.
 - Controlled independent scientific review: **not requested**.
 - Benchmark/registry/validation changes: **none**.
 - O-grid promotion: **not authorized**.
 - External release: **blocked independently**.
 
-The next gate is to freeze a separate O-grid verification contract and runbook,
-including immutable operators, thresholds, refinement interpretation, geometry
-error treatment, provenance requirements, and independent-review rules, before
-any retained scientific level is executed.
+The next gate is to commit this prospective freeze, verify the frozen paths are
+clean, and only then start the retained coarse, medium, and fine product-path
+campaign.

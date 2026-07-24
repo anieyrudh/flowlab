@@ -2429,7 +2429,11 @@ snGradSchemes
     )
 
 
-def _openfoam_fv_solution(steady: bool = False, periodic_pressure_reference: bool = False) -> str:
+def _openfoam_fv_solution(
+    steady: bool = False,
+    periodic_pressure_reference: bool = False,
+    strict_verification: bool = False,
+) -> str:
     if periodic_pressure_reference:
         return (
             _foam_header("dictionary", "fvSolution")
@@ -2481,7 +2485,7 @@ relaxationFactors
         if periodic_pressure_reference
         else ""
     )
-    residual_tolerance = "1e-8" if periodic_pressure_reference else "1e-5"
+    residual_tolerance = "1e-8" if periodic_pressure_reference or strict_verification else "1e-5"
     coupling = (
         f"""SIMPLE
 {{
@@ -5956,6 +5960,7 @@ class OpenFOAMAdapter(SolverAdapter):
             "system/fvSolution": _openfoam_fv_solution(
                 steady=_openfoam_steady_requested(request.advancedMode, request.project),
                 periodic_pressure_reference=axisymmetric_benchmark is not None,
+                strict_verification=full_ogrid_verification is not None,
             ),
             "0/U": (
                 _openfoam_axisymmetric_periodic_vector_field(
