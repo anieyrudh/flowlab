@@ -87,6 +87,27 @@ independent review unavailable and therefore pending**. This is not
 independent experimental validation. No fixture, registry, validation state,
 product claim, promotion state, or release state changed.
 
+## Final clean verification surface
+
+- Focused v2 campaign, adapter, and execution tests: `174 passed`.
+- Complete backend suite: `584 passed`.
+- Frontend unit/component suite: `81 passed`.
+- TypeScript lint: passed.
+- Production web build: passed.
+- Playwright desktop E2E: `16 passed`.
+- Clean-source portable macOS app build: passed.
+- Internal package contract QA: passed.
+- Strict code-signature and property-list checks: passed.
+- Native packaged interaction: backend online; OpenFOAM, steady, full-360
+  O-grid, and the exact medium `32/8/64/16` controls confirmed.
+
+The final app manifest binds clean source commit
+`65c23bea33feb04c583a1f33303570dd2ae36498` and has SHA-256
+`afce581cc2ce3fc3b96fc845cfda0139c38756e59104bc08bc787609f002b5a3`.
+External distribution remains separately blocked because the package is
+ad-hoc signed and has not been notarized or independently checked on a clean
+supported Mac.
+
 ## Prerequisite disposition
 
 The desktop-release QA goal recorded a definitive disposition before this work

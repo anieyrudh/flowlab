@@ -13,7 +13,7 @@ below.
 
 - Branch: `codex/full-ogrid-product-milestone`
 - Package source commit:
-  `81c6562e6049ada5333912ee0f0a2e6771d589f9`
+  `65c23bea33feb04c583a1f33303570dd2ae36498`
 - Source tree at build: clean
 - Bundle: `release/FlowLab.app`
 - Target: arm64 macOS 13.0 or newer
@@ -22,7 +22,7 @@ below.
 - Signature: ad hoc
 - Bundle size: 35 MiB
 - Build manifest SHA-256:
-  `cf9297e3bdcb69bc012cb5554ec105fd126c1ed3d0e360606aeccbd121d62c4a`
+  `afce581cc2ce3fc3b96fc845cfda0139c38756e59104bc08bc787609f002b5a3`
 
 The package was built with an isolated temporary environment from the exact
 pins in `desktop/macos/requirements-build.txt`. The repository dependency
@@ -32,7 +32,7 @@ contract was not changed.
 
 | Check | Result |
 | --- | --- |
-| Backend suite | 581 passed |
+| Backend suite | 584 passed |
 | Frontend unit/component suite | 81 passed |
 | TypeScript lint | Passed |
 | Production web build | Passed |
@@ -45,6 +45,11 @@ contract was not changed.
 The full O-grid E2E test selects OpenFOAM and the full-360 mode, confirms that
 steady/laminar behavior is selected, and verifies the exact medium request
 tuple: 32 axial, 8 annular-radial, 64 circumferential, and 16 core-side cells.
+
+The final clean-source pass reran the backend, frontend, lint, production
+build, all 16 Playwright tests, portable app build, internal package QA,
+`codesign --verify --deep --strict`, and `plutil -lint`. The package build used
+the exact pinned temporary environment and removed it after completion.
 
 ## Native packaged interaction
 
@@ -68,10 +73,27 @@ The native accessibility tree confirmed:
 No additional scientific solver run was launched during package QA. The app was
 closed after inspection.
 
-Native capture:
+Historical native capture from the first package QA:
 `/Users/anieyrudh/.codex/visualizations/2026/07/23/019f8f45-436e-70d1-bf49-2fd00c3fe9b0/flowlab-full-ogrid-native-qa-2026-07-24.jpeg`
 
 The capture is a software QA aid, not retained scientific campaign evidence.
+
+After the v2 review handoff was committed, the clean-source package was rebuilt
+and exercised again through the native accessibility surface. The packaged
+backend reported online, and the final state confirmed:
+
+- solver `OpenFOAM`;
+- mode `Incompressible`;
+- run mode `Steady (converged Δp)`;
+- mesh mode `Full 360 O-grid (straight pipe)`;
+- medium resolution;
+- axial cells `32`;
+- annular-radial cells `8`;
+- circumferential cells `64`; and
+- core-side cells `16`.
+
+No solver job was queued during this package interaction. The app was closed
+after inspection.
 
 ## Disposition
 
