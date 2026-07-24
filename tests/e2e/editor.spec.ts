@@ -299,6 +299,49 @@ async function dragCanvas(page: Page, from: { x: number; y: number }, to: { x: n
 }
 
 test.describe("FlowLab editor workspace", () => {
+  test("wires the bounded full O-grid controls into the generated product request", async ({ page }) => {
+    await openFresh(page);
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByLabel("Mesh mode").selectOption("full-ogrid");
+
+    await expect(page.getByLabel("Run mode")).toHaveValue("steady");
+    await expect(page.getByLabel("Full O-grid axial cells")).toHaveValue("16");
+    await expect(page.getByLabel("Full O-grid annular radial cells")).toHaveValue("4");
+    await expect(page.getByLabel("Full O-grid circumferential cells")).toHaveValue("32");
+    await expect(page.getByLabel("Full O-grid core cells per side")).toHaveValue("8");
+
+    await page.getByLabel("Mesh resolution").selectOption("medium");
+    await expect(page.getByLabel("Full O-grid axial cells")).toHaveValue("32");
+    await expect(page.getByLabel("Full O-grid annular radial cells")).toHaveValue("8");
+    await expect(page.getByLabel("Full O-grid circumferential cells")).toHaveValue("64");
+    await expect(page.getByLabel("Full O-grid core cells per side")).toHaveValue("16");
+
+    const generatedRequest = page.waitForRequest((request) => request.url().endsWith("/api/cases/generate"));
+    await page.getByRole("button", { name: /Generate \/ queue case/i }).click();
+    const request = await generatedRequest;
+    const payload = request.postDataJSON() as {
+      project: {
+        solver: {
+          meshMode?: string;
+          runMode?: string;
+          turbulence?: string;
+          meshControls?: Record<string, number>;
+        };
+      };
+    };
+    expect(payload.project.solver).toMatchObject({
+      meshMode: "full-ogrid",
+      runMode: "steady",
+      turbulence: "laminar",
+      meshControls: {
+        fullOGridAxialCells: 32,
+        fullOGridAnnularRadialCells: 8,
+        fullOGridCircumferentialCells: 64,
+        fullOGridCoreCellsPerSide: 16
+      }
+    });
+  });
+
   test("renders Cinema Canvas mode with WebGL primitives, VTK projection, and raycast dragging", async ({ page }) => {
     test.setTimeout(45_000);
     await openFresh(page, "passed", { keepCinema: true });

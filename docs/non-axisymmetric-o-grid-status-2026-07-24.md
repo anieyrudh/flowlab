@@ -1,7 +1,7 @@
 # Non-axisymmetric full O-grid status — 2026-07-24
 
-Status: **software path implemented and natively exercised; prospective
-scientific campaign frozen but not yet run**
+Status: **software path implemented and natively exercised; retained campaign
+stopped at a frozen coarse solver gate; controlled review pending**
 
 This record keeps software completeness, native mesh verification, solver
 execution, numerical verification, independent validation, promotion, and
@@ -153,7 +153,7 @@ Focused contract, materialization, strict case-generation, source-cleanliness,
 synthetic retained-level evaluation, and combined-geometry GCI tests passed:
 `17 passed`.
 
-## Updated states
+## States at prospective freeze
 
 - Prospective O-grid scientific contract: **frozen before retained execution**.
 - Retained coarse/medium/fine scientific runs: **not started**.
@@ -216,3 +216,74 @@ scientific evaluation. They do establish that a clean parser-only successor
 must enforce the runbook's mandatory per-level stop rule if the same solver
 gates recur. No gate, threshold, iteration limit, or observation operator will
 be changed after observing them.
+
+## Definitive retained campaign `v1-r2`
+
+Parser-only successor commit
+`8ed349be9f6c2b513ec242c327e86f6a7bf70a5a` kept the contract hash,
+operators, thresholds, iteration cap, geometry, physics, and image identity
+unchanged. The retained coarse JobManager run completed and was evaluated
+successfully.
+
+Disposition: **frozen scientific gates failed at coarse; medium and fine were
+not launched under the prospective mandatory-stop rule**.
+
+Passing coarse groups:
+
+- deterministic generated case;
+- every native mesh and patch gate;
+- every pressure, flow, conservation, and velocity-profile gate; and
+- solver process exit `0`.
+
+Failing coarse solver gates:
+
+- no SIMPLE convergence declaration by iteration `2000`;
+- maximum final linear residual `1.3859648e-07` exceeded `1e-07`; and
+- maximum absolute global continuity error `1.3146633e-08` exceeded `1e-08`.
+
+The runner produced a read-only partial-failure package:
+
+- campaign:
+  `benchmarks/cases/full-ogrid-straight-pipe/campaigns/2026-07-24-v1-r2`;
+- package manifest SHA-256:
+  `e53de417585feabca4250399d3244db9d7b62fcae7194ddf4b4f5a0df5c4ae80`;
+- artifact index SHA-256:
+  `69fff1179e7639cde3496069e2e1b24e348597ff2dc4d685843e6e8be9191072`;
+- package tree digest:
+  `d80574cd2d2c10ba38d5d02f0ee49098193abffe6371056446d8bb9121c68f2f`;
+- campaign result SHA-256:
+  `d4d6ae97eb1299a66fb0572c4f56bda03b6d74002390760ac27c2c02c47242f9`;
+- review request SHA-256:
+  `33c2b6461f27f4038aef6784fe641474ce52b803e1ad7c1745c6fbe0d71c332c`;
+- package state: `candidate-gates-failed`;
+- GCI: unqualified because the mandatory stop prevented a three-level
+  sequence; and
+- immutable mutation flags: fixture, registry, validation state, product
+  claim, and promotion all `false`.
+
+A separate read-only audit recomputed all 12 indexed artifact sizes and hashes,
+recomputed the tree digest, checked the review-to-package-manifest binding, and
+opened every deterministic tar archive successfully.
+
+## Current milestone states
+
+- Software completeness: **implemented and regression-tested**.
+- Native mesh verification: **coarse passed; medium/fine not launched under
+  the frozen stop rule**.
+- Solver execution: **coarse exited `0` but did not meet frozen convergence
+  gates**.
+- Three-level numerical verification: **failed/incomplete; GCI unqualified**.
+- Independent validation: **not claimed**.
+- Immutable evidence: **read-only partial-failure package assembled and
+  hash-audited**.
+- Controlled independent review: **pending; no controlled reviewer identified
+  in this session**.
+- Benchmark, registry, or validation-state mutation: **none and unauthorized**.
+- Product promotion: **not authorized**.
+- External release: **blocked independently**.
+
+The exact remaining blocker is a controlled independent reviewer for the
+failure package. Review cannot make the failed campaign pass; it can only
+accept or reject the integrity, calculations, and bounded failure disposition.
+No further scientific run, gate change, benchmark mutation, registry mutation,
+validation-state change, or product-claim change is authorized by this record.
