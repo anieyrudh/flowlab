@@ -11,35 +11,56 @@ OpenFOAM, SU2, and configured Code_Saturne jobs are materialized under `runtime/
 The instant solver is port-aware. Dragged pipe endpoints, selected ports, and component rotation change the computed effective length, bend angle, geometry-derived minor-loss coefficient, control-volume force direction, and water-hammer closure time. The edge inspector reports `Effective length`, `Port bend`, and `Geometry K` so visual edits are traceable to the Tier 1 hydraulic response.
 The editor validates pipe endpoint edits and imported projects for self-loops, invalid endpoint port directions, and duplicate occupied component ports. The live warnings dock also flags disconnected components, isolated nodes, and connected components that lack both a source and a sink boundary.
 
-## Desktop App (macOS)
+## Desktop App (Electron: macOS and Windows)
 
-The fastest supported path is the native macOS application. It packages the production React UI and local FastAPI service in a signed AppKit/WebKit shell; there is no mobile target.
+Electron is FlowLab's selected downloadable desktop shell. The same production
+React editor and local FastAPI service are packaged for:
 
-Prerequisites on the build machine:
+- macOS 13 or newer on Apple Silicon (`arm64`), as a DMG and ZIP; and
+- Windows 11 on `x64`, as a Squirrel Setup executable and ZIP.
 
-- Node dependencies installed with `npm install`.
-- Xcode Command Line Tools and an arm64 CPython 3.12 build environment.
-- The exact packages in `desktop/macos/requirements-build.txt`.
+Each platform package carries its own CPython 3.12/PyInstaller backend. Running
+the UI, instant 1D hydraulics, editing projects, generating cases, and viewing
+results does not require Node.js or Python on the user's machine. Docker
+Desktop and `flowlab/openfoam11-gmsh:2026-07-13` remain explicit external
+dependencies only for advanced OpenFOAM execution.
 
-The packaged UI and local service do not require Python on the run machine.
-Docker Desktop and `flowlab/openfoam11-gmsh:2026-07-13` remain explicit
-external runtime dependencies only for advanced OpenFOAM execution.
-
-Build and launch:
+Local candidate build on a supported platform:
 
 ```bash
-python3.12 -m venv .venv/desktop-build
-.venv/desktop-build/bin/python -m pip install -r desktop/macos/requirements-build.txt
-FLOWLAB_BUILD_PYTHON=.venv/desktop-build/bin/python npm run desktop:build
-npm run desktop:qa
-open release/FlowLab.app
+python3.12 -m venv .venv/electron-build
+.venv/electron-build/bin/python -m pip install -r desktop/electron/requirements-build.txt
+FLOWLAB_BUILD_PYTHON=.venv/electron-build/bin/python npm run desktop:electron:package -- --platform=darwin --arch=arm64
+npm run desktop:electron:qa -- --package out/FlowLab-darwin-arm64/FlowLab.app --mode internal
+npm run desktop:electron:smoke -- --package out/FlowLab-darwin-arm64/FlowLab.app
+npx electron-forge make --skip-package --platform=darwin --arch=arm64
+npm run desktop:electron:qa:artifacts -- --directory out/make --platform darwin --arch arm64 --mode internal
 ```
 
-The build supports arm64 macOS 13.0 or newer and packages CPython 3.12 plus the
-backend dependencies inside the application. It rejects other architectures,
-Python series, and PyInstaller versions. Runtime jobs and logs live under
-`~/Library/Application Support/FlowLab/`; the desktop backend log is
-`flowlab-backend.log` there.
+Use `--platform=win32 --arch=x64` on Windows. The exact package contract is
+`desktop/electron/release-contract.json`. Runtime jobs and logs use the
+platform application-data directory; the local service log is
+`flowlab-backend.log`.
+
+Two GitHub Actions workflows keep candidate packaging and public release
+separate:
+
+- `Desktop Electron candidate` runs the full source checks and independently
+  builds, launches, and packages macOS arm64 and Windows x64 candidates.
+- `Desktop Electron external release` is manual and fail-closed. It requires
+  the controlled-review digest and explicit release authorization, uses
+  protected signing/notarization credentials, checks the signed installers,
+  and publishes a bounded GitHub prerelease only after both platform jobs pass.
+
+The repository currently has no verified GitHub remote, no controlled reviewer
+acceptance for the O-grid package, and no macOS Developer ID or Windows
+Authenticode credentials configured here. Therefore the local macOS artifact
+is an internal candidate, the Windows package remains runner-unverified, and
+nothing is yet available for public download. See
+[docs/desktop-electron-distribution-status-2026-07-24.md](docs/desktop-electron-distribution-status-2026-07-24.md).
+
+The earlier AppKit/WebKit macOS shell remains as historical internal QA
+evidence, not the cross-platform distribution architecture.
 
 The `Validated regimes` panel currently reports `Candidate bounded regime — laminar open-boundary all-hex` as promotion-blocked. The v4 numerical, reproducibility, negative-control, and product-contract gates passed, but independent empirical validation has not: the completed FDA nozzle Re=500 v2 assessment is `validated-blocked` and its pressure reference is formally nonpromotional. The corrected successor mesh-only recovery passed its prospective 1% geometry contract, and the next velocity-focused numerical-verification design passes its offline fail-closed validator. Hugging Face Jobs twice confirmed `amd64`, but the connector credential could neither create nor commit main-branch evidence to the private dataset; no artifact or solver resulted. The local `fluidmech` credential separately proved private dataset and Space write access. The official OpenFOAM image then failed the private Space's rootless builder on UID/GID 98765. A prospectively frozen R3 image recovery using UID/GID 1000 passed all local identity gates and built, pushed, and ran at an immutable private Space commit and commit-prefixed registry digest. That qualifies only the image path: volume recovery, both coarse pilots, full HF infrastructure qualification, and the six-case execution contract remain blocked. `experimentalDatasetPinned` remains false, the runnable action is hidden, and the dedicated API fails closed with HTTP 409. The historical coarse preset implementation can atomically mint the immutable 12³ OpenFOAM case only after a digest-checked final campaign report passes every required gate and explicitly sets `promotionAuthorized=true`. Any generated-file mutation removes eligibility. All ordinary project-generated cases remain explicitly experimental.
 
@@ -50,7 +71,7 @@ Developer ID Application signature, Apple notarization with a stapled ticket,
 and a launch test on a clean supported arm64 Mac. The historical
 axisymmetric/XYZ internal-package evidence is recorded in
 [docs/desktop-axisymmetric-qa-2026-07-23.md](docs/desktop-axisymmetric-qa-2026-07-23.md);
-the self-contained packaging disposition is tracked separately in
+the earlier self-contained native-macOS packaging disposition is tracked in
 [docs/desktop-release-qa-2026-07-23.md](docs/desktop-release-qa-2026-07-23.md);
 the bounded full O-grid package QA and its separate numerical-verification
 candidate disposition are recorded in

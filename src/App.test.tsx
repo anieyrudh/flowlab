@@ -146,6 +146,7 @@ describe("FlowLab result visualization", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     delete window.webkit;
+    delete window.flowlabDesktop;
     window.localStorage.clear();
     useFlowStore.getState().setProject(venturiPreset);
     mockCanvas();
@@ -551,6 +552,22 @@ describe("FlowLab result visualization", () => {
         })
       ]
     });
+  });
+
+  it("routes exports through the Electron desktop bridge when packaged", async () => {
+    const saveFiles = vi.fn().mockResolvedValue({ status: "saved", message: "Exported project." });
+    window.flowlabDesktop = { platform: "darwin", saveFiles };
+    render(<App />);
+
+    fireEvent.click(screen.getByTitle("Export project"));
+
+    await waitFor(() => expect(saveFiles).toHaveBeenCalledTimes(1));
+    expect(saveFiles.mock.calls[0][0]).toEqual([
+      expect.objectContaining({
+        filename: expect.stringMatching(/\.flowlab\.json$/),
+        type: "application/json"
+      })
+    ]);
   });
 
   it("switches an already-loaded recent run back to its newest artifact and reconciles velocity to U", async () => {

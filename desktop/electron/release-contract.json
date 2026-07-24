@@ -1,0 +1,91 @@
+{
+  "schema": "flowlab.electron_release_contract.v1",
+  "distributionShell": {
+    "framework": "Electron",
+    "renderer": "FlowLab React production build",
+    "backend": "bundled local FastAPI service",
+    "contextIsolationRequired": true,
+    "nodeIntegrationAllowed": false,
+    "rendererSandboxRequired": true
+  },
+  "targets": {
+    "macos-arm64": {
+      "platform": "macOS",
+      "architecture": "arm64",
+      "minimumVersion": "13.0",
+      "installers": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "windows-x64": {
+      "platform": "Windows",
+      "architecture": "x64",
+      "minimumVersion": "Windows 11",
+      "installers": [
+        "squirrel",
+        "zip"
+      ]
+    }
+  },
+  "pythonRuntime": {
+    "implementation": "CPython",
+    "versionSeries": "3.12",
+    "bundledPerPlatform": true,
+    "externalInterpreterAllowed": false,
+    "builder": "PyInstaller",
+    "builderVersion": "6.21.0",
+    "layout": "onedir"
+  },
+  "externalDependencies": {
+    "desktopUiAndInstantHydraulics": [],
+    "advancedOpenFoam": [
+      "Docker Desktop",
+      "flowlab/openfoam11-gmsh:2026-07-13"
+    ]
+  },
+  "requiredPackageGates": [
+    "clean source checkout",
+    "locked Node dependency installation",
+    "high-severity Node advisory audit",
+    "exact Python build dependency installation",
+    "complete backend tests",
+    "complete frontend tests",
+    "desktop browser E2E tests",
+    "TypeScript lint",
+    "production renderer build",
+    "Electron bridge tests",
+    "packaged backend health",
+    "packaged renderer health",
+    "platform-native installer creation",
+    "platform-native installer QA",
+    "artifact SHA-256 manifest"
+  ],
+  "externalReleaseGates": {
+    "macos-arm64": [
+      "Developer ID Application signature",
+      "hardened runtime",
+      "Apple notarization acceptance",
+      "stapled notarization ticket",
+      "clean supported arm64 Mac launch"
+    ],
+    "windows-x64": [
+      "trusted Authenticode signature",
+      "trusted timestamp",
+      "clean Windows 11 x64 install",
+      "clean Windows 11 x64 launch",
+      "Docker Desktop OpenFOAM dependency check"
+    ],
+    "shared": [
+      "controlled release authorization",
+      "scientific claims remain promotion-gated",
+      "release notes state the bounded experimental CFD scope",
+      "immutable checksums and build provenance"
+    ]
+  },
+  "authorization": {
+    "packageCandidateBuildAuthorized": true,
+    "externalPublicationAuthorized": false,
+    "scientificPromotionAuthorized": false
+  }
+}

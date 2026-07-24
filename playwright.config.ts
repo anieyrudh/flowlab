@@ -1,5 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
+const testPython = process.env.FLOWLAB_TEST_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
+
 export default defineConfig({
   testDir: "tests/e2e",
   timeout: 30_000,
@@ -13,7 +15,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "python3 -m uvicorn server.app:app --host 127.0.0.1 --port 8787",
+      command: `${testPython} -m uvicorn server.app:app --host 127.0.0.1 --port 8787`,
       url: "http://127.0.0.1:8787/api/health",
       reuseExistingServer: true,
       timeout: 20_000

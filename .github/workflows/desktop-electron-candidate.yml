@@ -1,0 +1,106 @@
+name: Desktop Electron candidate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/desktop-electron-*.yml"
+      - "desktop/electron/**"
+      - "desktop/macos/backend_main.py"
+      - "scripts/*electron*"
+      - "server/**"
+      - "src/**"
+      - "tests/**"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches:
+      - main
+      - "codex/**"
+    paths:
+      - ".github/workflows/desktop-electron-*.yml"
+      - "desktop/electron/**"
+      - "desktop/macos/backend_main.py"
+      - "scripts/*electron*"
+      - "server/**"
+      - "src/**"
+      - "tests/**"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-electron-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-verification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: desktop/electron/requirements-build.txt
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: python -m pip install -r desktop/electron/requirements-build.txt
+      - run: env PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider server/tests
+      - run: npm test -- --run
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run desktop:electron:test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  package-candidate:
+    needs: source-verification
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+            package_path: out/FlowLab-darwin-arm64/FlowLab.app
+          - runner: windows-2025
+            platform: win32
+            arch: x64
+            package_path: out/FlowLab-win32-x64
+    runs-on: ${{ matrix.runner }}
+    env:
+      FLOWLAB_BUILD_PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: desktop/electron/requirements-build.txt
+      - run: npm ci
+      - run: python -m pip install -r desktop/electron/requirements-build.txt
+      - run: npm run desktop:electron:package -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - run: npm run desktop:electron:qa -- --package "${{ matrix.package_path }}" --mode internal
+      - run: npm run desktop:electron:smoke -- --package "${{ matrix.package_path }}"
+      - run: npx electron-forge make --skip-package --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - run: npm run desktop:electron:qa:artifacts -- --directory out/make --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --mode internal
+      - run: node scripts/write_electron_release_manifest.mjs out/make "out/make/flowlab-release-manifest-${{ matrix.platform }}-${{ matrix.arch }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowlab-${{ matrix.platform }}-${{ matrix.arch }}-candidate
+          path: out/make/**
+          if-no-files-found: error
+          retention-days: 14

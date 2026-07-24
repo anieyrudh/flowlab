@@ -1,0 +1,27 @@
+altgraph==0.17.5
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.14.2
+click==8.4.2
+fastapi==0.124.4
+h11==0.16.0
+httptools==0.8.0
+idna==3.18
+macholib==1.16.4; sys_platform == "darwin"
+packaging==26.2
+pefile==2024.8.26; sys_platform == "win32"
+pydantic==2.12.5
+pydantic_core==2.41.5
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+python-dotenv==1.2.2
+pywin32-ctypes==0.2.3; sys_platform == "win32"
+PyYAML==6.0.3
+setuptools==83.0.0
+starlette==0.50.0
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+uvicorn==0.38.0
+uvloop==0.22.1; sys_platform != "win32"
+watchfiles==1.2.0
+websockets==16.1.1

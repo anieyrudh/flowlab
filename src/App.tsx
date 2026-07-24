@@ -144,6 +144,13 @@ type DesktopExportFile = {
 
 declare global {
   interface Window {
+    flowlabDesktop?: {
+      platform: "darwin" | "win32";
+      saveFiles: (files: DesktopExportFile[]) => Promise<{
+        status: "saved" | "cancelled" | "error";
+        message: string;
+      }>;
+    };
     webkit?: {
       messageHandlers?: {
         flowlabDesktop?: {
@@ -1311,6 +1318,22 @@ export default function App() {
   }
 
   function downloadFiles(files: DesktopExportFile[]) {
+    const electronHandler = window.flowlabDesktop;
+    if (electronHandler) {
+      void electronHandler.saveFiles(files)
+        .then((detail) => {
+          window.dispatchEvent(new CustomEvent("flowlab-desktop-save-result", { detail }));
+        })
+        .catch((error) => {
+          window.dispatchEvent(new CustomEvent("flowlab-desktop-save-result", {
+            detail: {
+              status: "error",
+              message: error instanceof Error ? error.message : "Export failed."
+            }
+          }));
+        });
+      return;
+    }
     const desktopHandler = window.webkit?.messageHandlers?.flowlabDesktop;
     if (desktopHandler) {
       desktopHandler.postMessage({ type: "save-files", files });

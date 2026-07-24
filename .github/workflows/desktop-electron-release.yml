@@ -1,0 +1,197 @@
+name: Desktop Electron external release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to package and publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-electron-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  REQUIRED_OGRID_REVIEW_DIGEST: 11358ec9fdc70c8f198255195f8321f12dbdab55d61db7dc659d6eeed28664c6
+
+jobs:
+  authorize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require controlled release authorization
+        env:
+          RELEASE_AUTHORIZED: ${{ vars.FLOWLAB_EXTERNAL_RELEASE_AUTHORIZED }}
+          REVIEWED_DIGEST: ${{ vars.FLOWLAB_OGRID_REVIEW_ACCEPTED_DIGEST }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_AUTHORIZED" = "true"
+          test "$REVIEWED_DIGEST" = "$REQUIRED_OGRID_REVIEW_DIGEST"
+
+  package-signed:
+    needs: authorize
+    environment: external-release
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+            package_path: out/FlowLab-darwin-arm64/FlowLab.app
+          - runner: windows-2025
+            platform: win32
+            arch: x64
+            package_path: out/FlowLab-win32-x64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      FLOWLAB_BUILD_PYTHON: python
+      FLOWLAB_EXTERNAL_RELEASE_AUTHORIZED: "true"
+      FLOWLAB_OGRID_REVIEW_ACCEPTED_DIGEST: ${{ vars.FLOWLAB_OGRID_REVIEW_ACCEPTED_DIGEST }}
+      FLOWLAB_RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: desktop/electron/requirements-build.txt
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: python -m pip install -r desktop/electron/requirements-build.txt
+
+      - name: Install macOS signing and notarization credentials
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.FLOWLAB_MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.FLOWLAB_MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.FLOWLAB_APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.FLOWLAB_APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.FLOWLAB_APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          test -n "$CERTIFICATE_P12_BASE64"
+          test -n "$CERTIFICATE_PASSWORD"
+          test -n "$APPLE_API_KEY_BASE64"
+          test -n "$APPLE_API_KEY_ID"
+          test -n "$APPLE_API_ISSUER"
+          CERTIFICATE_PATH="$RUNNER_TEMP/flowlab-developer-id.p12"
+          API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          KEYCHAIN_PATH="$RUNNER_TEMP/flowlab-signing.keychain-db"
+          KEYCHAIN_PASSWORD="flowlab-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$API_KEY_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | sed -n 's/.*"\\(Developer ID Application:.*\\)"/\\1/p' | head -n 1)"
+          test -n "$SIGNING_IDENTITY"
+          {
+            echo "FLOWLAB_MACOS_SIGN_IDENTITY=$SIGNING_IDENTITY"
+            echo "FLOWLAB_APPLE_API_KEY=$API_KEY_PATH"
+            echo "FLOWLAB_APPLE_API_KEY_ID=$APPLE_API_KEY_ID"
+            echo "FLOWLAB_APPLE_API_ISSUER=$APPLE_API_ISSUER"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Windows signing credentials
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CERTIFICATE_PFX_BASE64: ${{ secrets.FLOWLAB_WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.FLOWLAB_WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_PFX_BASE64)) { throw "Windows signing certificate is missing." }
+          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)) { throw "Windows signing password is missing." }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "flowlab-authenticode.pfx"
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:CERTIFICATE_PFX_BASE64))
+          "FLOWLAB_WINDOWS_CERTIFICATE_FILE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FLOWLAB_WINDOWS_CERTIFICATE_PASSWORD=$env:CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - run: env PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider server/tests
+        if: runner.os != 'Windows'
+      - run: $env:PYTHONPATH='.'; $env:PYTHONDONTWRITEBYTECODE='1'; python -m pytest -q -p no:cacheprovider server/tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+      - run: npm test -- --run
+      - run: npm run lint
+      - run: npm run desktop:electron:test
+      - run: npx playwright install chromium
+      - run: npm run test:e2e
+      - run: npm run desktop:electron:package -- --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - run: npm run desktop:electron:qa -- --package "${{ matrix.package_path }}" --mode external
+      - run: npm run desktop:electron:smoke -- --package "${{ matrix.package_path }}"
+      - run: npx electron-forge make --skip-package --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
+      - name: Notarize and staple macOS installer
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          DMG_FILES=(out/make/*.dmg)
+          test "${#DMG_FILES[@]}" -eq 1
+          DMG_PATH="${DMG_FILES[0]}"
+          xcrun notarytool submit "$DMG_PATH" \
+            --key "$FLOWLAB_APPLE_API_KEY" \
+            --key-id "$FLOWLAB_APPLE_API_KEY_ID" \
+            --issuer "$FLOWLAB_APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+
+      - run: npm run desktop:electron:qa:artifacts -- --directory out/make --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --mode external
+      - run: node scripts/write_electron_release_manifest.mjs out/make "out/make/flowlab-release-manifest-${{ matrix.platform }}-${{ matrix.arch }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowlab-${{ matrix.platform }}-${{ matrix.arch }}-signed
+          path: out/make/**
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-prerelease:
+    needs: package-signed
+    environment: external-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: flowlab-*-signed
+          path: release-assets
+          merge-multiple: true
+      - name: Publish bounded experimental prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          test "${#assets[@]}" -gt 0
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --verify-tag \
+            --prerelease \
+            --title "FlowLab $RELEASE_TAG" \
+            --notes "Desktop distribution candidate for macOS 13+ Apple Silicon and Windows 11 x64. The UI and instant hydraulics are self-contained. Advanced OpenFOAM execution requires Docker Desktop. Full O-grid CFD remains limited to steady incompressible laminar straight circular pipes and is not independently validated or promotion-authorized by this software release."

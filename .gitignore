@@ -40,6 +40,8 @@ test-results/
 runtime/
 release/
 tmp/
+build/
+out/
 
 # Root and generated solver logs
 *.log

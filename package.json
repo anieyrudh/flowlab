@@ -1,7 +1,14 @@
 {
   "name": "flowlab",
+  "productName": "FlowLab",
   "version": "0.1.0",
   "private": true,
+  "description": "Local desktop fluid-simulation workstation",
+  "author": "FlowLab",
+  "main": "desktop/electron/main.cjs",
+  "config": {
+    "forge": "./forge.config.cjs"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -18,7 +25,15 @@
     "smoke:code-saturne": "python3 -m server.flowlab.smoke --solver code-saturne",
     "desktop:build": "bash scripts/build_macos_app.sh",
     "desktop:qa": "bash scripts/qa_macos_app.sh release/FlowLab.app internal",
-    "desktop:qa:external": "bash scripts/qa_macos_app.sh release/FlowLab.app external"
+    "desktop:qa:external": "bash scripts/qa_macos_app.sh release/FlowLab.app external",
+    "desktop:electron:test": "node --test desktop/electron/runtime.node.cjs",
+    "desktop:electron:start": "npm run build && electron-forge start",
+    "desktop:electron:backend": "node scripts/run_electron_backend_build.mjs",
+    "desktop:electron:package": "npm run build && npm run desktop:electron:backend && electron-forge package",
+    "desktop:electron:make": "npm run build && npm run desktop:electron:backend && electron-forge make",
+    "desktop:electron:qa": "node scripts/qa_electron_package.mjs",
+    "desktop:electron:qa:artifacts": "node scripts/qa_electron_release_artifacts.mjs",
+    "desktop:electron:smoke": "node scripts/smoke_electron_package.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
@@ -33,6 +48,10 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-dmg": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
     "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -40,7 +59,13 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.184.1",
+    "electron": "43.2.0",
     "jsdom": "^27.3.0",
     "vitest": "^4.0.15"
+  },
+  "overrides": {
+    "esbuild": "0.28.1",
+    "tar": "7.5.21",
+    "tmp": "0.2.7"
   }
 }

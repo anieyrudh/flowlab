@@ -389,3 +389,18 @@ three-level result remains a numerical-verification candidate and cannot
 change a fixture, registry, validation state, product claim, promotion state,
 or release state. V1 remains a failed campaign and is not superseded as
 evidence by the v2 result.
+
+## Electron distribution successor — 2026-07-24
+
+The downloadable desktop successor now uses Electron so macOS arm64 and
+Windows x64 share one product shell. The local macOS internal candidate passed
+package QA, bundled-backend/UI smoke, native full O-grid control interaction,
+Cinema 3D switching, and DMG/ZIP creation. The Windows source and GitHub runner
+path are implemented but were not executed in this macOS session.
+
+This is a software-distribution state only. External publication remains
+blocked on the exact controlled review above, a verified GitHub repository,
+native Windows candidate evidence, platform signing/notarization credentials,
+and clean-machine installer checks. No benchmark, registry, validation,
+promotion, or release state changed. See
+`docs/desktop-electron-distribution-status-2026-07-24.md`.
