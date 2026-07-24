@@ -183,11 +183,11 @@ def _write_completed_coarse_case(
     level = contract["levels"][0]
     case = build_level_case(level, contract)
     materialize_case_files(case, case_dir)
-    rows = []
+    rows = ["sigFpe : Enabling floating point exception trapping (FOAM_SIGFPE)."]
     for index in range(50):
         rows.extend(
             [
-                f"Time = {index + 1}",
+                f"Time = {index + 1}s",
                 "smoothSolver:  Solving for Ux, Initial residual = 1e-9, Final residual = 1e-10, No Iterations 1",
                 "GAMG:  Solving for p, Initial residual = 1e-9, Final residual = 1e-10, No Iterations 1",
                 "time step continuity errors : sum local = 1e-12, global = 1e-12, cumulative = 1e-11",
@@ -351,7 +351,8 @@ def test_v2_solver_gate_uses_stable_qoi_not_absolute_transverse_residual(
     contract, level = _write_completed_coarse_case(case_dir, monkeypatch)
     solver_log = case_dir / "postProcessing" / "solverLogs" / "solve.log"
     solver_log.write_text(
-        solver_log.read_text(encoding="utf-8").replace(
+        solver_log.read_text(encoding="utf-8")
+        .replace(
             "Final residual = 1e-10",
             "Final residual = 1.4e-7",
         ),

@@ -40,6 +40,20 @@ runbook `docs/validation/full-ogrid-straight-pipe/RUNBOOK_V2.md`. No retained
 v2 execution may begin until those files and their transitive implementation
 and tests are committed and clean.
 
+The first two v2 directories have infrastructure-only dispositions:
+
+- `2026-07-24-v2-r1` stopped after deterministic materialization because the
+  sandbox could not access the Docker socket. No solver ran.
+- `2026-07-24-v2-r2` completed the coarse solver and wrote all per-iteration
+  QoI histories, but evaluation stopped before applying gates because native
+  OpenFOAM formats iteration markers as `Time = 2000s` and the parser accepted
+  only `Time = 2000`.
+
+Both directories remain untouched. The second issue is a parser-only mismatch;
+its correction accepts the native optional `s` suffix without changing the
+contract, operator, threshold, case, solver, or retained result. A new
+directory and clean source commit are required for the next attempt.
+
 ## Prerequisite disposition
 
 The desktop-release QA goal recorded a definitive disposition before this work

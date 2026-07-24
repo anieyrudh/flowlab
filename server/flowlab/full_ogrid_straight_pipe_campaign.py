@@ -776,7 +776,14 @@ def evaluate_completed_level(
     maximum_final_residual = max(final_residuals[-CONVERGENCE_TAIL_SAMPLES:])
     maximum_global_continuity = max(global_continuity[-CONVERGENCE_TAIL_SAMPLES:])
     simple_converged = bool(re.search(r"SIMPLE solution converged in \d+ iterations", solver_log))
-    solver_times = [float(value) for value in re.findall(r"^Time = ([0-9.eE+-]+)\s*$", solver_log, re.MULTILINE)]
+    solver_times = [
+        float(value)
+        for value in re.findall(
+            r"^Time = ([0-9.eE+-]+)s?\s*$",
+            solver_log,
+            re.MULTILINE,
+        )
+    ]
     if not solver_times:
         raise FullOGridCampaignError("retained solver log is missing iteration markers")
     last_solver_iteration = solver_times[-1]
@@ -787,7 +794,12 @@ def evaluate_completed_level(
         abs_tol=1.0e-12,
     )
     fatal_solver_markers = bool(
-        re.search(r"\b(?:FOAM FATAL|Floating point exception|Segmentation fault|nan)\b", solver_log, re.IGNORECASE)
+        re.search(
+            r"^(?:-->\s*)?FOAM FATAL|^Floating point exception(?:\s|$)|"
+            r"^Segmentation fault(?:\s|$)|(?:=|\()\s*(?:nan|inf)\b",
+            solver_log,
+            re.IGNORECASE | re.MULTILINE,
+        )
     )
     normal_termination = bool(re.search(r"^End\s*$", solver_log, re.MULTILINE)) and not fatal_solver_markers
     qoi_tail = _qoi_tail_stability(case_dir, selected)
