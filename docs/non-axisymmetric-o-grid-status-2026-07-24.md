@@ -1,8 +1,7 @@
 # Non-axisymmetric full O-grid status — 2026-07-24
 
-Status: **software path implemented and natively exercised; v1 retained as a
-coarse scientific-gate failure; prospective v2 QoI-stability successor frozen
-before execution**
+Status: **software path complete; v2 three-level numerical-verification
+candidate gates passed; controlled independent review pending**
 
 This record keeps software completeness, native mesh verification, solver
 execution, numerical verification, independent validation, promotion, and
@@ -53,6 +52,40 @@ Both directories remain untouched. The second issue is a parser-only mismatch;
 its correction accepts the native optional `s` suffix without changing the
 contract, operator, threshold, case, solver, or retained result. A new
 directory and clean source commit are required for the next attempt.
+
+## Definitive retained v2 campaign `v2-r3`
+
+Parser-only source commit
+`e816ae917b4a05016cf65f14e7f879575bc8552b` preserved the v2 contract
+SHA-256
+`6077a08519a1e8b423a9690a2fef6597ad42af7243caed53d4ad2c13191db875`.
+The retained campaign completed all three product-path levels through
+`JobManager`.
+
+All deterministic generation, mesh, patch, XYZ extent, solver QoI-stability,
+physics, fine-level, monotonicity, wall-geometry, observed-order, and GCI gates
+passed. Pressure drop progressed from `0.465818954` to `0.469604754` to
+`0.470842747 Pa`; the fine pressure error was `0.154262%`. Velocity-profile
+relative L2 error progressed from `1.50239%` to `0.387925%` to `0.0992816%`.
+Observed order was `1.6125950398033853`, and fine-grid GCI was
+`0.1596996556959516%`.
+
+The immutable package:
+
+- has read-only files and 12 indexed artifacts;
+- reproduced every artifact hash and size in an independent local check;
+- reproduced package tree digest
+  `11358ec9fdc70c8f198255195f8321f12dbdab55d61db7dc659d6eeed28664c6`;
+- has package-manifest SHA-256
+  `a4742d1d78f027eec125f8c0f3590170741240d79cffa315864c5a981cb1463e`;
+  and
+- is summarized in
+  `docs/validation/full-ogrid-straight-pipe/REVIEW_HANDOFF_V2_2026-07-24.md`.
+
+Disposition: **three-level numerical-verification candidate passed; controlled
+independent review unavailable and therefore pending**. This is not
+independent experimental validation. No fixture, registry, validation state,
+product claim, promotion state, or release state changed.
 
 ## Prerequisite disposition
 
@@ -314,14 +347,15 @@ opened every deterministic tar archive successfully.
 ## Current milestone states
 
 - Software completeness: **implemented and regression-tested**.
-- Native mesh verification: **coarse passed; medium/fine not launched under
-  the frozen stop rule**.
-- Solver execution: **coarse exited `0` but did not meet frozen convergence
-  gates**.
-- Three-level numerical verification: **failed/incomplete; GCI unqualified**.
+- Native mesh verification: **coarse, medium, and fine passed every frozen v2
+  mesh and topology gate**.
+- Solver execution: **all three v2 levels exited `0`, reached the declared
+  stop, terminated normally, and passed frozen QoI-stability gates**.
+- Three-level numerical verification: **candidate gates passed; observed order
+  and GCI mathematically qualified**.
 - Independent validation: **not claimed**.
-- Immutable evidence: **read-only partial-failure package assembled and
-  hash-audited**.
+- Immutable evidence: **read-only complete v2 package assembled and
+  hash-audited; v1 failure package remains immutable**.
 - Controlled independent review: **pending; no controlled reviewer identified
   in this session**.
 - Benchmark, registry, or validation-state mutation: **none and unauthorized**.
@@ -329,7 +363,8 @@ opened every deterministic tar archive successfully.
 - External release: **blocked independently**.
 
 The exact remaining blocker is a controlled independent reviewer for the
-failure package. Review cannot make the failed campaign pass; it can only
-accept or reject the integrity, calculations, and bounded failure disposition.
-No further scientific run, gate change, benchmark mutation, registry mutation,
-validation-state change, or product-claim change is authorized by this record.
+exact v2 package tree digest. Until that review is accepted, the passing
+three-level result remains a numerical-verification candidate and cannot
+change a fixture, registry, validation state, product claim, promotion state,
+or release state. V1 remains a failed campaign and is not superseded as
+evidence by the v2 result.

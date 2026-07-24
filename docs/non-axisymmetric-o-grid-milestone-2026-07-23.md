@@ -1,7 +1,7 @@
 # Non-axisymmetric full O-grid milestone
 
-Status: **software path complete; v1 stopped at failed coarse solver gates;
-prospective v2 QoI-stability campaign frozen before execution**
+Status: **software path complete; v2 three-level numerical-verification
+candidate passed; controlled independent review pending**
 
 ## Current disposition — 2026-07-24
 
@@ -34,6 +34,14 @@ iteration. Its solver decision requires stable pressure drop, stable flow,
 conservation, normal termination, and the declared stop condition. Residual
 and continuity tails are diagnostic. V2 must be committed cleanly before a new
 coarse run; medium and fine remain gated by each preceding level.
+
+The definitive `2026-07-24-v2-r3` campaign subsequently passed coarse, medium,
+and fine. Pressure drop converged monotonically with observed order
+`1.6125950398033853` and fine-grid GCI `0.1596996556959516%`. Every frozen
+candidate gate passed, and the read-only evidence package has tree digest
+`11358ec9fdc70c8f198255195f8321f12dbdab55d61db7dc659d6eeed28664c6`.
+Controlled independent review remains unavailable, so numerical verification
+has not been promoted to independent validation or a product claim.
 
 The source and desktop verification surfaces passed: 581 backend tests, 81
 frontend tests, lint, production build, 16 Playwright desktop E2E tests,

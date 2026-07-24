@@ -1,11 +1,13 @@
 # FlowLab packaged full O-grid QA — 2026-07-24
 
-Status: **bounded software/package path passed; scientific verification failed
-at frozen coarse solver gates**
+Status: **bounded software/package path passed; separate v2 numerical-
+verification candidate passed; controlled independent review pending**
 
 This record covers product software, macOS packaging, and native interaction
-only. It does not validate the O-grid campaign, qualify three-level convergence
-or GCI, authorize promotion, or change a benchmark fixture or registry entry.
+only. It did not itself validate the O-grid campaign, qualify three-level
+convergence or GCI, authorize promotion, or change a benchmark fixture or
+registry entry. The later v2 scientific disposition is recorded separately
+below.
 
 ## Source and package identity
 
@@ -74,8 +76,15 @@ The capture is a software QA aid, not retained scientific campaign evidence.
 ## Disposition
 
 The bounded product and package path is software-complete for the declared
-straight circular-pipe mode. The scientific milestone is not complete:
-`2026-07-24-v1-r2` failed frozen coarse solver-convergence gates, the
-mandatory-stop rule prevented medium and fine execution, GCI is unqualified,
-and controlled independent review remains unavailable. The package QA result
-does not alter that disposition.
+straight circular-pipe mode. Historical campaign `2026-07-24-v1-r2` remains a
+frozen coarse solver-gate failure. The later prospective
+`2026-07-24-v2-r3` campaign preserved the physical and numerical setup, added
+per-iteration QoI stability evidence, completed all three levels, and passed
+every frozen numerical-verification candidate gate. Its observed order was
+`1.6125950398033853`, fine-grid GCI was `0.1596996556959516%`, and immutable
+package tree digest is
+`11358ec9fdc70c8f198255195f8321f12dbdab55d61db7dc659d6eeed28664c6`.
+
+That result does not retroactively change this package QA evidence or v1.
+Controlled independent review remains unavailable, so benchmark, independent
+validation, promotion, product-claim, and release states remain unchanged.
