@@ -1606,6 +1606,126 @@ def test_openfoam_default_mesh_mode_stays_planar_2d(monkeypatch) -> None:
     assert "constant/polyMesh/points" in case.files
 
 
+def _full_ogrid_pipe_project() -> dict:
+    project = _circular_pipe_project("full-ogrid")
+    project["name"] = "Full O-grid pipe"
+    project["solver"].update(
+        {
+            "runMode": "steady",
+            "turbulence": "laminar",
+            "meshResolution": "coarse",
+            "meshControls": {
+                "fullOGridAxialCells": 16,
+                "fullOGridAnnularRadialCells": 4,
+                "fullOGridCircumferentialCells": 32,
+                "fullOGridCoreCellsPerSide": 8,
+            },
+        }
+    )
+    return project
+
+
+def test_openfoam_full_ogrid_mode_emits_full_volume_five_block_pipe(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+
+    case = adapters.generate_case(
+        CaseRequest.model_construct(
+            project=_full_ogrid_pipe_project(),
+            solver="openfoam",
+            advancedMode="incompressible-navier-stokes",
+        )
+    )
+
+    block_mesh = case.files["system/blockMeshDict"]
+    assert block_mesh.count("    hex (") == 5
+    assert "type wedge" not in block_mesh
+    assert "frontAndBack" not in block_mesh
+    assert "constant/polyMesh/points" not in case.files
+    for patch in ("inlet", "outlet", "walls"):
+        assert patch in block_mesh
+    profile = json.loads(case.files["constant/flowlab_full_ogrid_profile.json"])
+    assert profile["schema"] == "flowlab.full-ogrid-profile.v1"
+    assert profile["effectiveMeshMode"] == "full-revolution-five-block-ogrid"
+    assert profile["totalLengthM"] == 8.0
+    assert profile["topology"]["resolution"] == {
+        "annularRadialCells": 4,
+        "axialCells": 16,
+        "cellCount": 3072,
+        "circumferentialCells": 32,
+        "circumferentialCellsPerQuadrant": 8,
+        "coreCellsPerSide": 8,
+    }
+    assert profile["topology"]["interfaces"]["boundaryPatchCount"] == 0
+    assert profile["topology"]["collapsedAxisCells"] == 0
+    preview = json.loads(case.files["mesh/flowlab_mesh.json"])
+    assert preview["spatialDimension"] == 3
+    assert preview["proxyGeometry"] is False
+    assert preview["boundsSpanM"] == [8.0, 0.1, 0.1]
+    assert len(preview["cells"]) == 3072
+    assert set(preview["cellTypes"]) == {12}
+    assert preview["volumeQuality"]["positiveVolume"] is True
+    assert "fullOGridXYZProbes" in case.files["system/functions"]
+    assert "frontAndBack" not in case.files["0/U"]
+    assert "frontAndBack" not in case.files["0/p"]
+    assert validate_solver_case(case) == []
+
+
+def test_openfoam_full_ogrid_verification_uses_discrete_flux_normalized_parabolic_inlet(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+    project = _full_ogrid_pipe_project()
+    project["solver"]["fullOGridVerification"] = {
+        "contractId": "straight-circular-pipe-hagen-poiseuille-v1",
+        "boundaryCondition": "fully-developed-parabolic-inlet-pressure-outlet",
+        "lengthM": 8.0,
+        "volumetricFlowRateM3PerS": 1.0e-5,
+    }
+
+    case = adapters.generate_case(
+        CaseRequest.model_construct(
+            project=project,
+            solver="openfoam",
+            advancedMode="incompressible-navier-stokes",
+        )
+    )
+
+    velocity = case.files["0/U"]
+    assert "fullOGridParabolicInlet" in velocity
+    assert "targetFlow/weightedArea" in velocity
+    assert "pressureInletOutletVelocity" in velocity
+    profile = json.loads(case.files["constant/flowlab_full_ogrid_profile.json"])
+    contract = profile["verificationContract"]
+    assert contract["schema"] == "flowlab.full-ogrid-verification-contract.v1"
+    assert contract["status"] == "prospective-request-not-validation"
+    assert contract["qoiExtraction"]["pressureDrop"].startswith("patchAverage")
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda project: project["solver"].update({"runMode": "transient"}), "requires a steady solver"),
+        (lambda project: project["solver"].update({"turbulence": "rans-sst"}), "requires laminar flow"),
+        (lambda project: project["edges"]["pipe"].update({"type": "venturi"}), "only a straight pipe"),
+        (lambda project: project["edges"]["pipe"].update({"outletDiameter": 0.08}), "constant diameter"),
+    ],
+)
+def test_openfoam_full_ogrid_fails_closed_outside_bounded_scope(monkeypatch, mutate, message) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+    project = _full_ogrid_pipe_project()
+    mutate(project)
+
+    with pytest.raises(ValueError, match=message):
+        adapters.generate_case(
+            CaseRequest.model_construct(
+                project=project,
+                solver="openfoam",
+                advancedMode="incompressible-navier-stokes",
+            )
+        )
+
+
 def test_openfoam_axisymmetric_fails_closed_for_transient_physics(monkeypatch) -> None:
     monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
     monkeypatch.setattr(adapters, "_docker_available", lambda: False)

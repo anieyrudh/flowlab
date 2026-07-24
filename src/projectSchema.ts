@@ -361,11 +361,19 @@ const projectSchema = z.object({
     turbulence: z.enum(["laminar", "rans-k-epsilon", "rans-sst", "les", "dns"]),
     meshResolution: z.enum(["coarse", "medium", "fine"]),
     runMode: z.enum(["transient", "steady"]).optional(),
-    meshMode: z.enum(["planar-2d", "axisymmetric"]).optional(),
+    meshMode: z.enum(["planar-2d", "axisymmetric", "full-ogrid"]).optional(),
     axisymmetricBenchmark: z
       .object({
         fixtureId: z.literal("straight-pipe"),
         boundaryCondition: z.literal("periodic-pressure-gradient"),
+        lengthM: z.number().positive(),
+        volumetricFlowRateM3PerS: z.number().positive()
+      })
+      .optional(),
+    fullOGridVerification: z
+      .object({
+        contractId: z.literal("straight-circular-pipe-hagen-poiseuille-v1"),
+        boundaryCondition: z.literal("fully-developed-parabolic-inlet-pressure-outlet"),
         lengthM: z.number().positive(),
         volumetricFlowRateM3PerS: z.number().positive()
       })
@@ -378,6 +386,10 @@ const projectSchema = z.object({
         boundaryLayerGrowthRate: z.number().min(1).max(3).optional(),
         axisymmetricAxialCells: z.number().int().min(4).max(4096).optional(),
         axisymmetricRadialCells: z.number().int().min(2).max(1024).optional(),
+        fullOGridAxialCells: z.number().int().min(4).max(4096).optional(),
+        fullOGridAnnularRadialCells: z.number().int().min(2).max(1024).optional(),
+        fullOGridCircumferentialCells: z.number().int().min(16).max(4096).optional(),
+        fullOGridCoreCellsPerSide: z.number().int().min(4).max(1024).optional(),
         transverseDistribution: z.enum(["boundary-layer", "uniform"]).optional(),
         targetYPlus: z.number().positive().optional(),
         refinementRegions: z
@@ -428,6 +440,58 @@ const projectSchema = z.object({
         path: ["meshControls"],
         message: "Exact axisymmetric axial and radial cell counts must be supplied together."
       });
+    }
+    const fullCounts = [
+      solver.meshControls?.fullOGridAxialCells,
+      solver.meshControls?.fullOGridAnnularRadialCells,
+      solver.meshControls?.fullOGridCircumferentialCells,
+      solver.meshControls?.fullOGridCoreCellsPerSide
+    ];
+    const suppliedFullCounts = fullCounts.filter((value) => value !== undefined).length;
+    if (suppliedFullCounts !== 0 && suppliedFullCounts !== fullCounts.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["meshControls"],
+        message: "Exact full O-grid axial, annular-radial, circumferential, and core cell counts must be supplied together."
+      });
+    }
+    const circumference = solver.meshControls?.fullOGridCircumferentialCells;
+    const core = solver.meshControls?.fullOGridCoreCellsPerSide;
+    if (circumference !== undefined && (circumference % 4 !== 0 || core !== circumference / 4)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["meshControls"],
+        message: "Full O-grid circumference must be divisible by four and core cells per side must equal circumference/4."
+      });
+    }
+    if (solver.meshMode === "full-ogrid") {
+      if (
+        solver.advancedMode !== "incompressible-navier-stokes" ||
+        solver.runMode !== "steady" ||
+        solver.turbulence !== "laminar"
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["meshMode"],
+          message: "Full O-grid mode is limited to steady incompressible laminar flow."
+        });
+      }
+    }
+    if (solver.fullOGridVerification) {
+      if (solver.meshMode !== "full-ogrid") {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["fullOGridVerification"],
+          message: "The full O-grid verification contract requires full-ogrid mesh mode."
+        });
+      }
+      if (suppliedFullCounts !== fullCounts.length) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["meshControls"],
+          message: "The full O-grid verification contract requires exact four-dimensional cell counts."
+        });
+      }
     }
     if (solver.axisymmetricBenchmark) {
       if (solver.meshMode !== "axisymmetric") {
@@ -598,6 +662,35 @@ function validateTopology(project: FluidProject): string | null {
   return null;
 }
 
+function validateFullOGrid(project: FluidProject): string | null {
+  if (project.solver.meshMode !== "full-ogrid") return null;
+  const nodes = Object.values(project.nodes);
+  const edges = Object.values(project.edges);
+  if (nodes.length !== 2 || edges.length !== 1) {
+    return "Full O-grid mode requires exactly one source, one sink, and one connecting pipe.";
+  }
+  const edge = edges[0];
+  const source = project.nodes[edge.from];
+  const sink = project.nodes[edge.to];
+  if (!source || !sink || source.type !== "source" || sink.type !== "sink") {
+    return "Full O-grid pipe must connect one source directly to one sink.";
+  }
+  if (edge.type !== "pipe" || edge.shape.kind !== "circular") {
+    return "Full O-grid mode supports only one straight constant-diameter circular pipe.";
+  }
+  if (edge.outletDiameter !== undefined && Math.abs(edge.outletDiameter - edge.shape.diameter) > Math.max(1e-15, edge.shape.diameter * 1e-12)) {
+    return "Full O-grid pipe must have one constant diameter.";
+  }
+  if (source.position.x === sink.position.x && source.position.y === sink.position.y) {
+    return "Full O-grid source and sink require distinct editor positions.";
+  }
+  const verification = project.solver.fullOGridVerification;
+  if (verification && Math.abs(verification.lengthM - edge.length) > Math.max(1e-15, edge.length * 1e-12)) {
+    return "Full O-grid verification length must equal the editor pipe physical length.";
+  }
+  return null;
+}
+
 export function parseProject(input: unknown, options: ParseProjectOptions = {}): { ok: true; project: FluidProject } | { ok: false; message: string } {
   const parsed = projectSchema.safeParse(input);
   if (!parsed.success) {
@@ -607,6 +700,8 @@ export function parseProject(input: unknown, options: ParseProjectOptions = {}):
   }
 
   const project = normalizeProject(parsed.data as FluidProject);
+  const fullOGridError = validateFullOGrid(project);
+  if (fullOGridError) return { ok: false, message: fullOGridError };
   const validationError = validateNetwork(project);
   if (validationError) return { ok: false, message: validationError };
   if (!options.allowTopologyWarnings) {

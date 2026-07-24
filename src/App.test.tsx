@@ -719,6 +719,41 @@ describe("FlowLab result visualization", () => {
     });
   });
 
+  it("selects full O-grid mode with conformal defaults that refine in every material dimension", async () => {
+    render(<App />);
+
+    await screen.findByLabelText("Solver runtime readiness");
+    fireEvent.change(screen.getByLabelText("Mesh mode"), { target: { value: "full-ogrid" } });
+
+    expect(screen.getByLabelText("Run mode")).toHaveValue("steady");
+    expect(screen.getByLabelText("Full O-grid axial cells")).toHaveValue(16);
+    expect(screen.getByLabelText("Full O-grid annular radial cells")).toHaveValue(4);
+    expect(screen.getByLabelText("Full O-grid circumferential cells")).toHaveValue(32);
+    expect(screen.getByLabelText("Full O-grid core cells per side")).toHaveValue(8);
+
+    fireEvent.change(screen.getByLabelText("Mesh resolution"), { target: { value: "medium" } });
+    expect(screen.getByLabelText("Full O-grid axial cells")).toHaveValue(32);
+    expect(screen.getByLabelText("Full O-grid annular radial cells")).toHaveValue(8);
+    expect(screen.getByLabelText("Full O-grid circumferential cells")).toHaveValue(64);
+    expect(screen.getByLabelText("Full O-grid core cells per side")).toHaveValue(16);
+
+    await waitFor(() => {
+      const saved = JSON.parse(window.localStorage.getItem("flowlab.project.v1") ?? "{}");
+      expect(saved.solver).toMatchObject({
+        meshMode: "full-ogrid",
+        runMode: "steady",
+        turbulence: "laminar",
+        meshResolution: "medium",
+        meshControls: {
+          fullOGridAxialCells: 32,
+          fullOGridAnnularRadialCells: 8,
+          fullOGridCircumferentialCells: 64,
+          fullOGridCoreCellsPerSide: 16
+        }
+      });
+    });
+  });
+
   it("shows parsed solver progress from a queued advanced job", async () => {
     render(<App />);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mixerPreset, venturiPreset } from "./data/presets";
+import { mixerPreset, pipeLossPreset, venturiPreset } from "./data/presets";
 import { parseProject } from "./projectSchema";
 
 describe("project network validation", () => {
@@ -184,6 +184,74 @@ describe("project network validation", () => {
       ok: false,
       message: expect.stringContaining("axial and radial cell counts must be supplied together")
     });
+  });
+
+  it("accepts the bounded full-revolution O-grid pipe mode", () => {
+    const project = structuredClone(pipeLossPreset);
+    project.solver.meshMode = "full-ogrid";
+    project.solver.runMode = "steady";
+    project.solver.turbulence = "laminar";
+    project.solver.meshControls = {
+      fullOGridAxialCells: 16,
+      fullOGridAnnularRadialCells: 4,
+      fullOGridCircumferentialCells: 32,
+      fullOGridCoreCellsPerSide: 8
+    };
+
+    const parsed = parseProject(project);
+
+    expect(parsed.ok).toBe(true);
+  });
+
+  it("rejects a non-conformal full O-grid refinement tuple", () => {
+    const project = structuredClone(pipeLossPreset);
+    project.solver.meshMode = "full-ogrid";
+    project.solver.runMode = "steady";
+    project.solver.turbulence = "laminar";
+    project.solver.meshControls = {
+      fullOGridAxialCells: 16,
+      fullOGridAnnularRadialCells: 4,
+      fullOGridCircumferentialCells: 32,
+      fullOGridCoreCellsPerSide: 7
+    };
+
+    const parsed = parseProject(project);
+
+    expect(parsed).toMatchObject({ ok: false, message: expect.stringContaining("core cells per side") });
+  });
+
+  it("rejects unsupported full O-grid topology", () => {
+    const project = structuredClone(venturiPreset);
+    project.solver.meshMode = "full-ogrid";
+    project.solver.runMode = "steady";
+    project.solver.turbulence = "laminar";
+
+    const parsed = parseProject(project);
+
+    expect(parsed).toMatchObject({ ok: false, message: expect.stringContaining("exactly one source") });
+  });
+
+  it("accepts a prospective full O-grid verification request only with exact four-dimensional counts", () => {
+    const project = structuredClone(pipeLossPreset);
+    project.solver.meshMode = "full-ogrid";
+    project.solver.runMode = "steady";
+    project.solver.turbulence = "laminar";
+    project.solver.meshControls = {
+      fullOGridAxialCells: 16,
+      fullOGridAnnularRadialCells: 4,
+      fullOGridCircumferentialCells: 32,
+      fullOGridCoreCellsPerSide: 8
+    };
+    project.solver.fullOGridVerification = {
+      contractId: "straight-circular-pipe-hagen-poiseuille-v1",
+      boundaryCondition: "fully-developed-parabolic-inlet-pressure-outlet",
+      lengthM: 44,
+      volumetricFlowRateM3PerS: 1e-5
+    };
+
+    const parsed = parseProject(project);
+
+    expect(parsed.ok).toBe(true);
   });
 
   it("rejects ambiguous imported networks without source and sink boundaries", () => {

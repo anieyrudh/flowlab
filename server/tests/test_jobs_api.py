@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,74 @@ def test_job_api_generates_queues_and_returns_logs(tmp_path: Path, monkeypatch: 
     assert restored_case.id == case_response.json()["id"]
     assert (tmp_path / "jobs" / job["id"] / "flowlab_job_record.json").is_file()
     assert (tmp_path / "jobs" / job["id"] / "flowlab_case_record.json").is_file()
+
+
+def test_case_api_generates_full_ogrid_preview_and_fails_closed_for_unsupported_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(app_module, "JOB_MANAGER", JobManager(runtime_root=tmp_path))
+    app_module.CASES.clear()
+    client = TestClient(app_module.app)
+    project = {
+        "name": "Full O-grid API",
+        "solver": {
+            "meshMode": "full-ogrid",
+            "meshResolution": "coarse",
+            "runMode": "steady",
+            "turbulence": "laminar",
+            "meshControls": {
+                "fullOGridAxialCells": 16,
+                "fullOGridAnnularRadialCells": 4,
+                "fullOGridCircumferentialCells": 32,
+                "fullOGridCoreCellsPerSide": 8,
+            },
+        },
+        "nodes": {
+            "source": {"id": "source", "type": "source", "position": {"x": 0, "y": 0}},
+            "sink": {"id": "sink", "type": "sink", "position": {"x": 100, "y": 0}},
+        },
+        "edges": {
+            "pipe": {
+                "id": "pipe",
+                "type": "pipe",
+                "from": "source",
+                "to": "sink",
+                "length": 0.024,
+                "shape": {"kind": "circular", "diameter": 0.006},
+            }
+        },
+    }
+
+    response = client.post(
+        "/api/cases/generate",
+        json={
+            "project": project,
+            "solver": "openfoam",
+            "advancedMode": "incompressible-navier-stokes",
+        },
+    )
+
+    assert response.status_code == 200
+    files = response.json()["files"]
+    profile = json.loads(files["constant/flowlab_full_ogrid_profile.json"])
+    preview = json.loads(files["mesh/flowlab_mesh.json"])
+    assert profile["topology"]["resolution"]["cellCount"] == 3072
+    assert preview["boundsSpanM"] == [0.024, 0.006, 0.006]
+    assert preview["volumeQuality"]["positiveVolume"] is True
+
+    project["edges"]["pipe"]["type"] = "elbow"
+    rejected = client.post(
+        "/api/cases/generate",
+        json={
+            "project": project,
+            "solver": "openfoam",
+            "advancedMode": "incompressible-navier-stokes",
+        },
+    )
+    assert rejected.status_code == 400
+    assert "only a straight pipe edge" in rejected.json()["detail"]
 
 
 def test_job_api_fetches_bounded_job_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

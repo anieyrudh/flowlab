@@ -184,12 +184,18 @@ export type SolverSettings = {
   // fully-developed pressure drop. Honored only for incompressible-navier-stokes.
   runMode?: "transient" | "steady";
   // OpenFOAM mesh topology. "planar-2d" (default) is a one-cell-thick channel
-  // strip; "axisymmetric" compiles one straight, non-branching circular path
-  // (including varying-diameter/Venturi edges) into a true 3D wedge.
-  meshMode?: "planar-2d" | "axisymmetric";
+  // strip; "axisymmetric" compiles a circular profile into a 3D wedge; and
+  // "full-ogrid" is the bounded full-360, five-block straight-pipe volume.
+  meshMode?: "planar-2d" | "axisymmetric" | "full-ogrid";
   axisymmetricBenchmark?: {
     fixtureId: "straight-pipe";
     boundaryCondition: "periodic-pressure-gradient";
+    lengthM: number;
+    volumetricFlowRateM3PerS: number;
+  };
+  fullOGridVerification?: {
+    contractId: "straight-circular-pipe-hagen-poiseuille-v1";
+    boundaryCondition: "fully-developed-parabolic-inlet-pressure-outlet";
     lengthM: number;
     volumetricFlowRateM3PerS: number;
   };
@@ -200,6 +206,10 @@ export type SolverSettings = {
     boundaryLayerGrowthRate?: number;
     axisymmetricAxialCells?: number;
     axisymmetricRadialCells?: number;
+    fullOGridAxialCells?: number;
+    fullOGridAnnularRadialCells?: number;
+    fullOGridCircumferentialCells?: number;
+    fullOGridCoreCellsPerSide?: number;
     // Transverse (across-gap) cell distribution. "boundary-layer" (default)
     // clusters cells at the walls for near-wall/turbulent resolution; "uniform"
     // spaces them evenly, which resolves a laminar parabolic core far better and

@@ -3291,6 +3291,23 @@ function MeshControlsPanel({
   const quality = controls.quality ?? {};
   const adaptiveMesh = solver.adaptiveMesh ?? defaultAdaptiveMesh;
   const selectedRefinement = selectedEdge ? controls.refinementRegions?.find((region) => region.edgeId === selectedEdge.id) : null;
+  const fullOGridDefaults = {
+    coarse: { axial: 16, annular: 4, circumference: 32, core: 8 },
+    medium: { axial: 32, annular: 8, circumference: 64, core: 16 },
+    fine: { axial: 64, annular: 16, circumference: 128, core: 32 }
+  }[solver.meshResolution];
+
+  function fullOGridControls(
+    patch: Partial<{ axial: number; annular: number; circumference: number; core: number }> = {}
+  ) {
+    return {
+      ...controls,
+      fullOGridAxialCells: patch.axial ?? controls.fullOGridAxialCells ?? fullOGridDefaults.axial,
+      fullOGridAnnularRadialCells: patch.annular ?? controls.fullOGridAnnularRadialCells ?? fullOGridDefaults.annular,
+      fullOGridCircumferentialCells: patch.circumference ?? controls.fullOGridCircumferentialCells ?? fullOGridDefaults.circumference,
+      fullOGridCoreCellsPerSide: patch.core ?? controls.fullOGridCoreCellsPerSide ?? fullOGridDefaults.core
+    };
+  }
 
   function updateAdaptiveMesh(patch: Partial<NonNullable<SolverSettings["adaptiveMesh"]>>) {
     onSolverChange({
@@ -3332,7 +3349,18 @@ function MeshControlsPanel({
         <select
           aria-label="Mesh resolution"
           value={solver.meshResolution}
-          onChange={(event) => onSolverChange({ meshResolution: event.target.value as SolverSettings["meshResolution"] })}
+          onChange={(event) => {
+            const meshResolution = event.target.value as SolverSettings["meshResolution"];
+            const defaults = {
+              coarse: { fullOGridAxialCells: 16, fullOGridAnnularRadialCells: 4, fullOGridCircumferentialCells: 32, fullOGridCoreCellsPerSide: 8 },
+              medium: { fullOGridAxialCells: 32, fullOGridAnnularRadialCells: 8, fullOGridCircumferentialCells: 64, fullOGridCoreCellsPerSide: 16 },
+              fine: { fullOGridAxialCells: 64, fullOGridAnnularRadialCells: 16, fullOGridCircumferentialCells: 128, fullOGridCoreCellsPerSide: 32 }
+            }[meshResolution];
+            onSolverChange({
+              meshResolution,
+              ...(solver.meshMode === "full-ogrid" ? { meshControls: { ...controls, ...defaults } } : {})
+            });
+          }}
         >
           <option value="coarse">Coarse</option>
           <option value="medium">Medium</option>
@@ -3358,13 +3386,77 @@ function MeshControlsPanel({
           <select
             aria-label="Mesh mode"
             value={solver.meshMode ?? "planar-2d"}
-            onChange={(event) => onSolverChange({ meshMode: event.target.value as NonNullable<SolverSettings["meshMode"]> })}
+            onChange={(event) => {
+              const meshMode = event.target.value as NonNullable<SolverSettings["meshMode"]>;
+              onSolverChange(
+                meshMode === "full-ogrid"
+                  ? {
+                      meshMode,
+                      runMode: "steady",
+                      turbulence: "laminar",
+                      meshControls: fullOGridControls()
+                    }
+                  : { meshMode }
+              );
+            }}
           >
             <option value="planar-2d">Planar 2D (default)</option>
             <option value="axisymmetric">Axisymmetric (3D pipe)</option>
+            <option value="full-ogrid">Full 360 O-grid (straight pipe)</option>
           </select>
         </label>
       )}
+      {solver.meshMode === "full-ogrid" ? (
+        <div className="mesh-control-grid" aria-label="Full O-grid exact cell controls">
+          <label>
+            Axial
+            <input
+              aria-label="Full O-grid axial cells"
+              type="number"
+              min={4}
+              step={1}
+              value={controls.fullOGridAxialCells ?? fullOGridDefaults.axial}
+              onChange={(event) => onMeshControlsChange(fullOGridControls({ axial: Number(event.target.value) }))}
+            />
+          </label>
+          <label>
+            Annular radial
+            <input
+              aria-label="Full O-grid annular radial cells"
+              type="number"
+              min={2}
+              step={1}
+              value={controls.fullOGridAnnularRadialCells ?? fullOGridDefaults.annular}
+              onChange={(event) => onMeshControlsChange(fullOGridControls({ annular: Number(event.target.value) }))}
+            />
+          </label>
+          <label>
+            Circumference
+            <input
+              aria-label="Full O-grid circumferential cells"
+              type="number"
+              min={16}
+              step={4}
+              value={controls.fullOGridCircumferentialCells ?? fullOGridDefaults.circumference}
+              onChange={(event) => {
+                const circumference = Number(event.target.value);
+                onMeshControlsChange(fullOGridControls({ circumference, core: circumference / 4 }));
+              }}
+            />
+          </label>
+          <label>
+            Core side
+            <input
+              aria-label="Full O-grid core cells per side"
+              type="number"
+              min={4}
+              step={1}
+              value={controls.fullOGridCoreCellsPerSide ?? fullOGridDefaults.core}
+              onChange={(event) => onMeshControlsChange(fullOGridControls({ core: Number(event.target.value) }))}
+            />
+          </label>
+        </div>
+      ) : null}
       <label>
         Transverse cells
         <select

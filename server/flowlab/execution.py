@@ -3354,6 +3354,14 @@ def validate_solver_case(case: SolverCase) -> list[str]:
         # of a single empty frontAndBack; its fitted polyMesh is skipped so blockMesh
         # builds the wedge (and handles the singular axis) at run time.
         is_axisymmetric_wedge = "type wedge" in block_mesh
+        try:
+            full_ogrid_profile = json.loads(files.get("constant/flowlab_full_ogrid_profile.json", ""))
+        except json.JSONDecodeError:
+            full_ogrid_profile = {}
+        is_full_ogrid = (
+            isinstance(full_ogrid_profile, dict)
+            and full_ogrid_profile.get("schema") == "flowlab.full-ogrid-profile.v1"
+        )
         if is_axisymmetric_wedge:
             try:
                 axisymmetric_profile = json.loads(files.get("constant/flowlab_axisymmetric_profile.json", ""))
@@ -3411,9 +3419,86 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                 or any(not isinstance(value, int | float) or value <= 0 for value in spans)
             ):
                 issues.append("OpenFOAM axisymmetric wedge requires a non-degenerate 3D blockMesh-equivalent inspection artifact.")
+        if is_full_ogrid:
+            if full_ogrid_profile.get("effectiveMeshMode") != "full-revolution-five-block-ogrid":
+                issues.append("OpenFOAM full O-grid profile must declare the five-block full-revolution representation.")
+            topology = full_ogrid_profile.get("topology") if isinstance(full_ogrid_profile.get("topology"), dict) else {}
+            resolution = topology.get("resolution") if isinstance(topology.get("resolution"), dict) else {}
+            interfaces = topology.get("interfaces") if isinstance(topology.get("interfaces"), dict) else {}
+            try:
+                circumference = int(resolution["circumferentialCells"])
+                core = int(resolution["coreCellsPerSide"])
+                expected_cells = int(resolution["cellCount"])
+            except (KeyError, TypeError, ValueError):
+                circumference = core = expected_cells = 0
+            if (
+                topology.get("spatialDimension") != 3
+                or topology.get("blockCount") != 5
+                or topology.get("cellTypes") != ["hex"]
+                or topology.get("collapsedAxisCells") != 0
+                or circumference < 16
+                or circumference % 4 != 0
+                or core != circumference // 4
+                or expected_cells <= 0
+            ):
+                issues.append("OpenFOAM full O-grid profile has an invalid or non-conformal topology contract.")
+            if (
+                interfaces.get("count") != 4
+                or interfaces.get("treatment") != "conformal-internal-faces"
+                or interfaces.get("boundaryPatchCount") != 0
+            ):
+                issues.append("OpenFOAM full O-grid center/wall interfaces must remain conformal internal faces.")
+            if block_mesh.count("    hex (") != 5:
+                issues.append("OpenFOAM full O-grid blockMeshDict must contain exactly five hexahedral blocks.")
+            if any(token in block_mesh for token in ("type wedge", "frontAndBack", "neighbourPatch")):
+                issues.append("OpenFOAM full O-grid blockMeshDict cannot contain wedge, planar, or cyclic proxy patches.")
+            try:
+                full_preview = json.loads(files.get("mesh/flowlab_mesh.json", ""))
+            except json.JSONDecodeError:
+                full_preview = {}
+            spans = full_preview.get("boundsSpanM") if isinstance(full_preview, dict) else None
+            cells = full_preview.get("cells") if isinstance(full_preview, dict) else None
+            cell_types = full_preview.get("cellTypes") if isinstance(full_preview, dict) else None
+            volume_quality = full_preview.get("volumeQuality") if isinstance(full_preview, dict) and isinstance(full_preview.get("volumeQuality"), dict) else {}
+            if (
+                full_preview.get("spatialDimension") != 3
+                or full_preview.get("representation") != "pre-solve-blockMesh-equivalent-full-ogrid"
+                or full_preview.get("proxyGeometry") is not False
+                or not isinstance(spans, list)
+                or len(spans) != 3
+                or any(not isinstance(value, int | float) or value <= 0 for value in spans)
+                or not isinstance(cells, list)
+                or len(cells) != expected_cells
+                or not isinstance(cell_types, list)
+                or len(cell_types) != expected_cells
+                or any(cell_type != 12 for cell_type in cell_types)
+                or volume_quality.get("positiveVolume") is not True
+                or volume_quality.get("zeroVolumeCellCount") != 0
+            ):
+                issues.append("OpenFOAM full O-grid requires a positive-volume, full-extent 3D all-hex inspection mesh.")
+            verification_contract = full_ogrid_profile.get("verificationContract")
+            if isinstance(verification_contract, dict):
+                if (
+                    verification_contract.get("schema") != "flowlab.full-ogrid-verification-contract.v1"
+                    or verification_contract.get("status") != "prospective-request-not-validation"
+                    or verification_contract.get("boundaryCondition")
+                    != "fully-developed-parabolic-inlet-pressure-outlet"
+                ):
+                    issues.append("OpenFOAM full O-grid verification request has an unsupported prospective contract.")
+                velocity_field = files.get("0/U", "")
+                if (
+                    "fullOGridParabolicInlet" not in velocity_field
+                    or "targetFlow/weightedArea" not in velocity_field
+                    or "pressureInletOutletVelocity" not in velocity_field
+                ):
+                    issues.append("OpenFOAM full O-grid verification requires a discrete-flux-normalized parabolic inlet and pressure-coupled outlet.")
+                if "residualControl" not in files.get("system/fvSolution", ""):
+                    issues.append("OpenFOAM full O-grid verification requires direct steady SIMPLE residual controls.")
         expected_block_patches = (
             ("inlet", "outlet", "walls", "front", "back")
             if is_axisymmetric_wedge
+            else ("inlet", "outlet", "walls")
+            if is_full_ogrid
             else ("inlet", "outlet", "walls", "frontAndBack")
         )
         for patch in expected_block_patches:
@@ -3511,7 +3596,13 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                     if patch_name not in listed:
                         issues.append(f"`constant/flowlab_patch_metrics.json` is missing {role} patch `{patch_name}`.")
             manifest_functions = patch_metrics_manifest.get("functionObjects") if isinstance(patch_metrics_manifest.get("functionObjects"), list) else []
-        profile_probe_name = "axisymmetricProfileProbes" if is_axisymmetric_wedge else "centerlineProbes"
+        profile_probe_name = (
+            "fullOGridXYZProbes"
+            if is_full_ogrid
+            else "axisymmetricProfileProbes"
+            if is_axisymmetric_wedge
+            else "centerlineProbes"
+        )
         required_function_objects = ["residuals", profile_probe_name, "wallForces", "patchFlowRate", "patchAverage", "wallShearStress"]
         if has_probe_nodes:
             required_function_objects.append("pressureProbes")
@@ -4724,7 +4815,7 @@ def _apply_openfoam_runtime_style(case_dir: Path, style: str, lines: list[str]) 
 
 
 def _openfoam_required_mesh_commands(case_dir: Path, *, skip_snappy: bool = False) -> list[str]:
-    if _openfoam_case_is_axisymmetric_wedge(case_dir):
+    if _openfoam_case_is_axisymmetric_wedge(case_dir) or _openfoam_case_is_full_ogrid(case_dir):
         commands = ["checkMesh"]
         if not _openfoam_has_base_mesh(case_dir):
             commands.insert(0, "blockMesh")
@@ -4760,6 +4851,22 @@ def _openfoam_case_is_axisymmetric_wedge(case_dir: Path) -> bool:
     except OSError:
         return False
     return "type wedge" in text
+
+
+def _openfoam_case_is_full_ogrid(case_dir: Path) -> bool:
+    """Recognize only a manifest-bound canonical five-block full O-grid."""
+
+    try:
+        profile = json.loads((case_dir / "constant" / "flowlab_full_ogrid_profile.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    topology = profile.get("topology") if isinstance(profile, dict) and isinstance(profile.get("topology"), dict) else {}
+    return (
+        profile.get("schema") == "flowlab.full-ogrid-profile.v1"
+        and profile.get("effectiveMeshMode") == "full-revolution-five-block-ogrid"
+        and topology.get("blockCount") == 5
+        and topology.get("collapsedAxisCells") == 0
+    )
 
 
 def _openfoam_uses_starter_fitted_mesh(case_dir: Path, handoff: dict[str, Any]) -> bool:
@@ -5377,12 +5484,17 @@ class JobManager:
         surface_geometry = reviewed_geometry if isinstance(reviewed_geometry.get("surfaces"), list) else starter_geometry
         cad_reviewed = starter_geometry.get("cadReviewed") is True
         is_axisymmetric_wedge = _openfoam_case_is_axisymmetric_wedge(case_dir)
-        skip_snappy_for_starter = _openfoam_uses_starter_fitted_mesh(case_dir, handoff) or is_axisymmetric_wedge
+        is_full_ogrid = _openfoam_case_is_full_ogrid(case_dir)
+        is_direct_block_mesh = is_axisymmetric_wedge or is_full_ogrid
+        skip_snappy_for_starter = _openfoam_uses_starter_fitted_mesh(case_dir, handoff) or is_direct_block_mesh
         _, missing_boundary_tags, _ = _reviewed_boundary_tag_status(starter_geometry)
         _, missing_surface_roles, _, required_patch_names = _reviewed_surface_status(surface_geometry)
         missing_boundary_tags = sorted({*missing_boundary_tags, *missing_surface_roles})
         if is_axisymmetric_wedge:
             required_patch_names = ["inlet", "outlet", "walls", "front", "back", "axis"]
+            missing_boundary_tags = []
+        elif is_full_ogrid:
+            required_patch_names = ["inlet", "outlet", "walls"]
             missing_boundary_tags = []
 
         command_runs: list[dict[str, Any]] = []
@@ -5416,7 +5528,8 @@ class JobManager:
                 blockers = acceptance.get("solverAcceptance", {}).get("openfoam", {}).get("blockingReasons", [])
                 return "; ".join(str(item) for item in blockers) or "Missing OpenFOAM native mesh command."
 
-        if is_axisymmetric_wedge:
+        if is_direct_block_mesh:
+            geometry_label = "axisymmetric blockMesh wedge" if is_axisymmetric_wedge else "full-revolution blockMesh O-grid"
             command_runs.append(
                 {
                     "command": "surfaceFeatureExtract",
@@ -5425,10 +5538,10 @@ class JobManager:
                     "status": "skipped",
                     "exitCode": None,
                     "logPath": None,
-                    "reason": "Axisymmetric wedge geometry is defined directly by blockMesh and has no triangulated surface feature stage.",
+                    "reason": f"{geometry_label} is defined directly by blockMesh and has no triangulated surface feature stage.",
                 }
             )
-            self._append_log(job_id, "OpenFOAM native mesh: skipping surfaceFeatureExtract for axisymmetric blockMesh wedge.")
+            self._append_log(job_id, f"OpenFOAM native mesh: skipping surfaceFeatureExtract for {geometry_label}.")
         else:
             command_runs.append(
                 self._run_openfoam_mesh_command(
@@ -5511,6 +5624,8 @@ class JobManager:
             skip_reason = (
                 "Axisymmetric wedge geometry is fully defined by blockMesh; surface extraction and snappyHexMesh are not applicable."
                 if is_axisymmetric_wedge
+                else "Full O-grid geometry is fully defined by blockMesh; surface extraction and snappyHexMesh are not applicable."
+                if is_full_ogrid
                 else "Skipped for FlowLab-generated fitted starter polyMesh with empty front/back patches; production reviewed STL meshing still requires snappyHexMesh evidence."
             )
             command_runs.append(
@@ -5526,6 +5641,8 @@ class JobManager:
             )
             if is_axisymmetric_wedge:
                 self._append_log(job_id, "OpenFOAM native mesh: skipping snappyHexMesh for axisymmetric blockMesh wedge.")
+            elif is_full_ogrid:
+                self._append_log(job_id, "OpenFOAM native mesh: skipping snappyHexMesh for full-revolution blockMesh O-grid.")
             else:
                 self._append_log(
                     job_id,

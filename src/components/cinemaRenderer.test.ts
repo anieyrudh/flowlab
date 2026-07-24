@@ -70,6 +70,48 @@ describe("Cinema VTK exterior surface extraction", () => {
     );
   });
 
+  it("renders a five-block O-grid-like volume without exposing four internal interfaces", () => {
+    const points: [number, number, number][] = [];
+    const pointIndex = new Map<string, number>();
+    const indexFor = (point: [number, number, number]) => {
+      const key = point.join(",");
+      const existing = pointIndex.get(key);
+      if (existing !== undefined) return existing;
+      const index = points.length;
+      points.push(point);
+      pointIndex.set(key, index);
+      return index;
+    };
+    const block = (y0: number, y1: number, z0: number, z1: number) =>
+      [
+        [0, y0, z0],
+        [1, y0, z0],
+        [1, y1, z0],
+        [0, y1, z0],
+        [0, y0, z1],
+        [1, y0, z1],
+        [1, y1, z1],
+        [0, y1, z1]
+      ].map((point) => indexFor(point as [number, number, number]));
+    const volume = dataset(
+      points,
+      [
+        block(0, 1, 0, 1),
+        block(1, 2, 0, 1),
+        block(-1, 0, 0, 1),
+        block(0, 1, 1, 2),
+        block(0, 1, -1, 0)
+      ],
+      [12, 12, 12, 12, 12]
+    );
+
+    const faces = extractExteriorCellFaces(volume);
+    expect(faces).toHaveLength(22);
+    expect(exteriorTriangleCount(volume)).toBe(44);
+    expect(new Set(faces.map((face) => face.ownerCellIndex))).toEqual(new Set([0, 1, 2, 3, 4]));
+    expect([0, 1, 2].map((axis) => Math.max(...points.map((point) => point[axis])) - Math.min(...points.map((point) => point[axis])))).toEqual([1, 3, 3]);
+  });
+
   it.each([
     {
       name: "tetrahedron",

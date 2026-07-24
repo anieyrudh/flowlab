@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from server.flowlab import adapters
+from server.flowlab import adapters, execution
 from server.flowlab.adapters import add_case_manifest
 from server.flowlab.execution import (
     JobManager,
@@ -2039,6 +2039,56 @@ def test_openfoam_native_mesh_runner_captures_acceptance_evidence(
     assert handoff["starterGeometry"]["cadReviewed"] is False
     assert native_quality["productionReady"] is False
     assert any("CAD/B-rep reviewed" in reason for reason in acceptance["blockingReasons"])
+
+
+def test_full_ogrid_native_mesh_path_uses_only_blockmesh_and_checkmesh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+    project = {
+        "name": "Full O-grid execution path",
+        "fluid": {"density": 998.2, "dynamicViscosity": 0.001002},
+        "solver": {
+            "meshMode": "full-ogrid",
+            "meshResolution": "coarse",
+            "runMode": "steady",
+            "turbulence": "laminar",
+            "meshControls": {
+                "fullOGridAxialCells": 16,
+                "fullOGridAnnularRadialCells": 4,
+                "fullOGridCircumferentialCells": 32,
+                "fullOGridCoreCellsPerSide": 8,
+            },
+        },
+        "nodes": {
+            "source": {"id": "source", "type": "source", "position": {"x": 0, "y": 0}},
+            "sink": {"id": "sink", "type": "sink", "position": {"x": 100, "y": 0}},
+        },
+        "edges": {
+            "pipe": {
+                "id": "pipe",
+                "type": "pipe",
+                "from": "source",
+                "to": "sink",
+                "length": 0.024,
+                "shape": {"kind": "circular", "diameter": 0.006},
+            }
+        },
+    }
+    case = adapters.generate_case(
+        CaseRequest.model_construct(
+            project=project,
+            solver="openfoam",
+            advancedMode="incompressible-navier-stokes",
+        )
+    )
+    case_dir = tmp_path / "case"
+    execution.materialize_case_files(case, case_dir)
+
+    assert execution._openfoam_case_is_full_ogrid(case_dir) is True
+    assert execution._openfoam_case_is_axisymmetric_wedge(case_dir) is False
+    assert execution._openfoam_required_mesh_commands(case_dir) == ["blockMesh", "checkMesh"]
 
 
 def test_openfoam_generated_fitted_mesh_skips_snappy_and_solves_starter_case(
