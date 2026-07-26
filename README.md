@@ -59,9 +59,9 @@ separate:
 
 The public source repository is
 [anieyrudh/flowlab](https://github.com/anieyrudh/flowlab). Signed installers
-are not published yet: the local macOS artifact is an internal candidate, the
-Windows package remains runner-unverified, and platform signing is not
-configured. See the [installation guide](docs/INSTALLATION.md) and
+are not published yet. The macOS arm64 and Windows x64 internal candidate
+workflows both pass, while platform signing is not configured. See the
+[installation guide](docs/INSTALLATION.md) and
 [distribution status](docs/desktop-electron-distribution-status-2026-07-24.md).
 
 The earlier AppKit/WebKit macOS shell remains as historical internal QA

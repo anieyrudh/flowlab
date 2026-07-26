@@ -12,8 +12,8 @@ This record keeps four states separate:
 - Electron software and packaging implementation: **implemented**.
 - Local macOS arm64 internal candidate: **passed package, launch, visual, and
   installer QA**.
-- Windows x64 candidate: **implemented but not executed on a Windows runner in
-  this session**.
+- Windows x64 candidate: **passed package, launch, installer, and artifact QA
+  on the GitHub `windows-2025` runner**.
 - External GitHub release: **blocked**.
 
 No benchmark fixture, registry entry, validation state, scientific promotion,
@@ -85,6 +85,15 @@ straight circular pipes and state that independent validation and scientific
 promotion are not authorized by the software release.
 
 ## Verification completed in this session
+
+GitHub Actions run
+[`30222528068`](https://github.com/anieyrudh/flowlab/actions/runs/30222528068)
+passed at commit `d7b69d986de765037949bd8e26137ac84aafdad6`. It ran
+the portable backend suite, frontend suite, lint, production build, Electron
+bridge tests, and 16 browser interaction tests before building both native
+candidates. The macOS and Windows jobs each passed package QA, bundled-backend
+and renderer smoke checks, installer/ZIP creation, artifact QA, manifest
+generation, and artifact upload.
 
 Source verification from the repository root:
 
@@ -166,16 +175,14 @@ the protected external-release workflow.
 
 External GitHub download availability remains blocked on:
 
-1. the Windows workflow has not run, so no Windows build/install/launch
-   evidence exists yet;
-2. controlled independent review has not accepted the exact full O-grid
+1. controlled independent review has not accepted the exact full O-grid
    evidence digest;
-3. no macOS Developer ID/notary credentials are configured here;
-4. no Windows Authenticode certificate is configured here; and
-5. no clean-machine macOS or Windows installer acceptance has been recorded.
+2. no macOS Developer ID/notary credentials are configured here;
+3. no Windows Authenticode certificate is configured here; and
+4. no clean-machine macOS or Windows installer acceptance has been recorded.
 
-The source destination is now the verified public repository
-`anieyrudh/flowlab`. The next deployment step is to run the candidate workflow
-there and inspect both platform artifacts. Signing credentials and external
-release authorization should be added only after the controlled review and
-candidate evidence are accepted.
+The source destination is the verified public repository
+`anieyrudh/flowlab`, and both platform candidate jobs pass there. The next
+deployment step is controlled review followed by signing and clean-machine
+installer acceptance. External release authorization should be added only
+after those gates are accepted.

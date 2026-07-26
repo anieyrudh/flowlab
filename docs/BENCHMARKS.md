@@ -11,7 +11,7 @@ Raw meshes and field histories remain in the governed evidence archive.
 | Laminar all-hex analytical/manufactured suite | Numerical gates passed | Solver and numerical-method verification within its frozen cases |
 | Full-360 O-grid straight circular pipe v2 | Candidate passed; independent review pending | End-to-end product-path numerical verification for one steady incompressible laminar pipe |
 | FDA nozzle Re=500 v2 | Frozen validation gates did not pass | Retained diagnostic evidence; no validation or promotion claim |
-| Desktop release | Candidate packaging implemented | Internal macOS candidate; Windows and signed public release checks remain |
+| Desktop release | macOS and Windows candidate CI passed | Signed public release checks remain |
 
 ## Full-360 O-grid result
 
