@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from server.flowlab.laminar_all_hex_v3_observer import (
     first_sustained_joint_pass_iteration,
     sustained_window,
@@ -21,6 +23,7 @@ def _passing_history(end: int) -> list[dict[str, float | int]]:
     ]
 
 
+@pytest.mark.local_evidence
 def test_v4_manifest_freezes_common_floor_without_changing_scientific_limits() -> None:
     manifest = build_manifest()
     checks = validate_manifest(manifest)
@@ -36,6 +39,7 @@ def test_v4_manifest_freezes_common_floor_without_changing_scientific_limits() -
     assert all(checks.values()), checks
 
 
+@pytest.mark.local_evidence
 def test_v4_remedy_evidence_is_pinned_and_supportive() -> None:
     evidence = remedy_evidence()
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from server.flowlab.laminar_all_hex_v3_confirmation import is_v2_sensitive_cell
 from server.flowlab.laminar_all_hex_v3_contract import (
     CAMPAIGN_ID,
@@ -25,6 +27,7 @@ from server.flowlab.laminar_all_hex_v3_reproducibility import (
 from server.flowlab.open_boundary_laminar_force_benchmark import PlanePoiseuille
 
 
+@pytest.mark.local_evidence
 def test_v3_manifest_freezes_78_cells_without_changing_scientific_limits() -> None:
     manifest = build_manifest()
     checks = validate_manifest(manifest)

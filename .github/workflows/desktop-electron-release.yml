@@ -126,9 +126,9 @@ jobs:
           "FLOWLAB_WINDOWS_CERTIFICATE_FILE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "FLOWLAB_WINDOWS_CERTIFICATE_PASSWORD=$env:CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - run: env PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider server/tests
+      - run: env PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider -m "not local_evidence" server/tests
         if: runner.os != 'Windows'
-      - run: $env:PYTHONPATH='.'; $env:PYTHONDONTWRITEBYTECODE='1'; python -m pytest -q -p no:cacheprovider server/tests
+      - run: $env:PYTHONPATH='.'; $env:PYTHONDONTWRITEBYTECODE='1'; python -m pytest -q -p no:cacheprovider -m "not local_evidence" server/tests
         if: runner.os == 'Windows'
         shell: pwsh
       - run: npm test -- --run

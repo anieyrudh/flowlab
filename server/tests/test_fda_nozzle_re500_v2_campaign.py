@@ -81,6 +81,7 @@ def test_prepared_case_preserves_boundary_and_second_order_contract(tmp_path: Pa
     assert definition["frozenContractSha256"] == FROZEN_CONTRACT_SHA256
 
 
+@pytest.mark.local_evidence
 def test_frozen_contract_hash_is_current() -> None:
     contract = Path(
         "benchmarks/cases/fda-nozzle/campaigns/2026-07-17-re500-v2-preflight/"

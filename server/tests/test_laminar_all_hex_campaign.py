@@ -5,6 +5,8 @@ import math
 import threading
 import time
 
+import pytest
+
 from server.flowlab.laminar_all_hex_campaign import (
     CAMPAIGN_ID,
     ResourceBudget,
@@ -34,6 +36,7 @@ def test_physical_matrix_is_complete_and_balanced() -> None:
     assert sum(cell["resourceClass"] == "fine" for cell in cells) == 24
 
 
+@pytest.mark.local_evidence
 def test_manifest_freezes_sources_gates_and_all_planned_lanes() -> None:
     manifest = build_manifest()
     checks = validate_manifest(manifest)
@@ -122,6 +125,7 @@ def test_weighted_scheduler_honors_capacity_and_single_fine_worker(tmp_path) -> 
     assert maximum_fine == 1
 
 
+@pytest.mark.local_evidence
 def test_dry_run_materializes_complete_fail_closed_control_plane(tmp_path) -> None:
     report = run_dry_run(tmp_path / "campaign", capacity=4)
     root = tmp_path / "campaign"

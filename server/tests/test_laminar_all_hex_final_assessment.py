@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from server.flowlab.laminar_all_hex_final_assessment import physical_scope_summary
 
 
+@pytest.mark.local_evidence
 def test_physical_scope_summary_retains_failed_outer_envelope() -> None:
     campaign = Path(
         "benchmarks/cases/open-boundary/campaigns/"
