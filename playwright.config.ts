@@ -4,7 +4,7 @@ const testPython = process.env.FLOWLAB_TEST_PYTHON ?? (process.platform === "win
 
 export default defineConfig({
   testDir: "tests/e2e",
-  timeout: 30_000,
+  timeout: process.env.CI ? 60_000 : 30_000,
   workers: 1,
   expect: { timeout: 5_000 },
   reporter: [["list"]],
