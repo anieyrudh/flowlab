@@ -56,22 +56,22 @@ test("accepts only the exact local backend renderer origin", () => {
 
 test("normalizes bounded text exports and rejects unsafe paths", () => {
   assert.deepEqual(
-    normalizeExportFiles([{ filename: "result.json", text: "{}", type: "application/json" }]),
+    normalizeExportFiles([{ filename: "result.json", text: "{}", type: "application/json" }], "darwin"),
     [{ filename: "result.json", text: "{}", type: "application/json", bytes: 2 }]
   );
-  assert.equal(sanitizeExportFilename(" result.csv "), "result.csv");
+  assert.equal(sanitizeExportFilename(" result.csv ", "darwin"), "result.csv");
   for (const filename of ["", ".", "..", "../result.json", "folder/result.json", "folder\\result.json"]) {
-    assert.throws(() => sanitizeExportFilename(filename));
+    assert.throws(() => sanitizeExportFilename(filename, "darwin"));
   }
   assert.throws(
-    () => normalizeExportFiles([{ filename: "large.txt", text: "x".repeat(MAX_EXPORT_FILE_BYTES + 1), type: "text/plain" }]),
+    () => normalizeExportFiles([{ filename: "large.txt", text: "x".repeat(MAX_EXPORT_FILE_BYTES + 1), type: "text/plain" }], "darwin"),
     /per-file size limit/
   );
   assert.throws(
     () => normalizeExportFiles([
       { filename: "duplicate.txt", text: "one", type: "text/plain" },
       { filename: "duplicate.txt", text: "two", type: "text/plain" }
-    ]),
+    ], "darwin"),
     /Duplicate/
   );
   for (const filename of ["CON", "nul.txt", "bad:name.json", "trailing."]) {
