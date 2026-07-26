@@ -13,6 +13,8 @@ on:
       - "tests/**"
       - "package.json"
       - "package-lock.json"
+      - "playwright.config.ts"
+      - "pytest.ini"
   push:
     branches:
       - main
@@ -27,6 +29,8 @@ on:
       - "tests/**"
       - "package.json"
       - "package-lock.json"
+      - "playwright.config.ts"
+      - "pytest.ini"
 
 permissions:
   contents: read
