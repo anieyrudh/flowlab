@@ -166,18 +166,16 @@ the protected external-release workflow.
 
 External GitHub download availability remains blocked on:
 
-1. the exact private GitHub owner/repository name and remote have not been
-   verified or configured;
-2. the Windows workflow has not run, so no Windows build/install/launch
+1. the Windows workflow has not run, so no Windows build/install/launch
    evidence exists yet;
-3. controlled independent review has not accepted the exact full O-grid
+2. controlled independent review has not accepted the exact full O-grid
    evidence digest;
-4. no macOS Developer ID/notary credentials are configured here;
-5. no Windows Authenticode certificate is configured here; and
-6. no clean-machine macOS or Windows installer acceptance has been recorded.
+3. no macOS Developer ID/notary credentials are configured here;
+4. no Windows Authenticode certificate is configured here; and
+5. no clean-machine macOS or Windows installer acceptance has been recorded.
 
-The next honest deployment step is to verify the intended private GitHub
-repository, push this branch, run the candidate workflow, and inspect both
-platform artifacts. Signing credentials and external release authorization
-should be added only after the controlled review and candidate evidence are
-accepted.
+The source destination is now the verified public repository
+`anieyrudh/flowlab`. The next deployment step is to run the candidate workflow
+there and inspect both platform artifacts. Signing credentials and external
+release authorization should be added only after the controlled review and
+candidate evidence are accepted.

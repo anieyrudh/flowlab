@@ -1,5 +1,10 @@
 # FlowLab
 
+[![Desktop Electron candidate](https://github.com/anieyrudh/flowlab/actions/workflows/desktop-electron-candidate.yml/badge.svg)](https://github.com/anieyrudh/flowlab/actions/workflows/desktop-electron-candidate.yml)
+
+**Install:** [source and desktop setup](docs/INSTALLATION.md) ·
+**Evidence:** [benchmarks and verification status](docs/BENCHMARKS.md)
+
 FlowLab is a desktop-only local fluid-simulation workstation with two solver tiers:
 
 - **Instant 1D hydraulics** in the browser for pipes, pumps, sinks, mixers, Venturi effects, Bernoulli/head losses, Reynolds regimes, cavitation thresholds, control-volume force estimates, parameter sweeps, and water-hammer previews.
@@ -52,12 +57,12 @@ separate:
   protected signing/notarization credentials, checks the signed installers,
   and publishes a bounded GitHub prerelease only after both platform jobs pass.
 
-The repository currently has no verified GitHub remote, no controlled reviewer
-acceptance for the O-grid package, and no macOS Developer ID or Windows
-Authenticode credentials configured here. Therefore the local macOS artifact
-is an internal candidate, the Windows package remains runner-unverified, and
-nothing is yet available for public download. See
-[docs/desktop-electron-distribution-status-2026-07-24.md](docs/desktop-electron-distribution-status-2026-07-24.md).
+The public source repository is
+[anieyrudh/flowlab](https://github.com/anieyrudh/flowlab). Signed installers
+are not published yet: the local macOS artifact is an internal candidate, the
+Windows package remains runner-unverified, and platform signing is not
+configured. See the [installation guide](docs/INSTALLATION.md) and
+[distribution status](docs/desktop-electron-distribution-status-2026-07-24.md).
 
 The earlier AppKit/WebKit macOS shell remains as historical internal QA
 evidence, not the cross-platform distribution architecture.
@@ -183,6 +188,9 @@ criteria for cases such as straight pipe, Venturi, heated channel, and optional
 lid-driven cavity/nozzle placeholders. They are all `pending-real-run` until
 Track A promotes real solver logs, fields, diagnostics, and mesh-quality
 evidence; they are not passed CFD benchmarks.
+
+Completed verification campaigns and their precise claim boundaries are
+summarized in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 Reference-case scaffolding lives under `reference_cases/registry.json`. The API exposes `GET /api/reference-cases` and `POST /api/reference-cases/{caseId}/import-plan` for SU2 TestCases and OpenFOAM tutorial handoffs. Import plans record upstream source URLs, expected config/mesh files, required user review steps, and limitations; FlowLab does not auto-download or promote third-party tutorial assets into production evidence without a real local run and captured artifacts.
 
