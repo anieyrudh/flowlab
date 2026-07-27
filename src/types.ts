@@ -348,6 +348,18 @@ export type SolverCase = {
   runCommand: string[];
   provenance: string[];
   evidenceCapability: EvidenceCapability;
+  resultComponentMap?: ResultComponentMap | null;
+};
+
+export type ResultComponentMap = {
+  version: 1;
+  projectSha256: string;
+  /** "*" is a case-local all-artifacts binding, valid only for a verified single-edge case. */
+  artifactBindings: Array<{
+    artifactName: string;
+    edgeId: EdgeId;
+    scope: "all-cells";
+  }>;
 };
 
 export type EvidenceCapability = {

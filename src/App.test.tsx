@@ -148,7 +148,7 @@ describe("FlowLab result visualization", () => {
     delete window.webkit;
     delete window.flowlabDesktop;
     window.localStorage.clear();
-    useFlowStore.getState().setProject(venturiPreset);
+    useFlowStore.getState().setProject({ ...venturiPreset, visualization: { ...venturiPreset.visualization, mode: "sweep" } });
     mockCanvas();
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
@@ -170,16 +170,13 @@ describe("FlowLab result visualization", () => {
               },
               {
                 solver: "openfoam",
-                runnable: false,
-                preferredExecution: "none",
+                runnable: true,
+                preferredExecution: "native",
                 dockerImage: "flowlab/openfoam11-gmsh:2026-07-13",
                 dockerAvailable: false,
                 nativeCommand: "foamRun",
-                nativeAvailable: false,
-                blockers: [
-                  "Docker image `flowlab/openfoam11-gmsh:2026-07-13` cannot run because Docker daemon is unavailable.",
-                  "Native command `foamRun` was not found on PATH."
-                ],
+                nativeAvailable: true,
+                blockers: [],
                 notes: []
               }
             ])
@@ -573,11 +570,12 @@ describe("FlowLab result visualization", () => {
   it("switches an already-loaded recent run back to its newest artifact and reconciles velocity to U", async () => {
     render(<App />);
     fireEvent.change(await screen.findByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
-    fireEvent.click(screen.getByRole("button", { name: /Generate \/ queue case/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Generate and queue experimental CFD case/i }));
 
-    expect(await screen.findByText("Job complete")).toBeTruthy();
+    expect(await screen.findByText("Server job job-openfoam-test: complete")).toBeTruthy();
     expect(screen.getByText(/Using U from VTK\/case_2\.vtk/)).toBeTruthy();
 
+    fireEvent.click(within(screen.getByRole("navigation", { name: "FlowLab workflow stages" })).getByRole("button", { name: /Inspect$/ }));
     fireEvent.click(screen.getByRole("button", { name: /Load fixture result/i }));
     const fixtureFields = await screen.findByLabelText("Loaded result fields");
     fireEvent.click(within(fixtureFields).getByTitle("velocity point vector, 4 tuples"));
@@ -595,25 +593,21 @@ describe("FlowLab result visualization", () => {
     fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
 
     expect(screen.getByLabelText("Solver runtime readiness")).toHaveTextContent("OpenFOAM readiness");
-    expect(screen.getByLabelText("Solver runtime readiness")).toHaveTextContent("blocked");
-    expect(screen.getByText(/OpenFOAM cannot run locally yet/i)).toHaveTextContent("Docker image");
+    expect(screen.getByLabelText("Solver runtime readiness")).toHaveTextContent("native");
 
+    fireEvent.click(within(screen.getByRole("navigation", { name: "FlowLab workflow stages" })).getByRole("button", { name: /Inspect$/ }));
     fireEvent.click(screen.getByRole("button", { name: /Load fixture result/i }));
 
     expect(await screen.findByText(/Using pressure from venturi-result\.vtk/)).toBeTruthy();
-    const viewModeControls = screen.getByLabelText("Result view mode");
-    expect(within(viewModeControls).getByRole("button", { name: "2D" })).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(within(viewModeControls).getByRole("button", { name: "3D" }));
-    expect(within(viewModeControls).getByRole("button", { name: "3D" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText("3D result camera controls")).toHaveTextContent("Yaw");
     expect(screen.getByLabelText("Result camera yaw")).toHaveValue("-32");
     fireEvent.change(screen.getByLabelText("Result camera yaw"), { target: { value: "45" } });
     fireEvent.change(screen.getByLabelText("Result camera pitch"), { target: { value: "35" } });
     fireEvent.change(screen.getByLabelText("Result camera zoom"), { target: { value: "1.5" } });
-    expect(screen.getByTestId("simulation-canvas").dataset.resultViewMode).toBe("3d");
-    expect(screen.getByTestId("simulation-canvas").dataset.resultCameraYaw).toBe("45");
-    expect(screen.getByTestId("simulation-canvas").dataset.resultCameraPitch).toBe("35");
-    expect(screen.getByTestId("simulation-canvas").dataset.resultCameraZoom).toBe("1.5");
+    expect(screen.getByTestId("cinema-canvas").dataset.resultViewMode).toBe("3d");
+    expect(screen.getByTestId("cinema-canvas").dataset.resultCameraYaw).toBe("45");
+    expect(screen.getByTestId("cinema-canvas").dataset.resultCameraPitch).toBe("35");
+    expect(screen.getByTestId("cinema-canvas").dataset.resultCameraZoom).toBe("1.5");
     fireEvent.click(screen.getByRole("button", { name: "Reset result camera" }));
     expect(screen.getByLabelText("Result camera yaw")).toHaveValue("-32");
     const fieldList = screen.getByLabelText("Loaded result fields");
@@ -660,7 +654,7 @@ describe("FlowLab result visualization", () => {
     expect(screen.getByLabelText("Result field warning")).toHaveTextContent("Select an available field");
     fireEvent.change(screen.getByLabelText(/Variable/i), { target: { value: "velocity" } });
 
-    fireEvent.pointerDown(screen.getByTestId("simulation-canvas"), { clientX: 1, clientY: 1, pointerId: 1 });
+    fireEvent.pointerDown(screen.getByTestId("cinema-canvas"), { clientX: 1, clientY: 1, pointerId: 1 });
 
     expect(await screen.findByLabelText("Probe sample")).toHaveTextContent("velocity @ p2");
     expect(screen.getByLabelText("Probe sample")).toHaveTextContent("3 m/s");
@@ -679,7 +673,7 @@ describe("FlowLab result visualization", () => {
     expect(screen.getByLabelText("Field min max")).toHaveTextContent("4");
     expect(screen.getByLabelText("Result field histogram")).toHaveTextContent("y component · cell · m/s");
 
-    fireEvent.pointerDown(screen.getByTestId("simulation-canvas"), { clientX: 1, clientY: 1, pointerId: 2 });
+    fireEvent.pointerDown(screen.getByTestId("cinema-canvas"), { clientX: 1, clientY: 1, pointerId: 2 });
 
     expect(await screen.findByLabelText("Probe sample")).toHaveTextContent("U @ c0");
     expect(screen.getByLabelText("Probe sample")).toHaveTextContent("4 m/s");
@@ -776,7 +770,7 @@ describe("FlowLab result visualization", () => {
 
     await screen.findByLabelText("Solver runtime readiness");
     fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
-    fireEvent.click(screen.getByRole("button", { name: /Generate \/ queue case/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Generate and queue experimental CFD case/i }));
 
     expect(await screen.findByText("Job complete")).toBeTruthy();
     expect(screen.getByText(/Final artifacts: 2 field, 1 diagnostic · skipped 2 field, 1 diagnostic/)).toBeTruthy();
@@ -854,7 +848,7 @@ describe("FlowLab result visualization", () => {
   });
 
   it("blocks advanced case queueing when the live network has topology errors", async () => {
-    useFlowStore.getState().setProject(venturiPreset);
+    useFlowStore.getState().setProject({ ...venturiPreset, visualization: { ...venturiPreset.visualization, mode: "sweep" } });
     useFlowStore.getState().updateEdge("inlet", { to: "source" });
 
     render(<App />);
@@ -862,11 +856,28 @@ describe("FlowLab result visualization", () => {
     await screen.findByLabelText("Solver runtime readiness");
     fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
 
-    const queueButton = screen.getByRole("button", { name: /Generate \/ queue case/i });
+    const queueButton = screen.getByRole("button", { name: /Generate and queue experimental CFD case/i });
     expect(queueButton).toBeDisabled();
     expect(screen.getByText(/Fix 1 blocking network issue before queueing a solver case/i)).toBeTruthy();
 
     fireEvent.click(queueButton);
+
+    const fetchMock = vi.mocked(fetch);
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/cases/generate")).toBe(false);
+  });
+
+  it("keeps browser-side Instant 1D out of the CFD queue and keeps VTK import in Inspect", async () => {
+    render(<App />);
+
+    await screen.findByLabelText("Solver runtime readiness");
+    const queueButton = screen.getByRole("button", { name: /Generate and queue experimental CFD case/i });
+    expect(queueButton).toBeDisabled();
+    expect(screen.getByText(/Instant 1D runs in the Estimate stage/i)).toBeTruthy();
+    expect(screen.queryByTestId("result-import-file")).toBeNull();
+
+    fireEvent.click(within(screen.getByRole("navigation", { name: "FlowLab workflow stages" })).getByRole("button", { name: /Inspect$/ }));
+    expect(screen.getByRole("button", { name: "Import VTK/VTU" })).toBeTruthy();
+    expect(screen.getByTestId("result-import-file")).toBeTruthy();
 
     const fetchMock = vi.mocked(fetch);
     expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/cases/generate")).toBe(false);
@@ -953,7 +964,9 @@ describe("FlowLab result visualization", () => {
 
     await screen.findByLabelText("Solver runtime readiness");
     fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
-    fireEvent.click(screen.getByRole("button", { name: /Generate \/ queue case/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Generate and queue experimental CFD case/i }));
+
+    expect(await screen.findByText("Server job job-progressive-test: running")).toBeTruthy();
 
     expect(await screen.findByText(/Progressive artifacts: 1 field, 0 diagnostic/)).toBeTruthy();
     expect(screen.getByText(/Snapshot 1\/1/)).toBeTruthy();

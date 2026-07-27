@@ -1,7 +1,9 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
-
-static const NSInteger FlowLabPort = 8787;
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 @interface FlowLabAppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate>
 @property(nonatomic, strong) NSWindow *window;
@@ -11,6 +13,7 @@ static const NSInteger FlowLabPort = 8787;
 @property(nonatomic, strong) NSFileHandle *backendLog;
 @property(nonatomic, strong) NSMutableSet<WKDownload *> *downloads;
 @property(nonatomic) NSInteger attempts;
+@property(nonatomic) NSInteger backendPort;
 @end
 
 @implementation FlowLabAppDelegate
@@ -46,6 +49,28 @@ static const NSInteger FlowLabPort = 8787;
 
 - (NSURL *)backendExecutableURL {
     return [self resourceURL:@"backend/FlowLabBackend"];
+}
+
+- (NSInteger)reserveLoopbackPort {
+    int socketFileDescriptor = socket(AF_INET, SOCK_STREAM, 0);
+    if (socketFileDescriptor < 0) return 0;
+
+    struct sockaddr_in address = {0};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = 0;
+    if (bind(socketFileDescriptor, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        close(socketFileDescriptor);
+        return 0;
+    }
+
+    socklen_t addressLength = sizeof(address);
+    if (getsockname(socketFileDescriptor, (struct sockaddr *)&address, &addressLength) != 0) {
+        close(socketFileDescriptor);
+        return 0;
+    }
+    close(socketFileDescriptor);
+    return (NSInteger)ntohs(address.sin_port);
 }
 
 - (void)createWindow {
@@ -213,6 +238,11 @@ static const NSInteger FlowLabPort = 8787;
 }
 
 - (void)startBackend {
+    self.backendPort = [self reserveLoopbackPort];
+    if (self.backendPort <= 0) {
+        [self showError:@"Could not reserve a local loopback port for the bundled solver service."];
+        return;
+    }
     NSURL *support = [self supportURL];
     NSURL *logURL = [support URLByAppendingPathComponent:@"flowlab-backend.log"];
     [[NSFileManager defaultManager] createFileAtPath:logURL.path contents:nil attributes:nil];
@@ -226,7 +256,7 @@ static const NSInteger FlowLabPort = 8787;
     NSString *existingPath = environment[@"PATH"] ?: @"/usr/bin:/bin:/usr/sbin:/sbin";
     environment[@"PATH"] = [NSString stringWithFormat:@"%@:/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin", existingPath];
     environment[@"PYTHONDONTWRITEBYTECODE"] = @"1";
-    environment[@"FLOWLAB_BACKEND_PORT"] = [NSString stringWithFormat:@"%ld", (long)FlowLabPort];
+    environment[@"FLOWLAB_BACKEND_PORT"] = [NSString stringWithFormat:@"%ld", (long)self.backendPort];
     environment[@"FLOWLAB_DESKTOP_DIST"] = [self resourceURL:@"dist"].path;
     environment[@"FLOWLAB_RUNTIME_DIR"] = [support URLByAppendingPathComponent:@"runtime" isDirectory:YES].path;
     task.environment = environment;
@@ -250,13 +280,13 @@ static const NSInteger FlowLabPort = 8787;
 
 - (void)pollBackend:(NSTimer *)timer {
     self.attempts += 1;
-    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%ld/api/health", (long)FlowLabPort]];
+    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%ld/api/health", (long)self.backendPort]];
     NSURLSessionDataTask *request = [[NSURLSession sharedSession] dataTaskWithURL:url completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
         NSInteger status = [(NSHTTPURLResponse *)response statusCode];
         if (status == 200) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [timer invalidate];
-                NSURL *appURL = [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%ld/", (long)FlowLabPort]];
+                NSURL *appURL = [NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%ld/", (long)self.backendPort]];
                 [self.webView loadRequest:[NSURLRequest requestWithURL:appURL]];
             });
         } else if (self.attempts >= 75) {

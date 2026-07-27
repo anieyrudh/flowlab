@@ -31,7 +31,7 @@ function renderEditor() {
 }
 
 function canvas() {
-  return screen.getByTestId("simulation-canvas");
+  return screen.getByTestId("schematic-canvas");
 }
 
 function pointer(type: "pointerDown" | "pointerMove" | "pointerUp", x: number, y: number) {
@@ -63,7 +63,7 @@ beforeEach(() => {
     height: 700,
     toJSON: () => ({})
   }));
-  useFlowStore.getState().setProject(venturiPreset);
+  useFlowStore.getState().setProject({ ...venturiPreset, visualization: { ...venturiPreset.visualization, mode: "design" } });
 });
 
 afterEach(() => {
@@ -130,7 +130,7 @@ describe("FlowLab editor browser workflows", () => {
 
     await waitFor(() => expect(localStorage.getItem("flowlab.project.v1")).toContain("sink-4"));
     first.unmount();
-    useFlowStore.getState().setProject(venturiPreset);
+    useFlowStore.getState().setProject({ ...venturiPreset, visualization: { ...venturiPreset.visualization, mode: "design" } });
 
     renderEditor();
     await waitFor(() => expect(useFlowStore.getState().project.nodes["sink-4"]).toBeDefined());
@@ -157,7 +157,7 @@ describe("FlowLab editor browser workflows", () => {
     expect(container.querySelector(".workspace-shell")).toBeInTheDocument();
     expect(canvas()).toBeInTheDocument();
     expect(screen.getByText("Components")).toBeInTheDocument();
-    expect(screen.getByText("Inspector")).toBeInTheDocument();
+    expect(screen.getAllByText("Inspector").length).toBeGreaterThan(0);
   });
 
   it("surfaces live topology validation warnings in the analysis dock", async () => {

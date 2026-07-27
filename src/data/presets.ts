@@ -18,7 +18,7 @@ const baseSolver = {
 };
 
 const baseVisualization = {
-  mode: "simulate" as const,
+  mode: "design" as const,
   overlay: "velocity" as const,
   particles: true,
   streamlines: true,

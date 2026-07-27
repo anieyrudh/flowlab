@@ -29,6 +29,7 @@ import {
   Waves
 } from "lucide-react";
 import { SimulationCanvas } from "./components/SimulationCanvas";
+import { DualViewWorkspace } from "./components/DualViewWorkspace";
 import { presets } from "./data/presets";
 import {
   datasetFromPreview,
@@ -72,7 +73,6 @@ import { useFlowStore } from "./state/useFlowStore";
 import { defaultCinemaCamera as initialCinemaCamera, type CinemaCameraState } from "./components/viewportModel";
 import type {
   AdvancedPhysicsMode,
-  CanvasRenderMode,
   FluidEdge,
   FluidNode,
   JobArtifactFile,
@@ -96,9 +96,8 @@ import type {
   ReviewedGeometrySurface,
   ReviewedSurfaceBoundaryCondition,
   ReviewedSurfaceBoundaryConditionType,
-  ResultCamera,
   ResultColorMap,
-  ResultViewMode,
+  ResultComponentMap,
   SolverCapability,
   SolverCase,
   SolverLogSummary,
@@ -110,20 +109,29 @@ import type {
 } from "./types";
 import "./styles/app.css";
 
-type ResultSnapshot = {
+export type ResultSnapshot = {
   id: string;
   label: string;
   time: number;
   dataset: VtkResultDataset;
   preview?: boolean;
+  provenance?: LoadedResultProvenance;
 };
+
+type LoadedResultProvenance =
+  | { kind: "imported" }
+  | { kind: "case-artifact"; caseId: string; jobId: string; artifactName: string };
+
+type ResultComponentLink =
+  | { state: "linked"; edgeId: string; message: string }
+  | { state: "unlinked"; message: string };
 
 type DockPanelId = "field" | "sweep" | "metrics" | "mesh" | "diagnostics" | "warnings";
 
 const defaultDockPanelByMode: Record<WorkspaceMode, DockPanelId> = {
   design: "metrics",
-  simulate: "diagnostics",
-  sweep: "sweep",
+  simulate: "sweep",
+  sweep: "diagnostics",
   analyze: "field"
 };
 
@@ -135,6 +143,13 @@ const dockPanelOptions: { id: DockPanelId; label: string }[] = [
   { id: "diagnostics", label: "Diagnostics" },
   { id: "warnings", label: "Warnings" }
 ];
+
+const dockPanelsByMode: Record<WorkspaceMode, DockPanelId[]> = {
+  design: ["metrics", "mesh", "warnings"],
+  simulate: ["sweep", "metrics", "warnings"],
+  sweep: ["diagnostics", "mesh", "warnings"],
+  analyze: ["field", "diagnostics", "mesh", "warnings"]
+};
 
 type DesktopExportFile = {
   filename: string;
@@ -203,15 +218,11 @@ const resultColorMapOptions: { id: ResultColorMap; label: string; gradient: stri
   { id: "grayscale", label: "Grayscale", gradient: "linear-gradient(90deg, #17212b, #4b5d70, #8da1b5, #d6e2ec, #ffffff)" }
 ];
 
-const canvasRenderModeOptions: { id: CanvasRenderMode; label: string }[] = [
-  { id: "cinema", label: "Cinema" },
-  { id: "schematic", label: "Schematic" }
-];
-
-const defaultResultCamera: ResultCamera = { yaw: -32, pitch: 24, zoom: 1 };
 const defaultCinemaCamera: CinemaCameraState = {
   ...initialCinemaCamera,
-  ...defaultResultCamera
+  yaw: -32,
+  pitch: 24,
+  zoom: 1
 };
 
 export function validatedRunStatusLabel(
@@ -231,11 +242,11 @@ export function validatedRunStatusLabel(
   return "Validated preset definition — runtime label pending every required gate";
 }
 
-const modeOptions: { id: WorkspaceMode; label: string }[] = [
-  { id: "design", label: "Design" },
-  { id: "simulate", label: "Simulate" },
-  { id: "sweep", label: "Sweep" },
-  { id: "analyze", label: "Analyze" }
+const workflowStages: { id: WorkspaceMode; label: string; description: string }[] = [
+  { id: "design", label: "Define", description: "Build the system" },
+  { id: "simulate", label: "Estimate", description: "Run the instant 1D estimate" },
+  { id: "sweep", label: "CFD", description: "Configure and queue an experimental case" },
+  { id: "analyze", label: "Inspect", description: "Examine result fields and evidence" }
 ];
 
 const advancedModes: { id: AdvancedPhysicsMode; label: string }[] = [
@@ -714,6 +725,57 @@ function timelineLevel(value: number | null, min: number, max: number) {
   return Math.max(6, Math.min(100, ((value - min) / (max - min)) * 100));
 }
 
+export function canonicalProjectJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalProjectJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalProjectJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+export function verifiedResultComponentLink(
+  snapshot: ResultSnapshot | null,
+  currentProject: ReturnType<typeof useFlowStore.getState>["project"],
+  solverCase: SolverCase | null,
+  job: JobRecord | null
+): ResultComponentLink {
+  const provenance = snapshot?.provenance;
+  if (!provenance || provenance.kind !== "case-artifact") {
+    return { state: "unlinked", message: "Imported result — no verified schematic link." };
+  }
+  if (!solverCase || !job || provenance.caseId !== solverCase.id || provenance.jobId !== job.id || job.caseId !== solverCase.id) {
+    return { state: "unlinked", message: "Result case provenance is unavailable — probe only." };
+  }
+  const componentMap: ResultComponentMap | null | undefined = solverCase.resultComponentMap;
+  if (!componentMap || componentMap.version !== 1 || !/^[a-f0-9]{64}$/i.test(componentMap.projectSha256)) {
+    return { state: "unlinked", message: "This generated case has no verified component map — probe only." };
+  }
+  const projectSnapshot = solverCase.files["flowlab_project.json"];
+  try {
+    if (!projectSnapshot || canonicalProjectJson(JSON.parse(projectSnapshot)) !== canonicalProjectJson(currentProject)) {
+      return { state: "unlinked", message: "Result belongs to a different project snapshot — probe only." };
+    }
+    const manifest = JSON.parse(solverCase.files["flowlab_case_manifest.json"] ?? "{}") as {
+      files?: Record<string, { sha256?: unknown }>;
+    };
+    if (manifest.files?.["flowlab_project.json"]?.sha256 !== componentMap.projectSha256) {
+      return { state: "unlinked", message: "Case project snapshot hash does not match its component map — probe only." };
+    }
+  } catch {
+    return { state: "unlinked", message: "Case project snapshot cannot be verified — probe only." };
+  }
+  const binding = componentMap.artifactBindings.find(
+    (candidate) => candidate.scope === "all-cells" && (candidate.artifactName === provenance.artifactName || candidate.artifactName === "*")
+  );
+  if (!binding || !currentProject.edges[binding.edgeId]) {
+    return { state: "unlinked", message: "No matching schematic component is verified for this result — probe only." };
+  }
+  return { state: "linked", edgeId: binding.edgeId, message: `Verified case link: ${currentProject.edges[binding.edgeId].label}` };
+}
+
 export default function App() {
   const {
     project,
@@ -770,10 +832,8 @@ export default function App() {
   const [activeResultField, setActiveResultField] = useState<ResultFieldSelection | null>(null);
   const [activeVectorComponent, setActiveVectorComponent] = useState<ResultVectorComponent>("magnitude");
   const [resultColorMap, setResultColorMap] = useState<ResultColorMap>("turbo");
-  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>("2d");
-  const [canvasRenderMode, setCanvasRenderMode] = useState<CanvasRenderMode>("cinema");
   const [cinemaCamera, setCinemaCamera] = useState<CinemaCameraState>(defaultCinemaCamera);
-  const [resultCamera, setResultCamera] = useState<ResultCamera>(defaultResultCamera);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [resultFieldFilter, setResultFieldFilter] = useState("");
   const [probeTarget, setProbeTarget] = useState<ProbeTarget | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
@@ -792,6 +852,10 @@ export default function App() {
   const currentOpenBoundaryCampaign = validatedBenchmarks.find(
     (benchmark) => benchmark.id === "laminar-open-boundary-all-hex-v1"
   ) ?? null;
+  const activeResultLink = useMemo(
+    () => verifiedResultComponentLink(activeSnapshot, project, caseRecord, jobRecord),
+    [activeSnapshot, caseRecord, jobRecord, project]
+  );
 
   useEffect(() => {
     setActiveDockPanel(defaultDockPanelByMode[project.visualization.mode]);
@@ -800,8 +864,7 @@ export default function App() {
   useEffect(() => {
     if (!loadedResult) return;
     setActiveDockPanel("field");
-    setCanvasRenderMode(resultViewMode === "3d" ? "cinema" : "schematic");
-  }, [loadedResult, resultViewMode]);
+  }, [loadedResult]);
   const loadedFieldInventory = useMemo(() => listResultFields(loadedResult), [loadedResult]);
   const filteredFieldInventory = useMemo(() => {
     const query = resultFieldFilter.trim().toLowerCase();
@@ -901,6 +964,17 @@ export default function App() {
     () => runtimeStatuses.find((status) => status.solver === project.solver.tier) ?? null,
     [project.solver.tier, runtimeStatuses]
   );
+  const cfdQueueBlocker = useMemo(() => {
+    if (project.solver.tier === "instant-1d") {
+      return "Instant 1D runs in the Estimate stage in this browser. Select a runnable CFD solver before queueing a local job.";
+    }
+    if (!backendOnline) return "The local solver service is offline. Start it before queueing a CFD job.";
+    if (!activeRuntime?.runnable) {
+      return `${solverLabels[project.solver.tier]} is not runnable locally: ${activeRuntime?.blockers[0] ?? "runtime diagnostics are still loading"}`;
+    }
+    return null;
+  }, [activeRuntime, backendOnline, project.solver.tier]);
+  const canQueueCfd = blockingWarnings.length === 0 && cfdQueueBlocker === null;
   const actionPoint = useMemo(() => {
     if (selectedNode) return selectedNode.position;
     if (selectedEdge) {
@@ -1067,12 +1141,19 @@ export default function App() {
     setActiveResultIndex((index) => Math.max(0, Math.min(index + delta, resultSnapshots.length - 1)));
   }
 
-  function addResultSnapshot(dataset: VtkResultDataset, label = dataset.sourceName ?? "loaded result", logSummary?: SolverLogSummary | null, stableId?: string) {
+  function addResultSnapshot(
+    dataset: VtkResultDataset,
+    label = dataset.sourceName ?? "loaded result",
+    logSummary?: SolverLogSummary | null,
+    stableId?: string,
+    provenance: LoadedResultProvenance = { kind: "imported" }
+  ) {
     const snapshot: ResultSnapshot = {
       id: stableId ?? `${Date.now()}-${label}-${dataset.points.length}`,
       label,
       time: snapshotTimeForFile(label, resultSnapshots.length, logSummary),
-      dataset
+      dataset,
+      provenance
     };
     addResultSnapshots([snapshot], snapshot.id);
   }
@@ -1111,7 +1192,8 @@ export default function App() {
           label,
           time: artifactSnapshotTime(preview.path, startIndex + index, preview, resultPayload?.logSummary),
           dataset: datasetFromPreview(preview, label),
-          preview: true
+          preview: true,
+          provenance: jobRecord ? { kind: "case-artifact", caseId: jobRecord.caseId, jobId: jobRecord.id, artifactName: preview.path } : { kind: "imported" }
         });
       } catch {
         // Skip previews that are intentionally bounded away from full geometry.
@@ -1128,7 +1210,7 @@ export default function App() {
   function ingestJobResultFiles(job: JobRecord) {
     const resultPayload = job.result as JobResultPayload | null | undefined;
     const resultFiles = Array.isArray(resultPayload?.resultFiles) ? (resultPayload.resultFiles as JobArtifactFile[]) : [];
-    const parsedSnapshots = resultFiles.flatMap((file, fileIndex) => {
+    const parsedSnapshots: ResultSnapshot[] = resultFiles.flatMap((file, fileIndex) => {
       if (!file.text || !/\.(vtk|vtu)$/i.test(file.path)) return [];
       try {
         return [
@@ -1136,7 +1218,8 @@ export default function App() {
             id: `job:${job.id}:${file.path}`,
             label: file.path,
             time: artifactSnapshotTime(file.path, fileIndex, file, resultPayload?.logSummary),
-            dataset: parseVtkResult(file.text, file.path)
+            dataset: parseVtkResult(file.text, file.path),
+            provenance: { kind: "case-artifact" as const, caseId: job.caseId, jobId: job.id, artifactName: file.path }
           }
         ];
       } catch {
@@ -1181,7 +1264,13 @@ export default function App() {
         if (chunk.complete) break;
       }
       const resultPayload = jobRecord.result as JobResultPayload | null | undefined;
-      addResultSnapshot(parseVtkResult(text, path), path, resultPayload?.logSummary, `job:${jobRecord.id}:${path}`);
+      addResultSnapshot(
+        parseVtkResult(text, path),
+        path,
+        resultPayload?.logSummary,
+        `job:${jobRecord.id}:${path}`,
+        { kind: "case-artifact", caseId: jobRecord.caseId, jobId: jobRecord.id, artifactName: path }
+      );
       setResultError(null);
     } catch (error) {
       setResultError(error instanceof Error ? error.message : `Could not load ${path}.`);
@@ -1197,7 +1286,8 @@ export default function App() {
         label,
         time: artifactSnapshotTime(preview.path, resultSnapshots.length, preview, resultPayload?.logSummary),
         dataset: datasetFromPreview(preview, label),
-        preview: true
+        preview: true,
+        provenance: jobRecord ? { kind: "case-artifact", caseId: jobRecord.caseId, jobId: jobRecord.id, artifactName: preview.path } : { kind: "imported" }
       };
       addResultSnapshots([snapshot], snapshot.id);
       setResultError(null);
@@ -1253,6 +1343,10 @@ export default function App() {
       setJobRecord(null);
       return;
     }
+    if (cfdQueueBlocker) {
+      setProjectMessage(cfdQueueBlocker);
+      return;
+    }
     try {
       const solverCase = await generateSolverCase(project, project.solver.tier, project.solver.advancedMode);
       setCaseRecord(solverCase);
@@ -1260,7 +1354,7 @@ export default function App() {
       setJobRecord(queued);
       rememberRun(solverCase, queued);
       ingestJobResultFiles(queued);
-      setProjectMessage(`${solverLabels[queued.solver]} case queued as ${queued.id}.`);
+      setProjectMessage(`Server job ${queued.id}: ${queued.status}${queued.error ? ` — ${queued.error}` : ""}`);
     } catch (error) {
       setCaseRecord(null);
       setJobRecord(null);
@@ -1426,23 +1520,13 @@ export default function App() {
     setOverlay(overlay);
   }
 
-  function setViewportMode(mode: CanvasRenderMode) {
-    setCanvasRenderMode(mode);
-    if (loadedResult) setResultViewMode(mode === "cinema" ? "3d" : "2d");
-  }
-
-  function setResultMode(mode: ResultViewMode) {
-    setResultViewMode(mode);
-    if (loadedResult) setCanvasRenderMode(mode === "3d" ? "cinema" : "schematic");
-  }
-
   function handleAddEdge(type: FluidEdge["type"]) {
     const outcome = addEdge(type);
     setProjectMessage(outcome.ok ? `Added ${type} ${outcome.id}.` : outcome.message);
   }
 
   return (
-    <main className="app-shell workspace-shell">
+    <main className={`app-shell workspace-shell ${inspectorOpen ? "inspector-overlay-open" : ""}`} data-stage={project.visualization.mode}>
       <header className="top-hud">
         <div className="toolbar-left">
           <div className="brand-lockup">
@@ -1452,58 +1536,32 @@ export default function App() {
               <span>{project.name}</span>
             </div>
           </div>
-          <div className="mode-tabs" aria-label="Workspace mode">
-            {modeOptions.map((mode) => (
-              <button key={mode.id} className={project.visualization.mode === mode.id ? "active" : ""} aria-pressed={project.visualization.mode === mode.id} onClick={() => setMode(mode.id)}>
-                {mode.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         <div className="toolbar-right">
-          <label>
-            <span aria-hidden="true">New case solver</span>
-            <select aria-label="Solver" value={project.solver.tier} onChange={(event) => setSolverTier(event.target.value as SolverTier)}>
-              {Object.entries(solverLabels).map(([id, label]) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Mode
-            <select value={project.solver.advancedMode} onChange={(event) => setAdvancedMode(event.target.value as AdvancedPhysicsMode)}>
-              {advancedModes.map((mode) => (
-                <option key={mode.id} value={mode.id}>
-                  {mode.label}
-                </option>
-              ))}
-            </select>
-          </label>
           <div className={`solver-chip ${result.stable ? "ok" : "bad"}`}>
             <Activity size={16} />
-            Preview {isRunning ? "running" : "paused"}
+            Preview animation {isRunning ? "running" : "paused"}
           </div>
           {jobRecord ? (
             <div className="viewing-run-chip" title={jobRecord.id}>
               Viewing: {solverLabels[jobRecord.solver]} · {jobRecord.status}
             </div>
           ) : null}
+          <button type="button" className="inspector-toggle" aria-expanded={inspectorOpen} aria-controls="inspector-panel" onClick={() => setInspectorOpen((value) => !value)}>
+            <SlidersHorizontal size={16} />
+            Inspector
+          </button>
           <div className="toolbar-actions">
-            <button aria-pressed={isRunning} aria-keyshortcuts="Space" onClick={() => setIsRunning((value) => !value)} title={isRunning ? "Pause preview" : "Run preview"}>
+            <button aria-pressed={isRunning} aria-keyshortcuts="Space" onClick={() => setIsRunning((value) => !value)} title={isRunning ? "Pause animation" : "Play animation"}>
               {isRunning ? <Pause size={18} /> : <Play size={18} />}
-              <span>{isRunning ? "Pause preview" : "Run preview"}</span>
+              <span>{isRunning ? "Pause animation" : "Play animation"}</span>
             </button>
             <button type="button" aria-label="Undo" aria-keyshortcuts="Meta+Z Control+Z" disabled={!canUndo} onClick={undo} title="Undo model edit">
               <Undo2 size={17} />
             </button>
             <button type="button" aria-label="Redo" aria-keyshortcuts="Shift+Meta+Z Shift+Control+Z Meta+Y Control+Y" disabled={!canRedo} onClick={redo} title="Redo model edit">
               <Redo2 size={17} />
-            </button>
-            <button onClick={runInstant} title="Recompute">
-              <RotateCcw size={18} />
             </button>
             <button onClick={exportProject} title="Export project">
               <Download size={18} />
@@ -1526,50 +1584,28 @@ export default function App() {
                 if (file) importProject(file);
               }}
             />
-            <button onClick={() => resultFileRef.current?.click()} title="Import VTK/VTU result">
-              <Upload size={18} />
-            </button>
-            <input
-              ref={resultFileRef}
-              aria-label="Result import file"
-              data-testid="result-import-file"
-              type="file"
-              accept=".vtk,.vtu"
-              hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) importResult(file);
-              }}
-            />
           </div>
         </div>
       </header>
 
       <aside className="left-sidebar cinema-sidebar">
-        <nav className="icon-rail" aria-label="Cinema workspace rail">
-          <button className={project.visualization.mode === "simulate" ? "active" : ""} aria-pressed={project.visualization.mode === "simulate"} title="Simulate" onClick={() => setMode("simulate")}>
-            <Play size={18} />
-          </button>
-          <button title="Components" onClick={() => scrollToPanel("components-panel")}>
-            <Plus size={18} />
-          </button>
-          <button title="Layers" onClick={() => scrollToPanel("project-layers-panel")}>
-            <Layers3 size={18} />
-          </button>
-          <button title="Reference Cases" onClick={() => scrollToPanel("reference-cases-panel")}>
-            <FileDown size={18} />
-          </button>
-          <span />
-          <button title="Solver diagnostics" onClick={() => scrollToPanel("solver-diagnostics-panel")}>
-            <Activity size={18} />
-          </button>
-          <button title="Settings" onClick={() => scrollToPanel("inspector-panel")}>
-            <SlidersHorizontal size={18} />
-          </button>
+        <nav className="workflow-rail" aria-label="FlowLab workflow stages">
+          {workflowStages.map((stage, index) => (
+            <button
+              key={stage.id}
+              className={project.visualization.mode === stage.id ? "active" : ""}
+              aria-pressed={project.visualization.mode === stage.id}
+              onClick={() => setMode(stage.id)}
+              title={stage.description}
+            >
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <strong>{stage.label}</strong>
+            </button>
+          ))}
         </nav>
 
         <div className="sidebar-stack">
-          <section className="side-section component-library" id="components-panel">
+          <section className="side-section component-library" id="components-panel" hidden={project.visualization.mode !== "design"}>
             <div className="side-section-header">
               Components
               <small>⌘ 1</small>
@@ -1610,7 +1646,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="side-section project-tree" id="project-layers-panel">
+          <section className="side-section project-tree" id="project-layers-panel" hidden={project.visualization.mode !== "design"}>
             <div className="split-heading">
               <span>Project</span>
               <span>Layers</span>
@@ -1667,7 +1703,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="side-section reference-cases-panel" id="reference-cases-panel" aria-label="Reference Cases">
+          <section className="side-section reference-cases-panel" id="reference-cases-panel" aria-label="Reference Cases" hidden={project.visualization.mode !== "analyze"}>
             <div className="side-section-header">
               Reference Cases
               <small>⌘ 4</small>
@@ -1733,7 +1769,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="side-section run-status">
+          <section className="side-section run-status" hidden={project.visualization.mode !== "sweep" && project.visualization.mode !== "analyze"}>
             <div className="panel-title">
               <CircleGauge size={16} />
               Run status
@@ -1767,98 +1803,124 @@ export default function App() {
         </div>
       </aside>
 
-      <section className="canvas-region">
-        <SimulationCanvas
-          project={project}
-          result={result}
-          resultDataset={loadedResult}
-          resultFieldSelection={activeResultField}
-          resultVectorComponent={activeVectorComponent}
-          resultColorMap={resultColorMap}
-          canvasRenderMode={canvasRenderMode}
-          cinemaCamera={cinemaCamera}
-          resultViewMode={resultViewMode}
-          resultCamera={resultCamera}
-          previewPlaying={isRunning}
-          onCinemaCameraChange={setCinemaCamera}
-          selectedId={selectedId}
-          selectedKind={selectedKind}
-          onSelect={select}
-          onMoveNode={moveNode}
-          onRotateNode={rotateNode}
-          onConnectEdge={connectEdge}
-          onUpdateEdgeEndpoint={updateEdgeEndpoint}
-          onProbePoint={(point, size, surfaceProbe) =>
-            setProbeTarget(
-              surfaceProbe
-                ? { kind: "surface", ...surfaceProbe }
-                : surfaceProbe === null
-                  ? null
-                  : { kind: "canvas", point, size }
-            )
-          }
-        />
-        <p id="canvas-status" className="sr-only" aria-live="polite">
-          {selected ? `Selected ${selectedKind}: ${(selected as FluidNode | FluidEdge).label}. ${canvasRenderMode === "cinema" ? "Cinema 3D camera" : "Schematic 2D viewport"}. Press F to fit or 0 to reset.` : "No item selected."}
-        </p>
-        <section className="overlay-switcher">
-          {overlayOptions.map((overlay) => (
-            <button
-              key={overlay.id}
-              className={`${project.visualization.overlay === overlay.id ? "active" : ""} ${
-                loadedResult && fieldAvailable(loadedResult, overlay.id) ? "has-field" : ""
-              }`}
-              title={
-                loadedResult && fieldNameForOverlay(overlay.id)
-                  ? fieldAvailable(loadedResult, overlay.id)
-                    ? `Loaded VTK field: ${fieldNameForOverlay(overlay.id)}`
-                    : `No loaded VTK field for ${overlay.label}`
-                  : overlay.label
-              }
-              onClick={() => {
-                chooseOverlay(overlay.id);
-              }}
-              aria-pressed={project.visualization.overlay === overlay.id}
-            >
-              {overlay.label}
-            </button>
-          ))}
-        </section>
-
-        {actionPoint && selectedId ? (
-          <section
-            className="action-pad"
-            style={{
-              left: `clamp(10px, ${actionPoint.x + 110}px, calc(100% - 132px))`,
-              top: `clamp(10px, ${actionPoint.y - 140}px, calc(100% - 124px))`
-            }}
-            aria-label="Selected component actions"
-          >
-            <button onClick={() => setMode("design")} aria-pressed={project.visualization.mode === "design"}>
-              <Move size={18} />
-              <span>Edit</span>
-            </button>
-            <button onClick={deleteSelected}>
-              <Trash2 size={18} />
-              <span>Delete</span>
-            </button>
-            <button
-              onClick={() => {
-                setMode("analyze");
-                chooseOverlay("velocity");
-              }}
-              aria-pressed={project.visualization.mode === "analyze"}
-            >
-              <Crosshair size={18} />
-              <span>Analyze</span>
-            </button>
-            <button onClick={() => chooseOverlay(project.visualization.overlay === "geometry" ? "velocity" : "geometry")}>
-              <EyeOff size={18} />
-              <span>{project.visualization.overlay === "geometry" ? "Flow" : "Geometry"}</span>
-            </button>
-          </section>
-        ) : null}
-      </section>
+      <DualViewWorkspace
+        header={
+          <>
+            <div className="dual-workspace-title">
+              <span>Linked workspace</span>
+              <strong>{workflowStages.find((stage) => stage.id === project.visualization.mode)?.label ?? "Define"}</strong>
+            </div>
+            <label className="shared-field-control">
+              Field
+              <select
+                aria-label="Workspace field"
+                value={project.visualization.overlay}
+                onChange={(event) => {
+                  setActiveResultField(null);
+                  setActiveVectorComponent("magnitude");
+                  setOverlay(event.target.value as OverlayMode);
+                }}
+              >
+                {overlayOptions.map((overlay) => <option key={overlay.id} value={overlay.id}>{overlay.label}</option>)}
+              </select>
+            </label>
+            <span className={`workspace-link-state ${activeResultLink.state}`} aria-live="polite">
+              {loadedResult ? activeResultLink.message : "Select an object in either view to link it."}
+            </span>
+          </>
+        }
+        schematic={
+          <>
+            <header className="workspace-view-header">
+              <div><span>01</span><strong>Schematic</strong></div>
+              <small>Edit geometry and boundary conditions</small>
+            </header>
+            <div className="workspace-view-canvas">
+              <SimulationCanvas
+                project={project}
+                result={result}
+                resultDataset={null}
+                canvasRenderMode="schematic"
+                selectedId={selectedId}
+                selectedKind={selectedKind}
+                onSelect={select}
+                onMoveNode={moveNode}
+                onRotateNode={rotateNode}
+                onConnectEdge={connectEdge}
+                onUpdateEdgeEndpoint={updateEdgeEndpoint}
+                previewPlaying={isRunning}
+                testId="schematic-canvas"
+                ariaLabel="FlowLab schematic editor"
+                statusId="schematic-canvas-status"
+              />
+              <p id="schematic-canvas-status" className="sr-only" aria-live="polite">
+                {selected ? `Selected ${selectedKind}: ${(selected as FluidNode | FluidEdge).label}. Schematic editor. Press F to fit or 0 to reset.` : "No item selected."}
+              </p>
+              {project.visualization.mode === "design" && actionPoint && selectedId ? (
+                <section
+                  className="action-pad"
+                  style={{
+                    left: `clamp(10px, ${actionPoint.x + 110}px, calc(100% - 132px))`,
+                    top: `clamp(10px, ${actionPoint.y - 140}px, calc(100% - 124px))`
+                  }}
+                  aria-label="Selected component actions"
+                >
+                  <button onClick={() => setMode("design")} aria-pressed={project.visualization.mode === "design"}><Move size={18} /><span>Edit</span></button>
+                  <button onClick={deleteSelected}><Trash2 size={18} /><span>Delete</span></button>
+                  <button onClick={() => { setMode("analyze"); chooseOverlay("velocity"); }}><Crosshair size={18} /><span>Inspect</span></button>
+                  <button onClick={() => chooseOverlay(project.visualization.overlay === "geometry" ? "velocity" : "geometry")}><EyeOff size={18} /><span>{project.visualization.overlay === "geometry" ? "Flow" : "Geometry"}</span></button>
+                </section>
+              ) : null}
+            </div>
+          </>
+        }
+        cinema={
+          <>
+            <header className="workspace-view-header">
+              <div><span>02</span><strong>3D view</strong></div>
+              <small>{loadedResult ? `${activeSnapshot?.label ?? "Result field"} · click to probe` : "Linked geometry preview"}</small>
+              <div className="workspace-view-tools" aria-label="3D view controls">
+                <button type="button" aria-label="Reset 3D camera" title="Reset 3D camera" onClick={() => setCinemaCamera(defaultCinemaCamera)}><RotateCcw size={13} /></button>
+                <button type="button" onClick={() => setCinemaCamera({ yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } })}>Iso</button>
+                <button type="button" onClick={() => setCinemaCamera({ yaw: 0, pitch: 76, zoom: 1.05, pan: { x: 0, y: 0 } })}>Top</button>
+              </div>
+            </header>
+            <div className="workspace-view-canvas">
+              <SimulationCanvas
+                project={project}
+                result={result}
+                resultDataset={loadedResult}
+                resultFieldSelection={activeResultField}
+                resultVectorComponent={activeVectorComponent}
+                resultColorMap={resultColorMap}
+                canvasRenderMode="cinema"
+                cinemaCamera={cinemaCamera}
+                resultViewMode="3d"
+                resultCamera={cinemaCamera}
+                previewPlaying={isRunning}
+                onCinemaCameraChange={setCinemaCamera}
+                selectedId={selectedId}
+                selectedKind={selectedKind}
+                onSelect={select}
+                onMoveNode={moveNode}
+                onRotateNode={rotateNode}
+                onConnectEdge={connectEdge}
+                onUpdateEdgeEndpoint={updateEdgeEndpoint}
+                onProbePoint={(point, size, surfaceProbe) => {
+                  setProbeTarget(surfaceProbe ? { kind: "surface", ...surfaceProbe } : surfaceProbe === null ? null : { kind: "canvas", point, size });
+                  if (surfaceProbe && activeResultLink.state === "linked") select("edge", activeResultLink.edgeId);
+                }}
+                testId="cinema-canvas"
+                ariaLabel="FlowLab linked 3D result view"
+                statusId="cinema-canvas-status"
+              />
+              <p id="cinema-canvas-status" className="sr-only" aria-live="polite">
+                {selected ? `Selected ${selectedKind}: ${(selected as FluidNode | FluidEdge).label}. Linked 3D view. Press F to fit or 0 to reset.` : "No item selected."}
+              </p>
+            </div>
+          </>
+        }
+      />
 
       <aside className="inspector" id="inspector-panel">
         <div className="panel-title">
@@ -1880,7 +1942,7 @@ export default function App() {
           </select>
         </label>
         {projectMessage ? <p className={projectMessage.startsWith("Invalid") ? "import-message error" : "import-message"}>{projectMessage}</p> : null}
-        {selectedEdge ? (
+        {project.visualization.mode === "design" && selectedEdge ? (
           <EdgeInspector
             edge={selectedEdge}
             nodes={project.nodes}
@@ -1889,7 +1951,7 @@ export default function App() {
             onEndpointChange={(endpoint, nodeId, port) => updateEdgeEndpoint(selectedEdge.id, endpoint, nodeId, port)}
           />
         ) : null}
-        {selectedNode ? (
+        {project.visualization.mode === "design" && selectedNode ? (
           <NodeInspector
             node={selectedNode}
             result={selectedNodeResult}
@@ -1898,15 +1960,64 @@ export default function App() {
           />
         ) : null}
 
-        <button className="accordion" onClick={() => setAdvancedOpen((value) => !value)}>
+        {project.visualization.mode === "simulate" ? (
+          <section className="inspector-section stage-inspector">
+            <h2>Instant estimate</h2>
+            <p>Run the browser-side 1D model before deciding whether an experimental CFD case is needed.</p>
+            <button className="primary-action" onClick={runInstant}><CircleGauge size={16} />Recompute estimate</button>
+            <dl className="readouts compact-readouts">
+              <div><dt>Total flow</dt><dd>{formatNumber(totals.flow, 4)} m3/s</dd></div>
+              <div><dt>Pressure loss</dt><dd>{formatNumber(totals.pressureDrop / 1000)} kPa</dd></div>
+              <div><dt>Max Reynolds</dt><dd>{formatNumber(totals.maxRe)}</dd></div>
+            </dl>
+          </section>
+        ) : null}
+        {project.visualization.mode === "analyze" ? (
+          <section className="inspector-section stage-inspector">
+            <h2>Inspect results</h2>
+            <p>{loadedResult ? `Result loaded: ${activeSnapshot?.label ?? loadedResult.sourceName ?? "unnamed result"}.` : "Load a local VTK/VTU result or select a completed local run."}</p>
+            <button className="primary-action" onClick={() => resultFileRef.current?.click()}><Upload size={16} />Import VTK/VTU</button>
+            <input
+              ref={resultFileRef}
+              aria-label="Result import file"
+              data-testid="result-import-file"
+              type="file"
+              accept=".vtk,.vtu"
+              hidden
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) importResult(file);
+              }}
+            />
+            <button className="secondary-action" onClick={loadFixtureResult}><Layers3 size={16} />Load fixture result</button>
+            <div className="result-state" aria-live="polite">
+              <strong>Result provenance</strong>
+              <span>{loadedResult ? activeResultLink.message : "No VTK/VTU result loaded"}</span>
+              {resultError ? <small>{resultError}</small> : null}
+            </div>
+          </section>
+        ) : null}
+        {project.visualization.mode === "sweep" ? <button className="accordion" onClick={() => setAdvancedOpen((value) => !value)}>
           <span>
             <Layers3 size={16} />
             Advanced solvers
           </span>
           <ChevronDown size={16} className={advancedOpen ? "open" : ""} />
-        </button>
-        {advancedOpen ? (
+        </button> : null}
+        {project.visualization.mode === "sweep" && advancedOpen ? (
           <div className="advanced-block">
+            <label>
+              Solver
+              <select aria-label="Solver" value={project.solver.tier} onChange={(event) => setSolverTier(event.target.value as SolverTier)}>
+                {Object.entries(solverLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+              </select>
+            </label>
+            <label>
+              Physics mode
+              <select aria-label="Physics mode" value={project.solver.advancedMode} onChange={(event) => setAdvancedMode(event.target.value as AdvancedPhysicsMode)}>
+                {advancedModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+              </select>
+            </label>
             <MeshControlsPanel
               solver={project.solver}
               selectedEdge={selectedEdge}
@@ -1921,19 +2032,16 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <button className="primary-action" onClick={launchAdvancedCase} disabled={blockingWarnings.length > 0}>
+            <button className="primary-action" onClick={launchAdvancedCase} disabled={!canQueueCfd}>
               <Box size={16} />
-              Generate / queue case
+              Generate and queue experimental CFD case
             </button>
             {blockingWarnings.length > 0 ? (
               <small className="job-error">
                 Fix {blockingWarnings.length} blocking network issue{blockingWarnings.length === 1 ? "" : "s"} before queueing a solver case.
               </small>
             ) : null}
-            <button className="secondary-action" onClick={loadFixtureResult}>
-              <Layers3 size={16} />
-              Load fixture result
-            </button>
+            {cfdQueueBlocker ? <small className="job-error">{cfdQueueBlocker}</small> : null}
             <small className="backend-state">
               Solver service: {backendOnline ? "online" : "offline"} · advanced jobs need Docker or native solvers
             </small>
@@ -1943,15 +2051,7 @@ export default function App() {
                 {solverLabels[project.solver.tier]} cannot run locally yet: {activeRuntime.blockers[0] ?? "runtime dependency missing"}
               </small>
             ) : null}
-            <div className="result-state" aria-live="polite">
-              <strong>Result overlay</strong>
-              <span>
-                {loadedResult
-                  ? `Snapshot ${activeResultIndex + 1}/${resultSnapshots.length} · ${loadedResult.fields.join(", ")}`
-                  : "No VTK/VTU result loaded"}
-              </span>
-              {resultError ? <small>{resultError}</small> : null}
-            </div>
+            <div className="result-state" aria-live="polite"><strong>Experimental case output</strong><span>{jobRecord ? `${jobRecord.status} · inspect loaded fields in Inspect` : "No local case is selected"}</span></div>
             {caseRecord ? (
               <CaseSummary
                 solverCase={caseRecord}
@@ -1968,7 +2068,7 @@ export default function App() {
 
       <footer className="bottom-dock">
         <nav className="dock-tabs" aria-label="Workspace panels">
-          {dockPanelOptions.map((panel) => (
+          {dockPanelOptions.filter((panel) => dockPanelsByMode[project.visualization.mode].includes(panel.id)).map((panel) => (
             <button
               key={panel.id}
               type="button"
@@ -1986,40 +2086,25 @@ export default function App() {
             <Layers3 size={16} />
             Field viewer
           </div>
-          <div className="canvas-render-mode" aria-label="Canvas render mode">
-            {canvasRenderModeOptions.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={canvasRenderMode === option.id ? "active" : ""}
-                aria-pressed={canvasRenderMode === option.id}
-                onClick={() => setViewportMode(option.id)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          {canvasRenderMode === "cinema" ? (
-            <div className="cinema-camera-controls" aria-label="Cinema camera controls">
-              <div className="cinema-camera-presets">
-                <button type="button" aria-label="Reset Cinema camera" title="Reset Cinema camera" onClick={() => setCinemaCamera(defaultCinemaCamera)}>
+          {loadedResult ? (
+            <div className="result-view-controls" aria-label="3D result camera controls">
+              <div className="result-view-mode">
+                <button
+                  type="button"
+                  aria-label="Reset result camera"
+                  title="Reset result camera"
+                  onClick={() => {
+                    setCinemaCamera(defaultCinemaCamera);
+                  }}
+                >
                   <RotateCcw size={13} />
                 </button>
-                <button type="button" onClick={() => setCinemaCamera({ yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } })}>
-                  Iso
-                </button>
-                <button type="button" onClick={() => setCinemaCamera({ yaw: 0, pitch: 76, zoom: 1.05, pan: { x: 0, y: 0 } })}>
-                  Top
-                </button>
-                <button type="button" onClick={() => setCinemaCamera({ yaw: 0, pitch: 8, zoom: 1, pan: { x: 0, y: 0 } })}>
-                  Front
-                </button>
               </div>
-              <div className="camera-sliders compact">
+              <div className="camera-sliders">
                 <label>
-                  Orbit
+                  Yaw
                   <input
-                    aria-label="Cinema camera orbit"
+                    aria-label="Result camera yaw"
                     type="range"
                     min="-180"
                     max="180"
@@ -2032,10 +2117,10 @@ export default function App() {
                 <label>
                   Pitch
                   <input
-                    aria-label="Cinema camera pitch"
+                    aria-label="Result camera pitch"
                     type="range"
-                    min="-12"
-                    max="78"
+                    min="-80"
+                    max="80"
                     step="1"
                     value={cinemaCamera.pitch}
                     onChange={(event) => setCinemaCamera((camera) => ({ ...camera, pitch: Number(event.target.value) }))}
@@ -2045,10 +2130,10 @@ export default function App() {
                 <label>
                   Zoom
                   <input
-                    aria-label="Cinema camera zoom"
+                    aria-label="Result camera zoom"
                     type="range"
-                    min="0.55"
-                    max="1.8"
+                    min="0.5"
+                    max="2.2"
                     step="0.05"
                     value={cinemaCamera.zoom}
                     onChange={(event) => setCinemaCamera((camera) => ({ ...camera, zoom: Number(event.target.value) }))}
@@ -2056,85 +2141,6 @@ export default function App() {
                   <strong>{formatNumber(cinemaCamera.zoom, 2)}x</strong>
                 </label>
               </div>
-            </div>
-          ) : null}
-          {loadedResult ? (
-            <div className="result-view-controls" aria-label={resultViewMode === "3d" ? "3D result camera controls" : "2D result controls"}>
-              <div className="result-view-mode" aria-label="Result view mode">
-                <button type="button" title="2D result / Schematic" className={resultViewMode === "2d" ? "active" : ""} aria-pressed={resultViewMode === "2d"} onClick={() => setResultMode("2d")}>
-                  2D
-                </button>
-                <button type="button" title="3D result / Cinema" className={resultViewMode === "3d" ? "active" : ""} aria-pressed={resultViewMode === "3d"} onClick={() => setResultMode("3d")}>
-                  3D
-                </button>
-                <button
-                  type="button"
-                  aria-label="Reset result camera"
-                  title="Reset result camera"
-                  onClick={() => {
-                    setResultMode("3d");
-                    setResultCamera(defaultResultCamera);
-                    setCinemaCamera(defaultCinemaCamera);
-                  }}
-                >
-                  <RotateCcw size={13} />
-                </button>
-              </div>
-              {resultViewMode === "3d" ? (
-                <div className="camera-sliders">
-                  <label>
-                    Yaw
-                    <input
-                      aria-label="Result camera yaw"
-                      type="range"
-                      min="-180"
-                      max="180"
-                      step="1"
-                      value={cinemaCamera.yaw}
-                      onChange={(event) => {
-                        const yaw = Number(event.target.value);
-                        setCinemaCamera((camera) => ({ ...camera, yaw }));
-                        setResultCamera((camera) => ({ ...camera, yaw }));
-                      }}
-                    />
-                    <strong>{Math.round(cinemaCamera.yaw)} deg</strong>
-                  </label>
-                  <label>
-                    Pitch
-                    <input
-                      aria-label="Result camera pitch"
-                      type="range"
-                      min="-80"
-                      max="80"
-                      step="1"
-                      value={cinemaCamera.pitch}
-                      onChange={(event) => {
-                        const pitch = Number(event.target.value);
-                        setCinemaCamera((camera) => ({ ...camera, pitch }));
-                        setResultCamera((camera) => ({ ...camera, pitch }));
-                      }}
-                    />
-                    <strong>{Math.round(cinemaCamera.pitch)} deg</strong>
-                  </label>
-                  <label>
-                    Zoom
-                    <input
-                      aria-label="Result camera zoom"
-                      type="range"
-                      min="0.5"
-                      max="2.2"
-                      step="0.05"
-                      value={cinemaCamera.zoom}
-                      onChange={(event) => {
-                        const zoom = Number(event.target.value);
-                        setCinemaCamera((camera) => ({ ...camera, zoom }));
-                        setResultCamera((camera) => ({ ...camera, zoom }));
-                      }}
-                    />
-                    <strong>{formatNumber(cinemaCamera.zoom, 2)}x</strong>
-                  </label>
-                </div>
-              ) : null}
             </div>
           ) : null}
           <label>
@@ -2237,6 +2243,7 @@ export default function App() {
           ) : null}
           {resultSnapshots.length > 0 ? (
             <div className="time-controls" aria-label="Result timestep controls">
+              <span className="snapshot-count">Snapshot {activeResultIndex + 1}/{resultSnapshots.length}</span>
               <button
                 type="button"
                 onClick={() => stepResultTimeline(-1)}

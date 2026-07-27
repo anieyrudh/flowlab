@@ -141,7 +141,12 @@ function meshQualityFixture(kind: "passed" | "failed" | "missing" | "production"
   };
 }
 
-async function openFresh(page: Page, meshKind: "passed" | "failed" | "missing" | "production" = "passed", options: { keepCinema?: boolean } = {}) {
+async function openFresh(
+  page: Page,
+  meshKind: "passed" | "failed" | "missing" | "production" = "passed",
+  options: { keepCinema?: boolean; runnableOpenfoam?: boolean } = {}
+) {
+  const { runnableOpenfoam = false } = options;
   await page.route("**/api/health", async (route) => {
     await route.fulfill({ json: { status: "ok" } });
   });
@@ -154,17 +159,29 @@ async function openFresh(page: Page, meshKind: "passed" | "failed" | "missing" |
     await route.fulfill({
       json: [
         { solver: "instant-1d", runnable: true, preferredExecution: "browser", blockers: [], notes: [] },
-        {
-          solver: "openfoam",
-          runnable: false,
-          preferredExecution: "none",
-          dockerImage: "flowlab/openfoam11-gmsh:2026-07-13",
-          dockerAvailable: false,
-          nativeCommand: "foamRun",
-          nativeAvailable: false,
-          blockers: ["Docker daemon is unavailable.", "Native command `foamRun` was not found on PATH."],
-          notes: []
-        }
+        runnableOpenfoam
+          ? {
+              solver: "openfoam",
+              runnable: true,
+              preferredExecution: "native",
+              dockerImage: "flowlab/openfoam11-gmsh:2026-07-13",
+              dockerAvailable: false,
+              nativeCommand: "foamRun",
+              nativeAvailable: true,
+              blockers: [],
+              notes: []
+            }
+          : {
+              solver: "openfoam",
+              runnable: false,
+              preferredExecution: "none",
+              dockerImage: "flowlab/openfoam11-gmsh:2026-07-13",
+              dockerAvailable: false,
+              nativeCommand: "foamRun",
+              nativeAvailable: false,
+              blockers: ["Docker daemon is unavailable.", "Native command `foamRun` was not found on PATH."],
+              notes: []
+            }
       ]
     });
   });
@@ -243,10 +260,18 @@ async function openFresh(page: Page, meshKind: "passed" | "failed" | "missing" |
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.evaluate(() => window.localStorage.clear());
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await expect(page.getByTestId("simulation-canvas")).toBeVisible();
-  const fieldViewerTab = page.getByRole("navigation", { name: "Workspace panels" }).getByRole("button", { name: "Field viewer" });
-  await fieldViewerTab.click();
-  if (!options.keepCinema) await switchToSchematic(page);
+  await expect(page.getByTestId("schematic-canvas")).toBeVisible();
+  await expect(page.getByTestId("cinema-canvas")).toBeVisible();
+  await page.getByRole("navigation", { name: "FlowLab workflow stages" }).getByRole("button", { name: /Define/ }).click();
+}
+
+async function showStage(page: Page, stage: "Define" | "Estimate" | "CFD" | "Inspect") {
+  await page.getByRole("navigation", { name: "FlowLab workflow stages" }).getByRole("button", { name: new RegExp(stage) }).click();
+}
+
+async function loadFixtureResult(page: Page) {
+  await showStage(page, "Inspect");
+  await page.getByRole("button", { name: /Load fixture result/i }).click();
 }
 
 async function waitProjectSaved(page: Page) {
@@ -256,12 +281,7 @@ async function waitProjectSaved(page: Page) {
 }
 
 async function switchToSchematic(page: Page) {
-  const currentMode = await page.getByTestId("simulation-canvas").evaluate((canvas) => (canvas as HTMLCanvasElement).dataset.canvasRenderMode ?? "");
-  if (currentMode === "schematic") return;
-  const schematic = page.getByLabel("Canvas render mode").getByRole("button", { name: "Schematic" });
-  await schematic.click();
-  await expect(schematic).toHaveAttribute("aria-pressed", "true");
-  await expect.poll(() => page.getByTestId("simulation-canvas").evaluate((canvas) => (canvas as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("schematic");
+  await expect(page.getByTestId("schematic-canvas")).toBeVisible();
 }
 
 async function worldToScreen(page: Page, point: { x: number; y: number }) {
@@ -274,7 +294,7 @@ async function worldToScreen(page: Page, point: { x: number; y: number }) {
       })
   );
   return page.evaluate((worldPoint) => {
-    const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="simulation-canvas"]');
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="schematic-canvas"]');
     if (!canvas) throw new Error("Canvas missing.");
     const rect = canvas.getBoundingClientRect();
     const scale = Number(canvas.dataset.viewScale ?? 1);
@@ -300,7 +320,8 @@ async function dragCanvas(page: Page, from: { x: number; y: number }, to: { x: n
 
 test.describe("FlowLab editor workspace", () => {
   test("wires the bounded full O-grid controls into the generated product request", async ({ page }) => {
-    await openFresh(page);
+    await openFresh(page, "passed", { runnableOpenfoam: true });
+    await showStage(page, "CFD");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
     await page.getByLabel("Mesh mode").selectOption("full-ogrid");
 
@@ -317,7 +338,7 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByLabel("Full O-grid core cells per side")).toHaveValue("16");
 
     const generatedRequest = page.waitForRequest((request) => request.url().endsWith("/api/cases/generate"));
-    await page.getByRole("button", { name: /Generate \/ queue case/i }).click();
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
     const request = await generatedRequest;
     const payload = request.postDataJSON() as {
       project: {
@@ -342,15 +363,16 @@ test.describe("FlowLab editor workspace", () => {
     });
   });
 
-  test("renders Cinema Canvas mode with WebGL primitives, VTK projection, and raycast dragging", async ({ page }) => {
+  test("renders the linked 3D canvas with WebGL primitives and shared selection", async ({ page }) => {
     test.setTimeout(45_000);
     await openFresh(page, "passed", { keepCinema: true });
+    await showStage(page, "Inspect");
+    await page.getByRole("navigation", { name: "Workspace panels" }).getByRole("button", { name: "Field viewer" }).click();
 
-    const canvas = page.getByTestId("simulation-canvas");
-    await expect(page.getByLabel("Canvas render mode").getByRole("button", { name: "Cinema" })).toHaveAttribute("aria-pressed", "true");
+    const canvas = page.getByTestId("cinema-canvas");
     await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("cinema");
     await expect.poll(() => canvas.evaluate((element) => Number((element as HTMLCanvasElement).dataset.cinemaObjectCount ?? 0))).toBeGreaterThan(10);
-    await page.getByLabel("Cinema camera controls").getByRole("button", { name: "Top" }).click();
+    await page.getByLabel("3D view controls").getByRole("button", { name: "Top" }).click();
     await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.cinemaCameraPitch)).toBe("76");
 
     const sourcePoint = await canvas.evaluate((element) => {
@@ -360,33 +382,24 @@ test.describe("FlowLab editor workspace", () => {
       if (!point) throw new Error("Source projection missing.");
       return { x: rect.left + point.x, y: rect.top + point.y };
     });
-    const canvasBox = await canvas.boundingBox();
-    if (!canvasBox) throw new Error("Canvas bounds missing.");
-    const initialProjection = { x: Math.round(sourcePoint.x - canvasBox.x), y: Math.round(sourcePoint.y - canvasBox.y) };
-    await page.mouse.move(sourcePoint.x, sourcePoint.y);
-    await page.mouse.down();
-    await page.mouse.move(sourcePoint.x + 36, sourcePoint.y + 16, { steps: 8 });
-    await page.mouse.up();
-    await expect
-      .poll(() =>
-        canvas.evaluate((element) => {
-          const positions = JSON.parse((element as HTMLCanvasElement).dataset.cinemaNodePositions ?? "{}") as Record<string, { x: number; y: number }>;
-          return positions.source ?? null;
-        })
-      )
-      .not.toEqual(initialProjection);
+    await page.mouse.click(sourcePoint.x, sourcePoint.y);
+    await expect.poll(() => canvas.getAttribute("data-selected-id")).not.toBe("");
+    await expect(page.getByTestId("schematic-canvas")).toHaveAttribute(
+      "data-selected-id",
+      await canvas.getAttribute("data-selected-id") ?? ""
+    );
 
-    await page.getByRole("button", { name: /Load fixture result/i }).click();
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.resultViewMode)).toBe("2d");
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("schematic");
+    await loadFixtureResult(page);
+    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.resultViewMode)).toBe("3d");
+    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("cinema");
     await expect(page.getByText(/Using pressure from venturi-result\.vtk/)).toBeVisible();
   });
 
   test("keeps viewport gestures, visible camera actions, and result modes coherent", async ({ page }) => {
-    await openFresh(page);
+    await openFresh(page, "passed", { runnableOpenfoam: true });
 
-    const canvas = page.getByTestId("simulation-canvas");
-    const viewportActions = page.getByLabel("Viewport controls");
+    const canvas = page.getByTestId("schematic-canvas");
+    const viewportActions = page.getByTestId("schematic-pane").getByLabel("Viewport controls");
     await expect(viewportActions).toBeVisible();
     const canvasBox = await canvas.boundingBox();
     if (!canvasBox) throw new Error("Canvas bounds missing.");
@@ -416,39 +429,31 @@ test.describe("FlowLab editor workspace", () => {
     await expect.poll(() => canvas.evaluate((element) => Number((element as HTMLCanvasElement).dataset.viewOffsetX ?? 0))).toBe(0);
     await expect.poll(() => canvas.evaluate((element) => Number((element as HTMLCanvasElement).dataset.viewOffsetY ?? 0))).toBe(0);
 
-    await page.getByLabel("Canvas render mode").getByRole("button", { name: "Cinema" }).click();
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("cinema");
     await viewportActions.getByRole("button", { name: "Fit viewport" }).click();
     await viewportActions.getByRole("button", { name: "Reset viewport" }).click();
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.cinemaCameraPitch)).toBe("38");
 
-    await page.getByRole("button", { name: /Load fixture result/i }).click();
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.resultViewMode)).toBe("2d");
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("schematic");
-    await page.getByLabel("Result view mode").getByRole("button", { name: "3D" }).click();
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.resultViewMode)).toBe("3d");
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("cinema");
-    await page.getByLabel("Result view mode").getByRole("button", { name: "2D" }).click();
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("schematic");
+    await loadFixtureResult(page);
+    await expect.poll(() => page.getByTestId("cinema-canvas").evaluate((element) => (element as HTMLCanvasElement).dataset.resultViewMode)).toBe("3d");
   });
 
   test("freezes preview phase separately from model undo and keyboard editing", async ({ page }) => {
     await openFresh(page);
-    const canvas = page.getByTestId("simulation-canvas");
+    const canvas = page.getByTestId("schematic-canvas");
     await canvas.focus();
-    await expect(page.getByText("Preview running")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Pause preview" })).toBeVisible();
-    await page.getByRole("button", { name: "Pause preview" }).click();
-    await expect(page.getByText("Preview paused")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Run preview" })).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByText("Preview animation running")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pause animation" })).toBeVisible();
+    await page.getByRole("button", { name: "Pause animation" }).click();
+    await expect(page.getByText("Preview animation paused")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Play animation" })).toHaveAttribute("aria-pressed", "false");
     const pausedPhase = await canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.previewPhase);
     await page.waitForTimeout(120);
     await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.previewPhase)).toBe(pausedPhase);
 
     await page.keyboard.press("Space");
-    await expect(page.getByText("Preview running")).toBeVisible();
+    await expect(page.getByText("Preview animation running")).toBeVisible();
     await page.getByTitle("Add pump").click();
     await expect(page.getByRole("heading", { name: "Pump" })).toBeVisible();
+    await expect(page.getByTestId("cinema-canvas")).toHaveAttribute("data-selected-id", "pump-4");
     await expect(page.getByRole("button", { name: "Undo" })).toBeEnabled();
     await page.keyboard.press("Control+z");
     await expect(page.getByRole("heading", { name: "Pump" })).toHaveCount(0);
@@ -459,25 +464,19 @@ test.describe("FlowLab editor workspace", () => {
       .toContain('"pump-4"');
   });
 
-  test("keeps Cinema drag updates free of scene rebuilds and within the interaction budget", async ({ page }) => {
+  test("keeps 3D camera drags free of scene rebuilds and within the interaction budget", async ({ page }) => {
     test.setTimeout(45_000);
     await openFresh(page, "passed", { keepCinema: true });
-    const canvas = page.getByTestId("simulation-canvas");
+    const canvas = page.getByTestId("cinema-canvas");
     await expect.poll(() => canvas.evaluate((element) => Number((element as HTMLCanvasElement).dataset.cinemaObjectCount ?? 0))).toBeGreaterThan(10);
 
-    const sourcePoint = await canvas.evaluate((element) => {
-      const positions = JSON.parse((element as HTMLCanvasElement).dataset.cinemaNodePositions ?? "{}") as Record<string, { x: number; y: number }>;
-      const rect = element.getBoundingClientRect();
-      const point = positions.source;
-      if (!point) throw new Error("Source projection missing.");
-      return { x: rect.left + point.x, y: rect.top + point.y };
-    });
-    await page.mouse.click(sourcePoint.x, sourcePoint.y);
-    await page.waitForTimeout(100);
+    const canvasBox = await canvas.boundingBox();
+    if (!canvasBox) throw new Error("Cinema canvas bounds missing.");
+    const cameraStart = { x: canvasBox.x + 24, y: canvasBox.y + 24 };
     await page.evaluate(() => window.__flowlabEditorPerformance?.reset());
-    await page.mouse.move(sourcePoint.x, sourcePoint.y);
+    await page.mouse.move(cameraStart.x, cameraStart.y);
     await page.mouse.down();
-    await page.mouse.move(sourcePoint.x + 36, sourcePoint.y + 16, { steps: 12 });
+    await page.mouse.move(cameraStart.x + 36, cameraStart.y + 16, { steps: 12 });
     await page.mouse.up();
     await page.waitForTimeout(120);
 
@@ -505,14 +504,19 @@ test.describe("FlowLab editor workspace", () => {
         dockWidth: dock?.scrollWidth ?? 0,
         dockClientWidth: dock?.clientWidth ?? 0,
         headerWidth: header?.scrollWidth ?? 0,
-        headerClientWidth: header?.clientWidth ?? 0
+        headerClientWidth: header?.clientWidth ?? 0,
+        overflow: [...document.querySelectorAll<HTMLElement>("*")]
+          .map((element) => ({ tag: element.tagName, className: element.className.toString(), right: Math.ceil(element.getBoundingClientRect().right) }))
+          .filter((element) => element.right > window.innerWidth + 2)
       };
     });
+    expect(layout.overflow).toEqual([]);
     expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
     expect(layout.dockWidth).toBeLessThanOrEqual(layout.dockClientWidth);
     expect(layout.headerWidth).toBeLessThanOrEqual(layout.headerClientWidth);
     await expect(page.getByRole("navigation", { name: "Workspace panels" })).toBeVisible();
-    await expect(page.getByTestId("simulation-canvas")).toBeVisible();
+    await expect(page.getByTestId("schematic-canvas")).toBeVisible();
+    await expect(page.getByTestId("cinema-canvas")).toBeVisible();
   });
 
   test("creates, drags, rotates, aims, and deletes a component", async ({ page }) => {
@@ -569,10 +573,11 @@ test.describe("FlowLab editor workspace", () => {
   });
 
   test("shows parsed solver progress after queueing an advanced job", async ({ page }) => {
-    await openFresh(page);
+    await openFresh(page, "passed", { runnableOpenfoam: true });
+    await showStage(page, "CFD");
 
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: /Generate \/ queue case/i }).click();
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
 
     await expect(page.getByText("Job complete")).toBeVisible();
     await expect(page.getByText(/Final artifacts: 1 field, 1 diagnostic/)).toBeVisible();
@@ -602,7 +607,7 @@ test.describe("FlowLab editor workspace", () => {
   });
 
   test("imports reviewed multi-surface STL geometry and shows production-ready mesh QA", async ({ page }) => {
-    await openFresh(page, "production");
+    await openFresh(page, "production", { runnableOpenfoam: true });
     await page.getByRole("navigation", { name: "Workspace panels" }).getByRole("button", { name: "Mesh QA" }).click();
 
     await expect(page.getByLabel("Reviewed geometry controls")).toContainText("Generated starter");
@@ -717,8 +722,9 @@ test.describe("FlowLab editor workspace", () => {
       .poll(() => page.evaluate(() => window.localStorage.getItem("flowlab.project.v1") ?? ""))
       .toContain('"temperature":315');
 
+    await showStage(page, "CFD");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: /Generate \/ queue case/i }).click();
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
 
     await expect(page.getByLabel("Mesh QA panel")).toContainText("Ready");
     await expect(page.getByLabel("Mesh QA panel")).toContainText("approved");
@@ -726,10 +732,11 @@ test.describe("FlowLab editor workspace", () => {
   });
 
   test("shows mesh QA missing command blockers", async ({ page }) => {
-    await openFresh(page, "missing");
+    await openFresh(page, "missing", { runnableOpenfoam: true });
+    await showStage(page, "CFD");
 
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: /Generate \/ queue case/i }).click();
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
 
     await expect(page.getByLabel("Mesh QA panel")).toContainText("Blocked");
     await expect(page.getByLabel("Native mesh command list")).toContainText("surfaceFeatureExtract");
@@ -738,10 +745,11 @@ test.describe("FlowLab editor workspace", () => {
   });
 
   test("shows failed checkMesh reason in mesh QA", async ({ page }) => {
-    await openFresh(page, "failed");
+    await openFresh(page, "failed", { runnableOpenfoam: true });
+    await showStage(page, "CFD");
 
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: /Generate \/ queue case/i }).click();
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
 
     await expect(page.getByLabel("Mesh QA panel")).toContainText("Blocked");
     await expect(page.getByLabel("checkMesh metrics")).toContainText("2");
@@ -752,21 +760,18 @@ test.describe("FlowLab editor workspace", () => {
   test("shows desktop result playback controls after loading a fixture", async ({ page }) => {
     await openFresh(page);
 
-    await page.getByRole("button", { name: /Load fixture result/i }).click();
+    await loadFixtureResult(page);
 
     await expect(page.getByText(/Using pressure from venturi-result\.vtk/)).toBeVisible();
-    await expect(page.getByLabel("Result view mode").getByRole("button", { name: "2D" })).toHaveAttribute("aria-pressed", "true");
-    await page.getByLabel("Result view mode").getByRole("button", { name: "3D" }).click();
-    await expect(page.getByLabel("Result view mode").getByRole("button", { name: "3D" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByLabel("3D result camera controls")).toContainText("Yaw");
     await page.getByLabel("Result camera yaw").fill("50");
     await page.getByLabel("Result camera pitch").fill("32");
     await page.getByLabel("Result camera zoom").fill("1.4");
     await expect
-      .poll(() => page.getByTestId("simulation-canvas").evaluate((canvas) => (canvas as HTMLCanvasElement).dataset.resultViewMode))
+      .poll(() => page.getByTestId("cinema-canvas").evaluate((canvas) => (canvas as HTMLCanvasElement).dataset.resultViewMode))
       .toBe("3d");
     await expect
-      .poll(() => page.getByTestId("simulation-canvas").evaluate((canvas) => (canvas as HTMLCanvasElement).dataset.resultCameraYaw))
+      .poll(() => page.getByTestId("cinema-canvas").evaluate((canvas) => (canvas as HTMLCanvasElement).dataset.resultCameraYaw))
       .toBe("50");
     await page.getByLabel("Reset result camera").click();
     await expect(page.getByLabel("Result camera yaw")).toHaveValue("-32");
@@ -789,9 +794,11 @@ test.describe("FlowLab editor workspace", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await openFresh(page);
 
-    await expect(page.getByTestId("simulation-canvas")).toBeVisible();
+    await expect(page.getByTestId("schematic-canvas")).toBeVisible();
+    await expect(page.getByTestId("cinema-canvas")).toBeVisible();
     await expect(page.getByText("Components")).toBeVisible();
-    await expect(page.getByText("Inspector")).toBeVisible();
+    await expect(page.locator("#inspector-panel").getByText("Inspector")).toBeVisible();
+    await showStage(page, "CFD");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
     await expect(page.getByLabel("Solver runtime readiness")).toContainText("OpenFOAM readiness");
     await expect(page.getByText(/OpenFOAM cannot run locally yet/)).toBeVisible();

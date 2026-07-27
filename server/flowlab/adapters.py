@@ -30,7 +30,7 @@ from .mesh import (
     mesh_to_vtu,
     su2_marker_tags,
 )
-from .schemas import CaseRequest, SolverCapability, SolverCase
+from .schemas import CaseRequest, ResultComponentMap, SolverCapability, SolverCase
 from .validated_benchmark import experimental_capability
 
 CASE_MANIFEST_PATH = "flowlab_case_manifest.json"
@@ -237,6 +237,31 @@ def _case_file_digest(content: str) -> dict[str, str | int]:
     return {"size": len(encoded), "sha256": hashlib.sha256(encoded).hexdigest()}
 
 
+def _result_component_map(project: dict[str, Any], project_snapshot: str | None = None) -> ResultComponentMap | None:
+    """Declare only whole-domain, single-edge result ownership.
+
+    Generic VTK/VTU data does not contain a dependable component identifier.  A
+    FlowLab-generated case with exactly one edge is the one safe v1 exception:
+    every generated result cell belongs to that edge.  All multi-edge cases
+    intentionally omit this metadata until they emit per-cell provenance.
+    """
+    edges = _project_edges(project)
+    if len(edges) != 1:
+        return None
+    edge_id = edges[0].get("id")
+    if not isinstance(edge_id, str) or not edge_id:
+        return None
+    # Bind the map to the exact queued snapshot file, not a re-serialized
+    # in-memory object.  The client verifies this digest against the case
+    # manifest before it permits a selection link.
+    canonical_project = project_snapshot if isinstance(project_snapshot, str) else json.dumps(project, separators=(",", ":"), sort_keys=True)
+    return ResultComponentMap(
+        version=1,
+        projectSha256=hashlib.sha256(canonical_project.encode("utf-8")).hexdigest(),
+        artifactBindings=[{"artifactName": "*", "edgeId": edge_id, "scope": "all-cells"}],
+    )
+
+
 def add_case_manifest(case: SolverCase) -> SolverCase:
     files = {
         path: _case_file_digest(content)
@@ -253,6 +278,7 @@ def add_case_manifest(case: SolverCase) -> SolverCase:
         "fileCount": len(files),
         "files": files,
         "provenance": case.provenance,
+        "resultComponentMap": case.resultComponentMap.model_dump(mode="json") if case.resultComponentMap else None,
     }
     case.files[CASE_MANIFEST_PATH] = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
     if not any("case manifest" in entry.lower() for entry in case.provenance):
@@ -6509,5 +6535,8 @@ def generate_case(request: CaseRequest) -> SolverCase:
         raise ValueError(f"Unsupported solver: {request.solver}")
     case = add_case_manifest(adapter.generate_case(request))
     case.evidenceCapability = experimental_capability()
+    case.resultComponentMap = _result_component_map(request.project, case.files.get("flowlab_project.json"))
+    if case.resultComponentMap:
+        case.provenance.append("Result-to-schematic linkage is declared only for this single-edge case; imported and multi-edge results remain unlinked.")
     case.files[EVIDENCE_CAPABILITY_PATH] = json.dumps(case.evidenceCapability.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
     return add_case_manifest(case)

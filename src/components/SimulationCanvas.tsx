@@ -62,6 +62,9 @@ type Props = {
   ) => void;
   previewPlaying?: boolean;
   onCinemaCameraChange?: (camera: CinemaCameraState) => void;
+  testId?: string;
+  ariaLabel?: string;
+  statusId?: string;
 };
 
 type PortHit = { nodeId: string; port: PipePortId; point: Vec2 };
@@ -496,7 +499,10 @@ export function SimulationCanvas({
   onUpdateEdgeEndpoint = () => {},
   onProbePoint = () => {},
   previewPlaying = true,
-  onCinemaCameraChange = () => {}
+  onCinemaCameraChange = () => {},
+  testId = "simulation-canvas",
+  ariaLabel = "Flow simulation canvas",
+  statusId = "canvas-status"
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef(0);
@@ -507,6 +513,8 @@ export function SimulationCanvas({
   const cinemaRef = useRef<CinemaRuntime | null>(null);
   const previewPlayingRef = useRef(previewPlaying);
   const resultCameraRef = useRef(resultCamera);
+  const projectRef = useRef(project);
+  const resultRef = useRef(result);
   const activePointersRef = useRef(new Map<number, Vec2>());
   const pinchRef = useRef<{ distance: number; center: Vec2; viewport?: SchematicViewport; camera?: CinemaCameraState } | null>(null);
 
@@ -528,6 +536,11 @@ export function SimulationCanvas({
   }, [resultCamera, resultDataset, resultViewMode]);
 
   useEffect(() => {
+    projectRef.current = project;
+    resultRef.current = result;
+  }, [project, result]);
+
+  useEffect(() => {
     schematicViewportInitializedRef.current = false;
   }, [canvasRenderMode]);
 
@@ -547,6 +560,9 @@ export function SimulationCanvas({
       function resizeCinema() {
         runtime?.resize();
       }
+
+      const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resizeCinema);
+      resizeObserver?.observe(canvasElement);
 
       canvasElement.dataset.canvasRenderMode = "cinema";
       canvasElement.dataset.cinemaWebgl = "loading";
@@ -624,6 +640,7 @@ export function SimulationCanvas({
       return () => {
         disposed = true;
         window.removeEventListener("resize", resizeCinema);
+        resizeObserver?.disconnect();
         cancelAnimationFrame(animationId);
         runtime?.dispose();
         cinemaRef.current = null;
@@ -637,10 +654,16 @@ export function SimulationCanvas({
 
     function resize() {
       const rect = canvasElement.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
       const scale = window.devicePixelRatio || 1;
-      canvasElement.width = Math.floor(rect.width * scale);
-      canvasElement.height = Math.floor(rect.height * scale);
-      context.setTransform(scale, 0, 0, scale, 0, 0);
+      const width = Math.floor(rect.width * scale);
+      const height = Math.floor(rect.height * scale);
+      if (canvasElement.width !== width || canvasElement.height !== height) {
+        canvasElement.width = width;
+        canvasElement.height = height;
+        context.setTransform(scale, 0, 0, scale, 0, 0);
+      }
+      return true;
     }
 
     function drawEndpointHandle(point: Vec2, active: boolean) {
@@ -655,12 +678,18 @@ export function SimulationCanvas({
 
     function draw() {
       const started = performance.now();
+      if (!resize()) {
+        animationId = requestAnimationFrame(draw);
+        return;
+      }
       const rect = canvasElement.getBoundingClientRect();
       const width = rect.width;
       const height = rect.height;
+      const activeProject = projectRef.current;
+      const activeResult = resultRef.current;
       const renderedProject = {
-        ...project,
-        nodes: Object.fromEntries(Object.values(project.nodes).map((node) => [node.id, draftNode(node, dragRef.current)]))
+        ...activeProject,
+        nodes: Object.fromEntries(Object.values(activeProject.nodes).map((node) => [node.id, draftNode(node, dragRef.current)]))
       } as FluidProject;
       if (!schematicViewportInitializedRef.current) {
         schematicViewportRef.current = fitSchematicViewport(renderedProject, width, height);
@@ -680,7 +709,7 @@ export function SimulationCanvas({
       context.fillStyle = grd;
       context.fillRect(0, 0, width, height);
 
-      if (project.visualization.grid) {
+      if (activeProject.visualization.grid) {
         context.strokeStyle = "rgba(160, 190, 210, 0.13)";
         context.lineWidth = 1;
         for (let x = 0; x < width; x += 36) {
@@ -703,7 +732,7 @@ export function SimulationCanvas({
         canvasElement.dataset.resultCameraYaw = String(activeResultCamera.yaw);
         canvasElement.dataset.resultCameraPitch = String(activeResultCamera.pitch);
         canvasElement.dataset.resultCameraZoom = String(activeResultCamera.zoom);
-        drawResultDataset(context, resultDataset, project.visualization.overlay, resultFieldSelection, resultVectorComponent, resultColorMap, resultViewMode, activeResultCamera, width, height);
+        drawResultDataset(context, resultDataset, activeProject.visualization.overlay, resultFieldSelection, resultVectorComponent, resultColorMap, resultViewMode, activeResultCamera, width, height);
       } else {
         delete canvasElement.dataset.resultViewMode;
         delete canvasElement.dataset.resultCameraYaw;
@@ -718,9 +747,9 @@ export function SimulationCanvas({
       delete canvasElement.dataset.cinemaCameraPitch;
       delete canvasElement.dataset.cinemaCameraZoom;
 
-      const edgeValues = Object.values(result.edgeResults).map((edge) => {
-        if (project.visualization.overlay === "pressure") return edge.pressureDrop;
-        if (project.visualization.overlay === "reynolds") return edge.reynolds;
+      const edgeValues = Object.values(activeResult.edgeResults).map((edge) => {
+        if (activeProject.visualization.overlay === "pressure") return edge.pressureDrop;
+        if (activeProject.visualization.overlay === "reynolds") return edge.reynolds;
         return edge.velocity;
       });
       const maxEdge = Math.max(...edgeValues, 1);
@@ -734,18 +763,18 @@ export function SimulationCanvas({
       Object.values(renderedProject.edges).forEach((edge) => {
         const from = renderedProject.nodes[edge.from];
         const to = renderedProject.nodes[edge.to];
-        const solved: EdgeResult | undefined = result.edgeResults[edge.id];
+        const solved: EdgeResult | undefined = activeResult.edgeResults[edge.id];
         if (!from || !to || !solved) return;
         const start = endpointPoint(edge, "from", renderedProject.nodes) ?? from.position;
         const end = endpointPoint(edge, "to", renderedProject.nodes) ?? to.position;
         const widthScale = edge.shape.kind === "circular" ? edge.shape.diameter * 55 : edge.shape.height * 55;
         const metric =
-          project.visualization.overlay === "pressure"
+          activeProject.visualization.overlay === "pressure"
             ? solved.pressureDrop
-            : project.visualization.overlay === "reynolds"
+            : activeProject.visualization.overlay === "reynolds"
               ? solved.reynolds
               : solved.velocity;
-        const color = overlayValueColor(metric, maxEdge, project.visualization.overlay);
+        const color = overlayValueColor(metric, maxEdge, activeProject.visualization.overlay);
 
         context.lineCap = "round";
         context.strokeStyle = "rgba(8, 20, 28, 0.95)";
@@ -765,7 +794,7 @@ export function SimulationCanvas({
         context.stroke();
         context.shadowBlur = 0;
 
-        if (project.visualization.particles) {
+        if (activeProject.visualization.particles) {
           const count = Math.max(7, Math.min(22, Math.floor(Math.abs(solved.velocity) * 4)));
           for (let i = 0; i < count; i += 1) {
             const t = (frameRef.current * Math.sign(solved.flowRate || 1) + i / count) % 1;
@@ -785,7 +814,7 @@ export function SimulationCanvas({
       });
 
       Object.values(renderedProject.nodes).forEach((node) => {
-        const solved = result.nodeResults[node.id];
+        const solved = activeResult.nodeResults[node.id];
         const radius = nodeRadius(node);
         const angle = degreesToRadians(node.rotation ?? 0);
         const active = node.id === selectedId;
@@ -887,11 +916,13 @@ export function SimulationCanvas({
       animationId = requestAnimationFrame(draw);
     }
 
-    resize();
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
+    resizeObserver?.observe(canvasElement);
     draw();
     window.addEventListener("resize", resize);
     return () => {
       window.removeEventListener("resize", resize);
+      resizeObserver?.disconnect();
       cancelAnimationFrame(animationId);
     };
   }, [canvasRenderMode, resultDataset, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind]);
@@ -1043,14 +1074,6 @@ export function SimulationCanvas({
         const node = currentProject().nodes[pick.id];
         if (node) {
           onSelect("node", node.id);
-          dragRef.current = {
-            kind: "node",
-            id: node.id,
-            offsetX: point.x - node.position.x,
-            offsetY: point.y - node.position.y,
-            position: { ...node.position }
-          };
-          capturePointer(event.currentTarget, event.pointerId);
           return;
         }
       }
@@ -1289,7 +1312,9 @@ export function SimulationCanvas({
       <canvas
         key={canvasRenderMode}
         ref={canvasRef}
-        data-testid="simulation-canvas"
+        data-testid={testId}
+        data-selected-id={selectedId ?? ""}
+        data-selected-kind={selectedKind ?? ""}
         className="simulation-canvas"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -1297,8 +1322,8 @@ export function SimulationCanvas({
         onPointerCancel={(event) => handlePointerEnd(event, true)}
         onWheel={handleWheel}
         onKeyDown={handleKeyDown}
-        aria-label="Flow simulation canvas"
-        aria-describedby="canvas-status"
+        aria-label={ariaLabel}
+        aria-describedby={statusId}
         role="application"
         tabIndex={0}
         aria-keyshortcuts="F 0 + -"

@@ -76,6 +76,22 @@ def default_experimental_capability() -> EvidenceCapability:
     )
 
 
+class ResultComponentBinding(BaseModel):
+    """A conservative declaration that one generated result owns an entire edge."""
+
+    artifactName: str
+    edgeId: str
+    scope: Literal["all-cells"]
+
+
+class ResultComponentMap(BaseModel):
+    """Optional case-local result-to-schematic provenance; never inferred from geometry."""
+
+    version: Literal[1]
+    projectSha256: str
+    artifactBindings: list[ResultComponentBinding] = Field(default_factory=list)
+
+
 class SolverCase(BaseModel):
     id: str = Field(default_factory=lambda: f"case-{uuid4().hex[:10]}")
     projectName: str
@@ -86,6 +102,7 @@ class SolverCase(BaseModel):
     runCommand: list[str] = Field(default_factory=list)
     provenance: list[str] = Field(default_factory=list)
     evidenceCapability: EvidenceCapability = Field(default_factory=default_experimental_capability)
+    resultComponentMap: ResultComponentMap | None = None
 
 
 class JobRecord(BaseModel):

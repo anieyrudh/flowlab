@@ -33,6 +33,10 @@ def test_macos_build_uses_the_bundled_backend_and_enforces_contract() -> None:
     assert "FLOWLAB_PYTHON" not in build_script
     assert "FLOWLAB_PYTHON" not in shell_source
     assert 'resourceURL:@"backend/FlowLabBackend"' in shell_source
+    assert "reserveLoopbackPort" in shell_source
+    assert "self.backendPort = [self reserveLoopbackPort]" in shell_source
+    assert 'environment[@"FLOWLAB_BACKEND_PORT"] = [NSString stringWithFormat:@"%ld", (long)self.backendPort]' in shell_source
+    assert "static const NSInteger FlowLabPort" not in shell_source
     assert "--target-architecture" in build_script
     assert "-mmacosx-version-min" in build_script
     assert "python-path.txt is prohibited" in qa_script

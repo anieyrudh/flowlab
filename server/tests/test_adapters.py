@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -45,6 +46,38 @@ def _parameterized_project() -> dict:
             }
         },
     }
+
+
+def test_single_edge_case_records_verified_result_component_map() -> None:
+    project = _parameterized_project()
+    case = adapters.generate_case(
+        CaseRequest.model_construct(project=project, solver="openfoam", advancedMode="incompressible-navier-stokes")
+    )
+
+    assert case.resultComponentMap is not None
+    assert case.resultComponentMap.version == 1
+    assert case.resultComponentMap.projectSha256 == hashlib.sha256(case.files["flowlab_project.json"].encode("utf-8")).hexdigest()
+    assert [binding.model_dump() for binding in case.resultComponentMap.artifactBindings] == [
+        {"artifactName": "*", "edgeId": "pipe", "scope": "all-cells"}
+    ]
+    manifest = json.loads(case.files[adapters.CASE_MANIFEST_PATH])
+    assert manifest["resultComponentMap"]["projectSha256"] == case.resultComponentMap.projectSha256
+    assert manifest["files"]["flowlab_project.json"]["sha256"] == case.resultComponentMap.projectSha256
+
+
+def test_multi_edge_projects_do_not_receive_a_result_component_map() -> None:
+    project = _parameterized_project()
+    project["edges"]["bypass"] = {**project["edges"]["pipe"], "id": "bypass"}
+
+    assert adapters._result_component_map(project) is None
+
+
+def test_browser_estimates_do_not_declare_cfd_result_component_maps() -> None:
+    case = adapters.generate_case(
+        CaseRequest.model_construct(project=_parameterized_project(), solver="instant-1d", advancedMode="incompressible-navier-stokes")
+    )
+
+    assert case.resultComponentMap is None
 
 
 def test_capabilities_include_instant_1d(monkeypatch: pytest.MonkeyPatch) -> None:
