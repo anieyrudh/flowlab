@@ -76,7 +76,15 @@ or wall-shear measurements, repeat-level observations, calibration records,
 and a declared uncertainty propagation method. Plot digitization remains
 `exploratory-not-validation`.
 
-## P1 — Final desktop release QA after the empirical gate passes
+## P1 — Final validated-regime desktop QA after the empirical gate passes
+
+This P1 governs the desktop's validated-regime pointer and runnable preset; it
+is not the external software-distribution gate. A bounded external release is
+governed separately by `desktop/electron/release-contract.json`: it must retain
+experimental, nonpromotional language and pass its own controlled-review,
+authorization, signing, notarization, and clean-machine installer gates.
+Neither path may set `experimentalDatasetPinned=true` or
+`promotionAuthorized=true` without an eligible accepted assessment.
 
 - rebuild the final assessment with `experimentalDatasetPinned=true` only from
   eligible evidence;

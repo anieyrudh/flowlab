@@ -157,8 +157,11 @@ image path. Revision-pinned volume recovery, `cpu-upgrade`/`cpu-xl` coarse
 pilots, full HF qualification, and the separate six-case execution contract
 remain blocked. A new qualification contract must bind the R3 image evidence
 after the Jobs connector is reauthorized. Stationary-fine,
-independent-solver, full-solver, scientific promotion, and desktop work remain
-blocked. The
+independent-solver, full-solver, scientific promotion, and validated-regime
+desktop work remain blocked. A bounded external software release is governed
+separately by its release contract; it remains subject to controlled review,
+authorization, signing, notarization, and clean-machine installer gates, and
+cannot claim validation or promotion. The
 historical 90% point-pass threshold is retained for v1/v2
 reproduction but is not represented as an FDA or ASME-prescribed universal
 figure. The desktop pointer remains unchanged until a later prospectively
