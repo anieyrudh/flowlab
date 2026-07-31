@@ -201,7 +201,7 @@ export type SolverSettings = {
     volumetricFlowRateM3PerS: number;
   };
   curvedElbowVerification?: {
-    contractId: "canonical-circular-elbow-re100-v1";
+    contractId: "canonical-circular-elbow-re100-v2";
     boundaryCondition: "fully-developed-parabolic-inlet-pressure-outlet";
     diameterM: number;
     centrelineRadiusM: number;

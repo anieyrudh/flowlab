@@ -50,12 +50,12 @@ from .schemas import CaseRequest, SolverCase
 from .verification import richardson_grid_convergence
 
 
-CONTRACT_SCHEMA = "flowlab.curved-elbow-qualification-contract.v1"
+CONTRACT_SCHEMA = "flowlab.curved-elbow-qualification-contract.v2"
 CAMPAIGN_SCHEMA = "flowlab.curved-elbow-campaign.v1"
 LEVEL_SCHEMA = "flowlab.curved-elbow-level-evaluation.v1"
 REPORT_SCHEMA = "flowlab.curved-elbow-qualification-report.v1"
 ARTIFACT_MANIFEST_SCHEMA = "flowlab.curved-elbow-artifact-manifest.v1"
-CASE_ID = "canonical-circular-elbow-re100-v1"
+CASE_ID = "canonical-circular-elbow-re100-v2"
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = (
@@ -63,9 +63,9 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "curved-elbow-re100"
-    / "QUALIFICATION_CONTRACT_V1.json"
+    / "QUALIFICATION_CONTRACT_V2.json"
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK.md")
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V2.md")
 FROZEN_SOURCE_PATHS = (
     "server/flowlab/adapters.py",
     "server/flowlab/curved_elbow.py",
@@ -82,8 +82,8 @@ FROZEN_SOURCE_PATHS = (
     "src/projectSchema.ts",
     "src/results/vtk.ts",
     "src/types.ts",
-    "docs/validation/curved-elbow-re100/QUALIFICATION_CONTRACT_V1.json",
-    "docs/validation/curved-elbow-re100/RUNBOOK.md",
+    "docs/validation/curved-elbow-re100/QUALIFICATION_CONTRACT_V2.json",
+    "docs/validation/curved-elbow-re100/RUNBOOK_V2.md",
 )
 
 
@@ -665,7 +665,11 @@ def _geometry_metrics(
     outer_radius = max(radial)
     measured_centreline = (inner_radius + outer_radius) / 2.0
     measured_diameter_radial = outer_radius - inner_radius
-    wall_tolerance = diameter * 1.0e-5
+    # blockMesh's curved-edge interpolation can place an otherwise exact wall
+    # vertex a few 1e-7 m beyond the radial extremum recovered from the
+    # piecewise-linear VTK. Keep endpoint selection comfortably below the
+    # frozen one-percent dimension gate while including those solver points.
+    wall_tolerance = diameter * 1.0e-3
     wall_angles = [
         math.atan2(point[1] - bend_centre[1], point[0] - bend_centre[0])
         for point, radial_value in zip(bend_points, radial, strict=True)

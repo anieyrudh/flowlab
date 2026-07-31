@@ -24,9 +24,9 @@ def _spec() -> CurvedElbowSpec:
         centreline_radius_m=0.03,
         inlet_leg_m=0.1,
         outlet_leg_m=0.1,
-        inlet_axial_cells=20,
-        bend_axial_cells=12,
-        outlet_axial_cells=20,
+        inlet_axial_cells=28,
+        bend_axial_cells=16,
+        outlet_axial_cells=28,
         annular_radial_cells=2,
         circumferential_cells=16,
         core_cells_per_side=4,
@@ -80,15 +80,15 @@ def _project() -> dict:
             "runMode": "steady",
             "meshMode": "curved-elbow-ogrid",
             "meshControls": {
-                "curvedElbowInletAxialCells": 20,
-                "curvedElbowBendAxialCells": 12,
-                "curvedElbowOutletAxialCells": 20,
+                "curvedElbowInletAxialCells": 28,
+                "curvedElbowBendAxialCells": 16,
+                "curvedElbowOutletAxialCells": 28,
                 "curvedElbowAnnularRadialCells": 2,
                 "curvedElbowCircumferentialCells": 16,
                 "curvedElbowCoreCellsPerSide": 4,
             },
             "curvedElbowVerification": {
-                "contractId": "canonical-circular-elbow-re100-v1",
+                "contractId": "canonical-circular-elbow-re100-v2",
                 "boundaryCondition": "fully-developed-parabolic-inlet-pressure-outlet",
                 "diameterM": 0.01,
                 "centrelineRadiusM": 0.03,
@@ -118,15 +118,15 @@ def test_curved_elbow_spec_is_exactly_bounded_and_conformal() -> None:
     assert topology["blockCount"] == 15
     assert topology["collapsedAxisCells"] == 0
     assert topology["resolution"]["crossSectionCellCount"] == 48
-    assert topology["resolution"]["cellCount"] == 2496
+    assert topology["resolution"]["cellCount"] == 3456
     assert [row["cellCount"] for row in topology["componentBlocks"]] == [
-        960,
-        576,
-        960,
+        1344,
+        768,
+        1344,
     ]
     assert topology["patches"]["inlet"]["faceCount"] == 48
     assert topology["patches"]["outlet"]["faceCount"] == 48
-    assert topology["patches"]["walls"]["faceCount"] == 832
+    assert topology["patches"]["walls"]["faceCount"] == 1152
 
 
 @pytest.mark.parametrize(
@@ -147,9 +147,9 @@ def test_curved_elbow_rejects_out_of_scope_or_nonconformal_geometry(
         "centreline_radius_m": 0.03,
         "inlet_leg_m": 0.1,
         "outlet_leg_m": 0.1,
-        "inlet_axial_cells": 20,
-        "bend_axial_cells": 12,
-        "outlet_axial_cells": 20,
+        "inlet_axial_cells": 28,
+        "bend_axial_cells": 16,
+        "outlet_axial_cells": 28,
         "annular_radial_cells": 2,
         "circumferential_cells": 16,
         "core_cells_per_side": 4,
@@ -217,9 +217,9 @@ def test_curved_elbow_preview_is_true_3d_positive_volume_and_source_cell_bound()
 
 def test_curved_elbow_uniform_three_grid_sequence_has_exact_eightfold_cell_refinement() -> None:
     levels = (
-        (20, 12, 20, 2, 16, 4),
-        (40, 24, 40, 4, 32, 8),
-        (80, 48, 80, 8, 64, 16),
+        (28, 16, 28, 2, 16, 4),
+        (56, 32, 56, 4, 32, 8),
+        (112, 64, 112, 8, 64, 16),
     )
     specs = [
         CurvedElbowSpec(
@@ -237,7 +237,7 @@ def test_curved_elbow_uniform_three_grid_sequence_has_exact_eightfold_cell_refin
         for inlet, bend, outlet, annular, circumference, core in levels
     ]
 
-    assert [spec.cell_count for spec in specs] == [2496, 19968, 159744]
+    assert [spec.cell_count for spec in specs] == [3456, 27648, 221184]
     assert specs[1].cell_count == 8 * specs[0].cell_count
     assert specs[2].cell_count == 8 * specs[1].cell_count
     deficits = [float(spec.wall_geometry()["areaRelativeDeficit"]) for spec in specs]
@@ -272,13 +272,13 @@ def test_openfoam_curved_elbow_case_is_full_volume_and_explicitly_component_boun
     assert case.resultComponentMap is not None
     assert case.resultComponentMap.version == 2
     binding = case.resultComponentMap.artifactBindings[0].model_dump()
-    assert binding["sourceCellCount"] == 2496
+    assert binding["sourceCellCount"] == 3456
     assert [row["componentId"] for row in binding["cellRanges"]] == [
         "inlet-leg",
         "elbow",
         "outlet-leg",
     ]
-    assert sum(row["cellCount"] for row in binding["cellRanges"]) == 2496
+    assert sum(row["cellCount"] for row in binding["cellRanges"]) == 3456
     assert validate_solver_case(case) == []
 
 

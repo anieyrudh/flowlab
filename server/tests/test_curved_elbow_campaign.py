@@ -49,9 +49,9 @@ def test_contract_freezes_one_bounded_unpromoted_elbow_sequence() -> None:
         "fine",
     ]
     assert [row["expectedCellCount"] for row in contract["levels"]] == [
-        2496,
-        19968,
-        159744,
+        3456,
+        27648,
+        221184,
     ]
     assert contract["gates"]["geometryPerLevel"][
         "maximumRelativeDimensionError"
@@ -85,7 +85,7 @@ def test_level_case_is_deterministic_and_uses_explicit_component_provenance(
     assert first.resultComponentMap is not None
     binding = first.resultComponentMap.artifactBindings[0].model_dump()
     assert binding["scope"] == "cell-ranges"
-    assert binding["sourceCellCount"] == 2496
+    assert binding["sourceCellCount"] == 3456
     assert [row["componentId"] for row in binding["cellRanges"]] == [
         "inlet-leg",
         "elbow",
@@ -107,6 +107,8 @@ def test_level_case_is_deterministic_and_uses_explicit_component_provenance(
         and row["sourceCellRange"]["cellCount"] > 0
         for row in probes["probes"]
     )
+    assert "endTime         3000;" in first.files["system/controlDict"]
+    assert "writeInterval   3000;" in first.files["system/controlDict"]
 
 
 def test_runtime_geometry_operator_recovers_all_frozen_dimensions() -> None:
@@ -190,13 +192,13 @@ def test_component_operator_rejects_overlap_and_unowned_cells(
     case = build_level_case(level, contract)
     materialize_case_files(case, case_dir)
 
-    ranges, owner = _component_ranges(case_dir, 2496)
+    ranges, owner = _component_ranges(case_dir, 3456)
     assert [row["componentId"] for row in ranges] == [
         "inlet-leg",
         "elbow",
         "outlet-leg",
     ]
-    assert sorted(owner) == list(range(2496))
+    assert sorted(owner) == list(range(3456))
 
     manifest_path = case_dir / adapters.CASE_MANIFEST_PATH
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -211,7 +213,7 @@ def test_component_operator_rejects_overlap_and_unowned_cells(
         encoding="utf-8",
     )
     with pytest.raises(CurvedElbowCampaignError, match="overlap"):
-        _component_ranges(case_dir, 2496)
+        _component_ranges(case_dir, 3456)
 
 
 def test_sequence_operator_passes_only_a_valid_bounded_three_grid_order() -> None:

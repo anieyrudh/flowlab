@@ -436,9 +436,9 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByRole("combobox", { name: "Solver" })).toHaveValue("openfoam");
     await expect(page.getByLabel("Mesh mode")).toHaveValue("curved-elbow-ogrid");
     await expect(page.getByLabel("Run mode")).toHaveValue("steady");
-    await expect(page.getByLabel("Curved-elbow inlet axial cells")).toHaveValue("20");
-    await expect(page.getByLabel("Curved-elbow bend axial cells")).toHaveValue("12");
-    await expect(page.getByLabel("Curved-elbow outlet axial cells")).toHaveValue("20");
+    await expect(page.getByLabel("Curved-elbow inlet axial cells")).toHaveValue("28");
+    await expect(page.getByLabel("Curved-elbow bend axial cells")).toHaveValue("16");
+    await expect(page.getByLabel("Curved-elbow outlet axial cells")).toHaveValue("28");
     await expect(page.getByLabel("Curved-elbow annular radial cells")).toHaveValue("2");
     await expect(page.getByLabel("Curved-elbow circumferential cells")).toHaveValue("16");
     await expect(page.getByLabel("Curved-elbow core cells per side")).toHaveValue("4");
@@ -462,15 +462,15 @@ test.describe("FlowLab editor workspace", () => {
       runMode: "steady",
       turbulence: "laminar",
       meshControls: {
-        curvedElbowInletAxialCells: 20,
-        curvedElbowBendAxialCells: 12,
-        curvedElbowOutletAxialCells: 20,
+        curvedElbowInletAxialCells: 28,
+        curvedElbowBendAxialCells: 16,
+        curvedElbowOutletAxialCells: 28,
         curvedElbowAnnularRadialCells: 2,
         curvedElbowCircumferentialCells: 16,
         curvedElbowCoreCellsPerSide: 4
       },
       curvedElbowVerification: {
-        contractId: "canonical-circular-elbow-re100-v1",
+        contractId: "canonical-circular-elbow-re100-v2",
         boundaryCondition: "fully-developed-parabolic-inlet-pressure-outlet",
         diameterM: 0.01,
         centrelineRadiusM: 0.03,

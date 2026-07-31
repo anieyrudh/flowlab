@@ -72,7 +72,7 @@ dependencies, data locations, and troubleshooting are covered in the
 - [Benchmarks and verification status](docs/BENCHMARKS.md)
 - [Electron distribution status](docs/desktop-electron-distribution-status-2026-07-24.md)
 - [Full O-grid contract and review packet](docs/validation/full-ogrid-straight-pipe/REVIEW_HANDOFF_V2_2026-07-24.md)
-- [Canonical curved-elbow qualification contract](docs/validation/curved-elbow-re100/QUALIFICATION_CONTRACT_V1.json)
+- [Canonical curved-elbow qualification contract](docs/validation/curved-elbow-re100/QUALIFICATION_CONTRACT_V2.json)
 - [Evidence retention and Git boundaries](docs/evidence-retention-and-git-boundary.md)
 
 ## Verify a checkout

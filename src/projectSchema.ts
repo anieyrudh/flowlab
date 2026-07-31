@@ -380,7 +380,7 @@ const projectSchema = z.object({
       .optional(),
     curvedElbowVerification: z
       .object({
-        contractId: z.literal("canonical-circular-elbow-re100-v1"),
+        contractId: z.literal("canonical-circular-elbow-re100-v2"),
         boundaryCondition: z.literal("fully-developed-parabolic-inlet-pressure-outlet"),
         diameterM: z.number().positive(),
         centrelineRadiusM: z.number().positive(),

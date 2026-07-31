@@ -246,7 +246,7 @@ export const canonicalElbowPreset: FluidProject = {
     runMode: "steady",
     meshMode: "curved-elbow-ogrid",
     curvedElbowVerification: {
-      contractId: "canonical-circular-elbow-re100-v1",
+      contractId: "canonical-circular-elbow-re100-v2",
       boundaryCondition: "fully-developed-parabolic-inlet-pressure-outlet",
       diameterM: canonicalElbowDiameterM,
       centrelineRadiusM: canonicalElbowCentrelineRadiusM,
@@ -257,9 +257,9 @@ export const canonicalElbowPreset: FluidProject = {
       qoiHistoryWriteIntervalIterations: 1
     },
     meshControls: {
-      curvedElbowInletAxialCells: 20,
-      curvedElbowBendAxialCells: 12,
-      curvedElbowOutletAxialCells: 20,
+      curvedElbowInletAxialCells: 28,
+      curvedElbowBendAxialCells: 16,
+      curvedElbowOutletAxialCells: 28,
       curvedElbowAnnularRadialCells: 2,
       curvedElbowCircumferentialCells: 16,
       curvedElbowCoreCellsPerSide: 4

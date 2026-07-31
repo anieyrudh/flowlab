@@ -1048,9 +1048,9 @@ FULL_OGRID_LEVELS: dict[str, tuple[int, int, int, int]] = {
 }
 
 CURVED_ELBOW_LEVELS: dict[str, tuple[int, int, int, int, int, int]] = {
-    "coarse": (20, 12, 20, 2, 16, 4),
-    "medium": (40, 24, 40, 4, 32, 8),
-    "fine": (80, 48, 80, 8, 64, 16),
+    "coarse": (28, 16, 28, 2, 16, 4),
+    "medium": (56, 32, 56, 4, 32, 8),
+    "fine": (112, 64, 112, 8, 64, 16),
 }
 
 
@@ -1332,7 +1332,7 @@ def _curved_elbow_verification_request(
         raise ValueError(
             "Curved-elbow O-grid mode requires an explicit curvedElbowVerification object."
         )
-    if raw.get("contractId") != "canonical-circular-elbow-re100-v1":
+    if raw.get("contractId") != "canonical-circular-elbow-re100-v2":
         raise ValueError("The curved-elbow verification request has an unsupported contractId.")
     boundary = "fully-developed-parabolic-inlet-pressure-outlet"
     if raw.get("boundaryCondition") != boundary:
@@ -1373,7 +1373,7 @@ def _curved_elbow_verification_request(
         raise ValueError("The bounded curved-elbow verification request requires Reynolds number approximately 100.")
     return {
         "schema": CURVED_ELBOW_VERIFICATION_SCHEMA,
-        "contractId": "canonical-circular-elbow-re100-v1",
+        "contractId": "canonical-circular-elbow-re100-v2",
         "status": "prospective-request-not-validation",
         "boundaryCondition": boundary,
         "diameterM": spec.diameter_m,
@@ -2836,7 +2836,26 @@ def _openfoam_control_dict(
     if _openfoam_steady_requested(advanced_mode, project):
         # Steady SIMPLE: deltaT is an iteration counter and residualControl in
         # fvSolution stops the solve early once residuals fall below tolerance.
-        end_time, delta_t, write_interval = "2000", "1", "2000"
+        curved_contract = (
+            isinstance(full_ogrid_profile, dict)
+            and full_ogrid_profile.get("schema")
+            == CURVED_ELBOW_PROFILE_SCHEMA
+        )
+        declared_iterations = (
+            project.get("solver", {}).get("maxIterations", 2000)
+            if curved_contract and isinstance(project, dict)
+            else 2000
+        )
+        if (
+            not isinstance(declared_iterations, int)
+            or isinstance(declared_iterations, bool)
+            or declared_iterations <= 0
+        ):
+            raise ValueError(
+                "Curved-elbow steady execution requires a positive integer maxIterations."
+            )
+        end_time = str(declared_iterations)
+        delta_t, write_interval = "1", end_time
     elif advanced_mode == "compressible-flow":
         end_time, delta_t, write_interval = "0.001", "0.00001", "100"
     else:

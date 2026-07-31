@@ -3394,9 +3394,9 @@ function MeshControlsPanel({
     fine: { axial: 64, annular: 16, circumference: 128, core: 32 }
   }[solver.meshResolution];
   const curvedElbowDefaults = {
-    coarse: { inlet: 20, bend: 12, outlet: 20, annular: 2, circumference: 16, core: 4 },
-    medium: { inlet: 40, bend: 24, outlet: 40, annular: 4, circumference: 32, core: 8 },
-    fine: { inlet: 80, bend: 48, outlet: 80, annular: 8, circumference: 64, core: 16 }
+    coarse: { inlet: 28, bend: 16, outlet: 28, annular: 2, circumference: 16, core: 4 },
+    medium: { inlet: 56, bend: 32, outlet: 56, annular: 4, circumference: 32, core: 8 },
+    fine: { inlet: 112, bend: 64, outlet: 112, annular: 8, circumference: 64, core: 16 }
   }[solver.meshResolution];
 
   function fullOGridControls(
@@ -3483,9 +3483,9 @@ function MeshControlsPanel({
                 fullOGridAnnularRadialCells: 4,
                 fullOGridCircumferentialCells: 32,
                 fullOGridCoreCellsPerSide: 8,
-                curvedElbowInletAxialCells: 20,
-                curvedElbowBendAxialCells: 12,
-                curvedElbowOutletAxialCells: 20,
+                curvedElbowInletAxialCells: 28,
+                curvedElbowBendAxialCells: 16,
+                curvedElbowOutletAxialCells: 28,
                 curvedElbowAnnularRadialCells: 2,
                 curvedElbowCircumferentialCells: 16,
                 curvedElbowCoreCellsPerSide: 4
@@ -3495,9 +3495,9 @@ function MeshControlsPanel({
                 fullOGridAnnularRadialCells: 8,
                 fullOGridCircumferentialCells: 64,
                 fullOGridCoreCellsPerSide: 16,
-                curvedElbowInletAxialCells: 40,
-                curvedElbowBendAxialCells: 24,
-                curvedElbowOutletAxialCells: 40,
+                curvedElbowInletAxialCells: 56,
+                curvedElbowBendAxialCells: 32,
+                curvedElbowOutletAxialCells: 56,
                 curvedElbowAnnularRadialCells: 4,
                 curvedElbowCircumferentialCells: 32,
                 curvedElbowCoreCellsPerSide: 8
@@ -3507,9 +3507,9 @@ function MeshControlsPanel({
                 fullOGridAnnularRadialCells: 16,
                 fullOGridCircumferentialCells: 128,
                 fullOGridCoreCellsPerSide: 32,
-                curvedElbowInletAxialCells: 80,
-                curvedElbowBendAxialCells: 48,
-                curvedElbowOutletAxialCells: 80,
+                curvedElbowInletAxialCells: 112,
+                curvedElbowBendAxialCells: 64,
+                curvedElbowOutletAxialCells: 112,
                 curvedElbowAnnularRadialCells: 8,
                 curvedElbowCircumferentialCells: 64,
                 curvedElbowCoreCellsPerSide: 16

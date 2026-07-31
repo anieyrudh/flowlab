@@ -1,0 +1,241 @@
+{
+  "schema": "flowlab.curved-elbow-qualification-contract.v2",
+  "contractId": "canonical-circular-elbow-re100-v2",
+  "supersedesContractId": "canonical-circular-elbow-re100-v1",
+  "frozenOn": "2026-07-31",
+  "status": "prospective-frozen-before-retained-scientific-execution",
+  "hypothesis": {
+    "trigger": "V1 coarse retained evidence failed the prospective maximum-aspect-ratio gate at 16 > 12, exposed an angle-observer endpoint-selection defect, and exposed that generic steady control ignored the declared 3000-iteration stop.",
+    "topologyChange": "Increase only the inlet/bend/outlet logical axial counts from 20/12/20 to 28/16/28; preserve the same conformal 15-block cross-section and double every logical count between grids.",
+    "observerCorrection": "Select wall-angle endpoint candidates within 0.1% of D from the observed radial extrema so blockMesh-to-VTK interpolation noise cannot exclude the exact 0-degree endpoint. The frozen one-percent dimension gate is unchanged.",
+    "executionCorrection": "The curved-elbow controlDict must use the prospectively declared maxIterations value of 3000 instead of the generic steady default of 2000.",
+    "scientificGateChanges": [],
+    "v1EvidenceEdited": false
+  },
+  "claim": {
+    "candidate": "FlowLab can deterministically generate, execute, load, and numerically qualify one steady incompressible laminar 90-degree constant-diameter circular elbow with Rc/D=3, 10D inlet and outlet legs, and Re=100 through OpenFOAM.",
+    "geometry": "one canonical 90-degree circular elbow with straight inlet and outlet legs",
+    "physics": "steady incompressible laminar",
+    "solver": "OpenFOAM through FlowLab JobManager",
+    "boundaryCondition": "discrete-flux-normalized fully-developed parabolic velocity inlet, zero-kinematic-pressure outlet, and no-slip wall",
+    "excluded": [
+      "axisymmetric validation inheritance",
+      "independent experimental validation",
+      "arbitrary CAD",
+      "other bend angles",
+      "other Rc/D ratios",
+      "other Reynolds numbers",
+      "broad elbow-family qualification",
+      "branches",
+      "diameter changes",
+      "turbulence",
+      "transient flow",
+      "compressible flow",
+      "multiphase flow",
+      "hybrid meshes",
+      "SU2 without a supported three-dimensional result identity",
+      "benchmark or registry promotion",
+      "product promotion",
+      "external release"
+    ]
+  },
+  "physicalCase": {
+    "diameterM": 0.01,
+    "radiusM": 0.005,
+    "centrelineRadiusM": 0.03,
+    "centrelineRadiusOverDiameter": 3.0,
+    "bendAngleDegrees": 90.0,
+    "inletLegLengthM": 0.1,
+    "outletLegLengthM": 0.1,
+    "inletLegOverDiameter": 10.0,
+    "outletLegOverDiameter": 10.0,
+    "bendArcLengthM": 0.0471238898038469,
+    "totalCentrelineLengthM": 0.24712388980384692,
+    "analyticCircularAreaM2": 7.853981633974483e-05,
+    "analyticFluidVolumeM3": 1.9409064918357477e-05,
+    "densityKgPerM3": 1000.0,
+    "dynamicViscosityPaS": 0.001,
+    "meanVelocityMPerS": 0.01,
+    "volumetricFlowRateM3PerS": 7.853981633974483e-07,
+    "reynoldsNumber": 100.0,
+    "laminarUpperBound": 2100.0,
+    "inletDynamicPressurePa": 0.05
+  },
+  "productRequest": {
+    "solver": "openfoam",
+    "advancedMode": "incompressible-navier-stokes",
+    "meshMode": "curved-elbow-ogrid",
+    "runMode": "steady",
+    "turbulence": "laminar",
+    "verificationContractId": "canonical-circular-elbow-re100-v2",
+    "verificationBoundaryCondition": "fully-developed-parabolic-inlet-pressure-outlet",
+    "maxIterations": 3000,
+    "qoiHistoryWriteIntervalIterations": 1,
+    "residualControl": {
+      "p": 1e-08,
+      "U": 1e-08
+    }
+  },
+  "levels": [
+    {
+      "id": "coarse",
+      "inletAxialCells": 28,
+      "bendAxialCells": 16,
+      "outletAxialCells": 28,
+      "annularRadialCells": 2,
+      "circumferentialCells": 16,
+      "coreCellsPerSide": 4,
+      "expectedCellCount": 3456,
+      "expectedInletFaces": 48,
+      "expectedOutletFaces": 48,
+      "expectedWallFaces": 1152,
+      "refinementRatioFromPrevious": null
+    },
+    {
+      "id": "medium",
+      "inletAxialCells": 56,
+      "bendAxialCells": 32,
+      "outletAxialCells": 56,
+      "annularRadialCells": 4,
+      "circumferentialCells": 32,
+      "coreCellsPerSide": 8,
+      "expectedCellCount": 27648,
+      "expectedInletFaces": 192,
+      "expectedOutletFaces": 192,
+      "expectedWallFaces": 4608,
+      "refinementRatioFromPrevious": 2.0
+    },
+    {
+      "id": "fine",
+      "inletAxialCells": 112,
+      "bendAxialCells": 64,
+      "outletAxialCells": 112,
+      "annularRadialCells": 8,
+      "circumferentialCells": 64,
+      "coreCellsPerSide": 16,
+      "expectedCellCount": 221184,
+      "expectedInletFaces": 768,
+      "expectedOutletFaces": 768,
+      "expectedWallFaces": 18432,
+      "refinementRatioFromPrevious": 2.0
+    }
+  ],
+  "refinementInterpretation": {
+    "spatialDimension": 3,
+    "cellCountRatio": 8.0,
+    "characteristicCellSize": "(analytic fluid volume / cell count)^(1/3)",
+    "uniformLogicalRefinement": "Every inlet, bend, outlet, annular-radial, circumferential, and core-side count doubles.",
+    "geometryTreatment": "Circumferential wall faceting and the piecewise-linear VTK realization refine with the solution mesh. Observed order and GCI quantify the combined solution-discretization and geometry-realization sequence, not isolated solution discretization.",
+    "geometryErrorMayNotBeCancelled": true
+  },
+  "observationOperators": {
+    "determinism": "Generate every complete case twice from the same canonical project and require identical sorted per-file SHA-256 maps.",
+    "geometry": "Verify profile SI values, runtime VTK z span, elbow inner/outer radial bounds about the declared bend centre, straight-leg transition planes, checkMesh volume, and boundary patch counts against the frozen diameter, Rc, angle, and legs. Wall-angle endpoint candidates may be selected only within 0.1% of D from the observed radial extrema. Each declared linear or angular dimension must be within one percent; volume error is reported because faceting refines with the grid but is not substituted for the dimensional gate.",
+    "pressureLoss": "Latest FlowLab-normalized OpenFOAM patchAverage(p) on inlet minus outlet, multiplied by densityKgPerM3 because p is kinematic pressure.",
+    "flowRate": "Latest absolute inlet and outlet surface sums of phi; reported flow is their arithmetic mean.",
+    "totalPressure": "At the first and last straight-leg cell-centroid planes, compute volume-weighted mean rho*(p+0.5*magSqr(U)). A negative loss larger than the prospective numerical allowance is an unexplained total-pressure gain.",
+    "symmetry": "Pair cell-centred samples at mirrored z coordinates within identical source-cell component and streamwise planes. Compare p and the reflected velocity vector (Ux,Uy,-Uz); normalize pressure RMS by max(abs(static pressure loss), inlet dynamic pressure) and velocity RMS by mean velocity. The larger normalized error is the symmetry-plane error.",
+    "finiteFields": "Every retained cell-centred p scalar and U vector component must be finite.",
+    "normalTermination": "Require zero solver exit, an End marker, no fatal/non-finite marker, and either SIMPLE convergence or the exact declared iteration budget.",
+    "observedOrderAndGci": "Three-grid Richardson extrapolation on positive static pressure loss using characteristic cell size, uniform r=2, and safety factor 1.25. Non-monotone, degenerate, or otherwise invalid sequences are unqualified."
+  },
+  "gates": {
+    "determinism": {
+      "generatedCaseFileHashesMatchIndependentSecondBuild": true
+    },
+    "geometryPerLevel": {
+      "maximumRelativeDimensionError": 0.01
+    },
+    "meshPerLevel": {
+      "blockMeshExitCode": 0,
+      "checkMeshExitCode": 0,
+      "meshOk": true,
+      "connectedRegions": 1,
+      "solutionDirections": 3,
+      "geometricDirections": 3,
+      "allCellsHex": true,
+      "invalidCellCount": 0,
+      "collapsedAxisCells": 0,
+      "minimumCellVolumeM3ExclusiveLowerBound": 0.0,
+      "maximumAspectRatio": 12.0,
+      "maximumNonOrthogonalityDegrees": 45.0,
+      "maximumSkewness": 1.0,
+      "minimumCellDeterminant": 0.05,
+      "minimumFaceInterpolationWeight": 0.1,
+      "minimumFaceVolumeRatio": 0.1,
+      "requiredPatches": {
+        "inlet": "patch",
+        "outlet": "patch",
+        "walls": "wall"
+      },
+      "unexpectedBoundaryPatchesAllowed": false,
+      "exactCellAndPatchFaceCounts": true,
+      "allThreeVtkSpansPositive": true
+    },
+    "solverPerLevel": {
+      "exitCode": 0,
+      "normalTerminationRequired": true,
+      "declaredStopRequired": true,
+      "finitePressureAndVelocityRequired": true,
+      "qoiTailStability": {
+        "sampleCount": 100,
+        "maximumPressureLossRelativeSpan": 0.001,
+        "maximumMeasuredFlowRateRelativeSpan": 0.00025
+      }
+    },
+    "physicsPerLevel": {
+      "maximumRelativeMassFlowImbalance": 0.001,
+      "positiveStaticPressureLossRequired": true,
+      "maximumTotalPressureGainFractionOfInletDynamicPressure": 0.01,
+      "maximumSymmetryPlaneError": 0.02
+    },
+    "provenancePerLevel": {
+      "explicitSourceCellIdentityRequired": true,
+      "requiredComponents": [
+        "inlet-leg",
+        "elbow",
+        "outlet-leg"
+      ],
+      "unownedOrOverlappingSourceCellsAllowed": false,
+      "geometryInferredProbeOwnershipAllowed": false
+    },
+    "sequence": {
+      "pressureLossMustConvergeMonotonically": true,
+      "minimumObservedOrder": 0.5,
+      "maximumObservedOrder": 4.0,
+      "maximumFineGridGciPercent": 5.0,
+      "mathematicallyInvalidGciPasses": false
+    }
+  },
+  "provenanceRequirements": [
+    "clean committed source identity for every transitive scientific path",
+    "qualification contract SHA-256",
+    "generated case manifest and per-file SHA-256",
+    "explicit source-cell component ranges for inlet-leg, elbow, and outlet-leg",
+    "Docker image tag and immutable image ID",
+    "detected OpenFOAM style and version",
+    "JobManager record, command, exit code, and timestamps",
+    "blockMesh and checkMesh logs",
+    "solver log and residual history",
+    "per-iteration inlet and outlet pressure and flow histories",
+    "raw solver-produced VTK fields",
+    "per-level evaluation and three-level qualification report",
+    "content-addressed artifact manifest"
+  ],
+  "retention": {
+    "rawCampaignLocation": "ignored benchmarks/cases/curved-elbow-re100/campaigns tree",
+    "overwriteAllowed": false,
+    "editRetainedEvidenceInPlaceAllowed": false,
+    "newHypothesisRequiresNewContractAndOutputDirectory": true,
+    "gitAdmission": "Raw runs remain local. Only separately reviewed compact artifacts explicitly allowlisted in benchmarks/tracked-evidence.txt may be force-added."
+  },
+  "review": {
+    "controlledIndependentReviewRequired": true,
+    "reviewMustBindExactArtifactDigest": true,
+    "benchmarkFixtureMutationAuthorized": false,
+    "registryMutationAuthorized": false,
+    "validationStateChangeAuthorized": false,
+    "productClaimChangeAuthorized": false
+  },
+  "promotionAuthorized": false
+}
