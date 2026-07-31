@@ -13,6 +13,8 @@ sending project data to a hosted service.
   with clear dependency checks before execution.
 - Supports a bounded full-360 O-grid path for steady, incompressible, laminar
   flow through a straight circular pipe.
+- Supports one fail-closed experimental true-3D OpenFOAM path for a canonical
+  90-degree circular elbow at Rc/D=3, 10D inlet/outlet legs, and Re=100.
 - Loads VTK/VTU results into a true 3D viewer with XYZ surface probing.
 - Fails closed when geometry, topology, physics, or a solver runtime is not
   supported.
@@ -27,6 +29,9 @@ build instructions.
 The full O-grid straight-pipe campaign passed its prospective three-level
 numerical-verification gates. It remains a verification candidate awaiting
 controlled independent review, not a general CFD validation or promotion.
+The canonical curved-elbow path is governed by its own prospective
+coarse/medium/fine contract and does not inherit the straight-pipe or
+axisymmetric validation state.
 Ordinary generated CFD cases remain experimental. See
 [benchmarks and verification status](docs/BENCHMARKS.md) for the measured
 results and exact claim boundary.
@@ -67,6 +72,7 @@ dependencies, data locations, and troubleshooting are covered in the
 - [Benchmarks and verification status](docs/BENCHMARKS.md)
 - [Electron distribution status](docs/desktop-electron-distribution-status-2026-07-24.md)
 - [Full O-grid contract and review packet](docs/validation/full-ogrid-straight-pipe/REVIEW_HANDOFF_V2_2026-07-24.md)
+- [Canonical curved-elbow qualification contract](docs/validation/curved-elbow-re100/QUALIFICATION_CONTRACT_V1.json)
 - [Evidence retention and Git boundaries](docs/evidence-retention-and-git-boundary.md)
 
 ## Verify a checkout

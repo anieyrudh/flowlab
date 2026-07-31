@@ -428,6 +428,59 @@ test.describe("FlowLab editor workspace", () => {
     });
   });
 
+  test("wires the canonical elbow preset and its frozen 3D scope into the product request", async ({ page }) => {
+    await openFresh(page, "passed", { runnableOpenfoam: true });
+    await page.getByLabel("Preset").selectOption("Canonical 90° Elbow (Experimental)");
+    await showStage(page, "CFD");
+
+    await expect(page.getByRole("combobox", { name: "Solver" })).toHaveValue("openfoam");
+    await expect(page.getByLabel("Mesh mode")).toHaveValue("curved-elbow-ogrid");
+    await expect(page.getByLabel("Run mode")).toHaveValue("steady");
+    await expect(page.getByLabel("Curved-elbow inlet axial cells")).toHaveValue("20");
+    await expect(page.getByLabel("Curved-elbow bend axial cells")).toHaveValue("12");
+    await expect(page.getByLabel("Curved-elbow outlet axial cells")).toHaveValue("20");
+    await expect(page.getByLabel("Curved-elbow annular radial cells")).toHaveValue("2");
+    await expect(page.getByLabel("Curved-elbow circumferential cells")).toHaveValue("16");
+    await expect(page.getByLabel("Curved-elbow core cells per side")).toHaveValue("4");
+
+    const generatedRequest = page.waitForRequest((request) => request.url().endsWith("/api/cases/generate"));
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    const request = await generatedRequest;
+    const payload = request.postDataJSON() as {
+      project: {
+        solver: {
+          meshMode?: string;
+          runMode?: string;
+          turbulence?: string;
+          meshControls?: Record<string, number>;
+          curvedElbowVerification?: Record<string, number | string>;
+        };
+      };
+    };
+    expect(payload.project.solver).toMatchObject({
+      meshMode: "curved-elbow-ogrid",
+      runMode: "steady",
+      turbulence: "laminar",
+      meshControls: {
+        curvedElbowInletAxialCells: 20,
+        curvedElbowBendAxialCells: 12,
+        curvedElbowOutletAxialCells: 20,
+        curvedElbowAnnularRadialCells: 2,
+        curvedElbowCircumferentialCells: 16,
+        curvedElbowCoreCellsPerSide: 4
+      },
+      curvedElbowVerification: {
+        contractId: "canonical-circular-elbow-re100-v1",
+        boundaryCondition: "fully-developed-parabolic-inlet-pressure-outlet",
+        diameterM: 0.01,
+        centrelineRadiusM: 0.03,
+        inletLegLengthM: 0.1,
+        outletLegLengthM: 0.1,
+        bendAngleDegrees: 90
+      }
+    });
+  });
+
   test("renders the linked 3D canvas with WebGL primitives and shared selection", async ({ page }) => {
     test.setTimeout(45_000);
     await openFresh(page, "passed", { keepCinema: true });

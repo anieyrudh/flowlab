@@ -361,7 +361,7 @@ const projectSchema = z.object({
     turbulence: z.enum(["laminar", "rans-k-epsilon", "rans-sst", "les", "dns"]),
     meshResolution: z.enum(["coarse", "medium", "fine"]),
     runMode: z.enum(["transient", "steady"]).optional(),
-    meshMode: z.enum(["planar-2d", "axisymmetric", "full-ogrid"]).optional(),
+    meshMode: z.enum(["planar-2d", "axisymmetric", "full-ogrid", "curved-elbow-ogrid"]).optional(),
     axisymmetricBenchmark: z
       .object({
         fixtureId: z.literal("straight-pipe"),
@@ -378,6 +378,19 @@ const projectSchema = z.object({
         volumetricFlowRateM3PerS: z.number().positive()
       })
       .optional(),
+    curvedElbowVerification: z
+      .object({
+        contractId: z.literal("canonical-circular-elbow-re100-v1"),
+        boundaryCondition: z.literal("fully-developed-parabolic-inlet-pressure-outlet"),
+        diameterM: z.number().positive(),
+        centrelineRadiusM: z.number().positive(),
+        inletLegLengthM: z.number().positive(),
+        outletLegLengthM: z.number().positive(),
+        bendAngleDegrees: z.literal(90),
+        volumetricFlowRateM3PerS: z.number().positive(),
+        qoiHistoryWriteIntervalIterations: z.literal(1)
+      })
+      .optional(),
     reviewedGeometry: reviewedGeometrySchema.optional(),
     meshControls: z
       .object({
@@ -390,6 +403,12 @@ const projectSchema = z.object({
         fullOGridAnnularRadialCells: z.number().int().min(2).max(1024).optional(),
         fullOGridCircumferentialCells: z.number().int().min(16).max(4096).optional(),
         fullOGridCoreCellsPerSide: z.number().int().min(4).max(1024).optional(),
+        curvedElbowInletAxialCells: z.number().int().min(4).max(4096).optional(),
+        curvedElbowBendAxialCells: z.number().int().min(4).max(4096).optional(),
+        curvedElbowOutletAxialCells: z.number().int().min(4).max(4096).optional(),
+        curvedElbowAnnularRadialCells: z.number().int().min(2).max(1024).optional(),
+        curvedElbowCircumferentialCells: z.number().int().min(16).max(4096).optional(),
+        curvedElbowCoreCellsPerSide: z.number().int().min(4).max(1024).optional(),
         transverseDistribution: z.enum(["boundary-layer", "uniform"]).optional(),
         targetYPlus: z.number().positive().optional(),
         refinementRegions: z
@@ -492,6 +511,65 @@ const projectSchema = z.object({
           message: "The full O-grid verification contract requires exact four-dimensional cell counts."
         });
       }
+    }
+    const elbowCounts = [
+      solver.meshControls?.curvedElbowInletAxialCells,
+      solver.meshControls?.curvedElbowBendAxialCells,
+      solver.meshControls?.curvedElbowOutletAxialCells,
+      solver.meshControls?.curvedElbowAnnularRadialCells,
+      solver.meshControls?.curvedElbowCircumferentialCells,
+      solver.meshControls?.curvedElbowCoreCellsPerSide
+    ];
+    const suppliedElbowCounts = elbowCounts.filter((value) => value !== undefined).length;
+    if (suppliedElbowCounts !== 0 && suppliedElbowCounts !== elbowCounts.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["meshControls"],
+        message: "Exact curved-elbow inlet, bend, outlet, annular-radial, circumferential, and core cell counts must be supplied together."
+      });
+    }
+    const elbowCircumference = solver.meshControls?.curvedElbowCircumferentialCells;
+    const elbowCore = solver.meshControls?.curvedElbowCoreCellsPerSide;
+    if (elbowCircumference !== undefined && (elbowCircumference % 4 !== 0 || elbowCore !== elbowCircumference / 4)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["meshControls"],
+        message: "Curved-elbow circumference must be divisible by four and core cells per side must equal circumference/4."
+      });
+    }
+    if (solver.meshMode === "curved-elbow-ogrid") {
+      if (
+        solver.advancedMode !== "incompressible-navier-stokes" ||
+        solver.runMode !== "steady" ||
+        solver.turbulence !== "laminar"
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["meshMode"],
+          message: "Curved-elbow O-grid mode is limited to steady incompressible laminar flow."
+        });
+      }
+      if (!solver.curvedElbowVerification) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["curvedElbowVerification"],
+          message: "Curved-elbow O-grid mode requires the explicit canonical verification request."
+        });
+      }
+      if (suppliedElbowCounts !== elbowCounts.length) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["meshControls"],
+          message: "The curved-elbow verification contract requires exact six-dimensional cell counts."
+        });
+      }
+    }
+    if (solver.curvedElbowVerification && solver.meshMode !== "curved-elbow-ogrid") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["curvedElbowVerification"],
+        message: "The curved-elbow verification contract requires curved-elbow-ogrid mesh mode."
+      });
     }
     if (solver.axisymmetricBenchmark) {
       if (solver.meshMode !== "axisymmetric") {
@@ -691,6 +769,68 @@ function validateFullOGrid(project: FluidProject): string | null {
   return null;
 }
 
+function validateCurvedElbowOGrid(project: FluidProject): string | null {
+  if (project.solver.meshMode !== "curved-elbow-ogrid") return null;
+  const nodes = Object.values(project.nodes);
+  const edges = Object.values(project.edges);
+  if (nodes.length !== 2 || edges.length !== 1) {
+    return "Curved-elbow O-grid mode requires exactly one source, one sink, and one bounded bend edge.";
+  }
+  const edge = edges[0];
+  const source = project.nodes[edge.from];
+  const sink = project.nodes[edge.to];
+  if (!source || !sink || source.type !== "source" || sink.type !== "sink") {
+    return "Curved-elbow path must connect one source directly to one sink.";
+  }
+  if (edge.type !== "bend" || edge.shape.kind !== "circular") {
+    return "Curved-elbow O-grid mode supports only one circular bend edge.";
+  }
+  if (
+    edge.outletDiameter !== undefined
+    && Math.abs(edge.outletDiameter - edge.shape.diameter)
+      > Math.max(1e-15, edge.shape.diameter * 1e-12)
+  ) {
+    return "Curved-elbow O-grid mode requires one constant diameter.";
+  }
+  const verification = project.solver.curvedElbowVerification;
+  if (!verification) return "Curved-elbow O-grid mode requires its explicit verification request.";
+  const matches = (left: number, right: number) =>
+    Math.abs(left - right) <= Math.max(1e-15, Math.abs(right) * 1e-12);
+  if (!matches(verification.diameterM, edge.shape.diameter)) {
+    return "Curved-elbow verification diameter must match the bend edge diameter.";
+  }
+  if (!matches(verification.centrelineRadiusM / verification.diameterM, 3)) {
+    return "Curved-elbow O-grid mode requires centreline radius Rc/D=3.";
+  }
+  if (!matches(verification.inletLegLengthM / verification.diameterM, 10)) {
+    return "Curved-elbow O-grid mode requires an exact 10D inlet leg.";
+  }
+  if (!matches(verification.outletLegLengthM / verification.diameterM, 10)) {
+    return "Curved-elbow O-grid mode requires an exact 10D outlet leg.";
+  }
+  const totalLength =
+    verification.inletLegLengthM
+    + verification.centrelineRadiusM * Math.PI / 2
+    + verification.outletLegLengthM;
+  if (!matches(edge.length, totalLength)) {
+    return "Curved-elbow edge length must equal its inlet leg, 90-degree centreline arc, and outlet leg.";
+  }
+  if (source.position.x === sink.position.x && source.position.y === sink.position.y) {
+    return "Curved-elbow source and sink require distinct editor positions.";
+  }
+  const area = Math.PI * edge.shape.diameter ** 2 / 4;
+  const meanVelocity = verification.volumetricFlowRateM3PerS / area;
+  const reynolds =
+    project.fluid.density
+    * meanVelocity
+    * edge.shape.diameter
+    / project.fluid.dynamicViscosity;
+  if (Math.abs(reynolds - 100) > 1) {
+    return "Curved-elbow verification request requires Reynolds number approximately 100.";
+  }
+  return null;
+}
+
 export function parseProject(input: unknown, options: ParseProjectOptions = {}): { ok: true; project: FluidProject } | { ok: false; message: string } {
   const parsed = projectSchema.safeParse(input);
   if (!parsed.success) {
@@ -702,6 +842,8 @@ export function parseProject(input: unknown, options: ParseProjectOptions = {}):
   const project = normalizeProject(parsed.data as FluidProject);
   const fullOGridError = validateFullOGrid(project);
   if (fullOGridError) return { ok: false, message: fullOGridError };
+  const curvedElbowError = validateCurvedElbowOGrid(project);
+  if (curvedElbowError) return { ok: false, message: curvedElbowError };
   const validationError = validateNetwork(project);
   if (validationError) return { ok: false, message: validationError };
   if (!options.allowTopologyWarnings) {

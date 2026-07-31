@@ -3362,6 +3362,17 @@ def validate_solver_case(case: SolverCase) -> list[str]:
             isinstance(full_ogrid_profile, dict)
             and full_ogrid_profile.get("schema") == "flowlab.full-ogrid-profile.v1"
         )
+        try:
+            curved_elbow_profile = json.loads(
+                files.get("constant/flowlab_curved_elbow_profile.json", "")
+            )
+        except json.JSONDecodeError:
+            curved_elbow_profile = {}
+        is_curved_elbow = (
+            isinstance(curved_elbow_profile, dict)
+            and curved_elbow_profile.get("schema")
+            == "flowlab.curved-elbow-ogrid-profile.v1"
+        )
         if is_axisymmetric_wedge:
             try:
                 axisymmetric_profile = json.loads(files.get("constant/flowlab_axisymmetric_profile.json", ""))
@@ -3494,11 +3505,254 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                     issues.append("OpenFOAM full O-grid verification requires a discrete-flux-normalized parabolic inlet and pressure-coupled outlet.")
                 if "residualControl" not in files.get("system/fvSolution", ""):
                     issues.append("OpenFOAM full O-grid verification requires direct steady SIMPLE residual controls.")
+        if is_curved_elbow:
+            if (
+                curved_elbow_profile.get("effectiveMeshMode")
+                != "canonical-90deg-circular-elbow-fifteen-block-ogrid"
+            ):
+                issues.append(
+                    "OpenFOAM curved-elbow profile must declare the canonical 15-block representation."
+                )
+            topology = (
+                curved_elbow_profile.get("topology")
+                if isinstance(curved_elbow_profile.get("topology"), dict)
+                else {}
+            )
+            resolution = (
+                topology.get("resolution")
+                if isinstance(topology.get("resolution"), dict)
+                else {}
+            )
+            interfaces = (
+                topology.get("interfaces")
+                if isinstance(topology.get("interfaces"), dict)
+                else {}
+            )
+            geometry = (
+                topology.get("geometry")
+                if isinstance(topology.get("geometry"), dict)
+                else {}
+            )
+            try:
+                circumference = int(resolution["circumferentialCells"])
+                core = int(resolution["coreCellsPerSide"])
+                expected_cells = int(resolution["cellCount"])
+            except (KeyError, TypeError, ValueError):
+                circumference = core = expected_cells = 0
+            if (
+                topology.get("spatialDimension") != 3
+                or topology.get("blockCount") != 15
+                or topology.get("cellTypes") != ["hex"]
+                or topology.get("collapsedAxisCells") != 0
+                or circumference < 16
+                or circumference % 4 != 0
+                or core != circumference // 4
+                or expected_cells <= 0
+            ):
+                issues.append(
+                    "OpenFOAM curved-elbow profile has an invalid or non-conformal topology contract."
+                )
+            if (
+                interfaces.get("centerWallCountPerComponent") != 4
+                or interfaces.get("longitudinalComponentCount") != 2
+                or interfaces.get("treatment")
+                != "shared-vertex-conformal-internal-faces"
+                or interfaces.get("boundaryPatchCount") != 0
+            ):
+                issues.append(
+                    "OpenFOAM curved-elbow interfaces must remain shared-vertex conformal internal faces."
+                )
+            if (
+                not math.isclose(
+                    float(geometry.get("centrelineRadiusOverDiameter", 0.0)),
+                    3.0,
+                    rel_tol=1.0e-12,
+                )
+                or not math.isclose(
+                    float(geometry.get("inletLegOverDiameter", 0.0)),
+                    10.0,
+                    rel_tol=1.0e-12,
+                )
+                or not math.isclose(
+                    float(geometry.get("outletLegOverDiameter", 0.0)),
+                    10.0,
+                    rel_tol=1.0e-12,
+                )
+                or not math.isclose(
+                    float(geometry.get("bendAngleDegrees", 0.0)),
+                    90.0,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                )
+            ):
+                issues.append(
+                    "OpenFOAM curved-elbow geometry must remain the bounded 90-degree Rc/D=3, 10D/10D case."
+                )
+            if block_mesh.count("    hex (") != 15:
+                issues.append(
+                    "OpenFOAM curved-elbow blockMeshDict must contain exactly 15 hexahedral blocks."
+                )
+            if any(
+                token in block_mesh
+                for token in ("type wedge", "frontAndBack", "neighbourPatch")
+            ):
+                issues.append(
+                    "OpenFOAM curved-elbow blockMeshDict cannot contain wedge, planar, or cyclic proxy patches."
+                )
+            try:
+                elbow_preview = json.loads(files.get("mesh/flowlab_mesh.json", ""))
+            except json.JSONDecodeError:
+                elbow_preview = {}
+            spans = (
+                elbow_preview.get("boundsSpanM")
+                if isinstance(elbow_preview, dict)
+                else None
+            )
+            cells = (
+                elbow_preview.get("cells")
+                if isinstance(elbow_preview, dict)
+                else None
+            )
+            cell_types = (
+                elbow_preview.get("cellTypes")
+                if isinstance(elbow_preview, dict)
+                else None
+            )
+            regions = (
+                elbow_preview.get("regions")
+                if isinstance(elbow_preview, dict)
+                else None
+            )
+            volume_quality = (
+                elbow_preview.get("volumeQuality")
+                if isinstance(elbow_preview, dict)
+                and isinstance(elbow_preview.get("volumeQuality"), dict)
+                else {}
+            )
+            region_ids = [
+                region.get("componentId")
+                for region in regions
+                if isinstance(region, dict)
+            ] if isinstance(regions, list) else []
+            if (
+                elbow_preview.get("spatialDimension") != 3
+                or elbow_preview.get("representation")
+                != "pre-solve-blockMesh-equivalent-curved-elbow-ogrid"
+                or elbow_preview.get("proxyGeometry") is not False
+                or elbow_preview.get("requiresExplicitSourceCellProvenance")
+                is not True
+                or not isinstance(spans, list)
+                or len(spans) != 3
+                or any(
+                    not isinstance(value, int | float) or value <= 0
+                    for value in spans
+                )
+                or not isinstance(cells, list)
+                or len(cells) != expected_cells
+                or not isinstance(cell_types, list)
+                or len(cell_types) != expected_cells
+                or any(cell_type != 12 for cell_type in cell_types)
+                or region_ids != ["inlet-leg", "elbow", "outlet-leg"]
+                or sum(
+                    int(region.get("cellCount", 0))
+                    for region in regions
+                    if isinstance(region, dict)
+                )
+                != expected_cells
+                or volume_quality.get("positiveVolume") is not True
+                or volume_quality.get("zeroVolumeCellCount") != 0
+            ):
+                issues.append(
+                    "OpenFOAM curved-elbow requires a positive-volume, full-extent 3D all-hex inspection mesh with explicit component provenance."
+                )
+            verification_contract = curved_elbow_profile.get(
+                "verificationContract"
+            )
+            if not isinstance(verification_contract, dict) or (
+                verification_contract.get("schema")
+                != "flowlab.curved-elbow-verification-request.v1"
+                or verification_contract.get("status")
+                != "prospective-request-not-validation"
+                or verification_contract.get("boundaryCondition")
+                != "fully-developed-parabolic-inlet-pressure-outlet"
+            ):
+                issues.append(
+                    "OpenFOAM curved-elbow verification request has an unsupported prospective contract."
+                )
+            velocity_field = files.get("0/U", "")
+            if (
+                "curvedElbowParabolicInlet" not in velocity_field
+                or "targetFlow/weightedArea" not in velocity_field
+                or "pressureInletOutletVelocity" not in velocity_field
+            ):
+                issues.append(
+                    "OpenFOAM curved-elbow verification requires a discrete-flux-normalized parabolic inlet and pressure-coupled outlet."
+                )
+            if "residualControl" not in files.get("system/fvSolution", ""):
+                issues.append(
+                    "OpenFOAM curved-elbow verification requires direct steady SIMPLE residual controls."
+                )
+            try:
+                probe_provenance = json.loads(
+                    files.get(
+                        "constant/flowlab_curved_elbow_probe_provenance.json",
+                        "",
+                    )
+                )
+            except json.JSONDecodeError:
+                probe_provenance = {}
+            probe_rows = (
+                probe_provenance.get("probes")
+                if isinstance(probe_provenance.get("probes"), list)
+                else []
+            )
+            profile_components = (
+                curved_elbow_profile.get("components")
+                if isinstance(curved_elbow_profile.get("components"), list)
+                else []
+            )
+            expected_component_ranges = {
+                str(row.get("componentId")): {
+                    "cellStart": int(row.get("cellStart", -1)),
+                    "cellCount": int(row.get("cellCount", -1)),
+                }
+                for row in profile_components
+                if isinstance(row, dict)
+            }
+            if (
+                probe_provenance.get("schema")
+                != "flowlab.curved-elbow-probe-provenance.v1"
+                or probe_provenance.get("probeFunctionObject")
+                != "curvedElbowXYZProbes"
+                or probe_provenance.get("sourceCellIdentity")
+                != "result-component-map-v2-cell-ranges"
+                or probe_provenance.get(
+                    "geometryInferredOwnershipAllowed"
+                )
+                is not False
+                or probe_provenance.get("probeCount") != 7
+                or len(probe_rows) != 7
+                or any(
+                    row.get("geometryInferredOwnership") is not False
+                    or row.get("ownershipMethod")
+                    != "explicit-result-component-map-v2-cell-range"
+                    or row.get("sourceCellRange")
+                    != expected_component_ranges.get(
+                        str(row.get("componentId"))
+                    )
+                    for row in probe_rows
+                    if isinstance(row, dict)
+                )
+                or any(not isinstance(row, dict) for row in probe_rows)
+            ):
+                issues.append(
+                    "OpenFOAM curved-elbow probes require explicit, non-geometric source-cell component provenance."
+                )
         expected_block_patches = (
             ("inlet", "outlet", "walls", "front", "back")
             if is_axisymmetric_wedge
             else ("inlet", "outlet", "walls")
-            if is_full_ogrid
+            if is_full_ogrid or is_curved_elbow
             else ("inlet", "outlet", "walls", "frontAndBack")
         )
         for patch in expected_block_patches:
@@ -3597,7 +3851,9 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                         issues.append(f"`constant/flowlab_patch_metrics.json` is missing {role} patch `{patch_name}`.")
             manifest_functions = patch_metrics_manifest.get("functionObjects") if isinstance(patch_metrics_manifest.get("functionObjects"), list) else []
         profile_probe_name = (
-            "fullOGridXYZProbes"
+            "curvedElbowXYZProbes"
+            if is_curved_elbow
+            else "fullOGridXYZProbes"
             if is_full_ogrid
             else "axisymmetricProfileProbes"
             if is_axisymmetric_wedge
@@ -4831,7 +5087,11 @@ def _apply_openfoam_runtime_style(case_dir: Path, style: str, lines: list[str]) 
 
 
 def _openfoam_required_mesh_commands(case_dir: Path, *, skip_snappy: bool = False) -> list[str]:
-    if _openfoam_case_is_axisymmetric_wedge(case_dir) or _openfoam_case_is_full_ogrid(case_dir):
+    if (
+        _openfoam_case_is_axisymmetric_wedge(case_dir)
+        or _openfoam_case_is_full_ogrid(case_dir)
+        or _openfoam_case_is_curved_elbow(case_dir)
+    ):
         commands = ["checkMesh"]
         if not _openfoam_has_base_mesh(case_dir):
             commands.insert(0, "blockMesh")
@@ -4881,6 +5141,34 @@ def _openfoam_case_is_full_ogrid(case_dir: Path) -> bool:
         profile.get("schema") == "flowlab.full-ogrid-profile.v1"
         and profile.get("effectiveMeshMode") == "full-revolution-five-block-ogrid"
         and topology.get("blockCount") == 5
+        and topology.get("collapsedAxisCells") == 0
+    )
+
+
+def _openfoam_case_is_curved_elbow(case_dir: Path) -> bool:
+    """Recognize only the manifest-bound canonical 15-block elbow O-grid."""
+
+    try:
+        profile = json.loads(
+            (
+                case_dir
+                / "constant"
+                / "flowlab_curved_elbow_profile.json"
+            ).read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return False
+    topology = (
+        profile.get("topology")
+        if isinstance(profile, dict)
+        and isinstance(profile.get("topology"), dict)
+        else {}
+    )
+    return (
+        profile.get("schema") == "flowlab.curved-elbow-ogrid-profile.v1"
+        and profile.get("effectiveMeshMode")
+        == "canonical-90deg-circular-elbow-fifteen-block-ogrid"
+        and topology.get("blockCount") == 15
         and topology.get("collapsedAxisCells") == 0
     )
 
@@ -5501,7 +5789,10 @@ class JobManager:
         cad_reviewed = starter_geometry.get("cadReviewed") is True
         is_axisymmetric_wedge = _openfoam_case_is_axisymmetric_wedge(case_dir)
         is_full_ogrid = _openfoam_case_is_full_ogrid(case_dir)
-        is_direct_block_mesh = is_axisymmetric_wedge or is_full_ogrid
+        is_curved_elbow = _openfoam_case_is_curved_elbow(case_dir)
+        is_direct_block_mesh = (
+            is_axisymmetric_wedge or is_full_ogrid or is_curved_elbow
+        )
         skip_snappy_for_starter = _openfoam_uses_starter_fitted_mesh(case_dir, handoff) or is_direct_block_mesh
         _, missing_boundary_tags, _ = _reviewed_boundary_tag_status(starter_geometry)
         _, missing_surface_roles, _, required_patch_names = _reviewed_surface_status(surface_geometry)
@@ -5510,6 +5801,9 @@ class JobManager:
             required_patch_names = ["inlet", "outlet", "walls", "front", "back", "axis"]
             missing_boundary_tags = []
         elif is_full_ogrid:
+            required_patch_names = ["inlet", "outlet", "walls"]
+            missing_boundary_tags = []
+        elif is_curved_elbow:
             required_patch_names = ["inlet", "outlet", "walls"]
             missing_boundary_tags = []
 
@@ -5545,7 +5839,13 @@ class JobManager:
                 return "; ".join(str(item) for item in blockers) or "Missing OpenFOAM native mesh command."
 
         if is_direct_block_mesh:
-            geometry_label = "axisymmetric blockMesh wedge" if is_axisymmetric_wedge else "full-revolution blockMesh O-grid"
+            geometry_label = (
+                "axisymmetric blockMesh wedge"
+                if is_axisymmetric_wedge
+                else "full-revolution blockMesh O-grid"
+                if is_full_ogrid
+                else "canonical curved-elbow blockMesh O-grid"
+            )
             command_runs.append(
                 {
                     "command": "surfaceFeatureExtract",
@@ -5642,6 +5942,8 @@ class JobManager:
                 if is_axisymmetric_wedge
                 else "Full O-grid geometry is fully defined by blockMesh; surface extraction and snappyHexMesh are not applicable."
                 if is_full_ogrid
+                else "Canonical curved-elbow O-grid geometry is fully defined by blockMesh; surface extraction and snappyHexMesh are not applicable."
+                if is_curved_elbow
                 else "Skipped for FlowLab-generated fitted starter polyMesh with empty front/back patches; production reviewed STL meshing still requires snappyHexMesh evidence."
             )
             command_runs.append(
@@ -5659,6 +5961,11 @@ class JobManager:
                 self._append_log(job_id, "OpenFOAM native mesh: skipping snappyHexMesh for axisymmetric blockMesh wedge.")
             elif is_full_ogrid:
                 self._append_log(job_id, "OpenFOAM native mesh: skipping snappyHexMesh for full-revolution blockMesh O-grid.")
+            elif is_curved_elbow:
+                self._append_log(
+                    job_id,
+                    "OpenFOAM native mesh: skipping snappyHexMesh for canonical curved-elbow blockMesh O-grid.",
+                )
             else:
                 self._append_log(
                     job_id,

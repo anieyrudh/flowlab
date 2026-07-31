@@ -830,7 +830,8 @@ export function verifiedResultComponentLink(
     return { state: "unlinked", message: "Probed result cell has no unique verified schematic owner — probe only." };
   }
   const edge = currentProject.edges[owners[0].edgeId];
-  return { state: "linked", edgeId: edge.id, message: `Verified cell link: ${edge.label}` };
+  const component = owners[0].componentId ? ` / ${owners[0].componentId}` : "";
+  return { state: "linked", edgeId: edge.id, message: `Verified cell link: ${edge.label}${component}` };
 }
 
 export default function App() {
@@ -3392,6 +3393,11 @@ function MeshControlsPanel({
     medium: { axial: 32, annular: 8, circumference: 64, core: 16 },
     fine: { axial: 64, annular: 16, circumference: 128, core: 32 }
   }[solver.meshResolution];
+  const curvedElbowDefaults = {
+    coarse: { inlet: 20, bend: 12, outlet: 20, annular: 2, circumference: 16, core: 4 },
+    medium: { inlet: 40, bend: 24, outlet: 40, annular: 4, circumference: 32, core: 8 },
+    fine: { inlet: 80, bend: 48, outlet: 80, annular: 8, circumference: 64, core: 16 }
+  }[solver.meshResolution];
 
   function fullOGridControls(
     patch: Partial<{ axial: number; annular: number; circumference: number; core: number }> = {}
@@ -3402,6 +3408,30 @@ function MeshControlsPanel({
       fullOGridAnnularRadialCells: patch.annular ?? controls.fullOGridAnnularRadialCells ?? fullOGridDefaults.annular,
       fullOGridCircumferentialCells: patch.circumference ?? controls.fullOGridCircumferentialCells ?? fullOGridDefaults.circumference,
       fullOGridCoreCellsPerSide: patch.core ?? controls.fullOGridCoreCellsPerSide ?? fullOGridDefaults.core
+    };
+  }
+
+  function curvedElbowControls(
+    patch: Partial<{
+      inlet: number;
+      bend: number;
+      outlet: number;
+      annular: number;
+      circumference: number;
+      core: number;
+    }> = {}
+  ) {
+    return {
+      ...controls,
+      curvedElbowInletAxialCells: patch.inlet ?? controls.curvedElbowInletAxialCells ?? curvedElbowDefaults.inlet,
+      curvedElbowBendAxialCells: patch.bend ?? controls.curvedElbowBendAxialCells ?? curvedElbowDefaults.bend,
+      curvedElbowOutletAxialCells: patch.outlet ?? controls.curvedElbowOutletAxialCells ?? curvedElbowDefaults.outlet,
+      curvedElbowAnnularRadialCells: patch.annular ?? controls.curvedElbowAnnularRadialCells ?? curvedElbowDefaults.annular,
+      curvedElbowCircumferentialCells:
+        patch.circumference
+        ?? controls.curvedElbowCircumferentialCells
+        ?? curvedElbowDefaults.circumference,
+      curvedElbowCoreCellsPerSide: patch.core ?? controls.curvedElbowCoreCellsPerSide ?? curvedElbowDefaults.core
     };
   }
 
@@ -3448,13 +3478,50 @@ function MeshControlsPanel({
           onChange={(event) => {
             const meshResolution = event.target.value as SolverSettings["meshResolution"];
             const defaults = {
-              coarse: { fullOGridAxialCells: 16, fullOGridAnnularRadialCells: 4, fullOGridCircumferentialCells: 32, fullOGridCoreCellsPerSide: 8 },
-              medium: { fullOGridAxialCells: 32, fullOGridAnnularRadialCells: 8, fullOGridCircumferentialCells: 64, fullOGridCoreCellsPerSide: 16 },
-              fine: { fullOGridAxialCells: 64, fullOGridAnnularRadialCells: 16, fullOGridCircumferentialCells: 128, fullOGridCoreCellsPerSide: 32 }
+              coarse: {
+                fullOGridAxialCells: 16,
+                fullOGridAnnularRadialCells: 4,
+                fullOGridCircumferentialCells: 32,
+                fullOGridCoreCellsPerSide: 8,
+                curvedElbowInletAxialCells: 20,
+                curvedElbowBendAxialCells: 12,
+                curvedElbowOutletAxialCells: 20,
+                curvedElbowAnnularRadialCells: 2,
+                curvedElbowCircumferentialCells: 16,
+                curvedElbowCoreCellsPerSide: 4
+              },
+              medium: {
+                fullOGridAxialCells: 32,
+                fullOGridAnnularRadialCells: 8,
+                fullOGridCircumferentialCells: 64,
+                fullOGridCoreCellsPerSide: 16,
+                curvedElbowInletAxialCells: 40,
+                curvedElbowBendAxialCells: 24,
+                curvedElbowOutletAxialCells: 40,
+                curvedElbowAnnularRadialCells: 4,
+                curvedElbowCircumferentialCells: 32,
+                curvedElbowCoreCellsPerSide: 8
+              },
+              fine: {
+                fullOGridAxialCells: 64,
+                fullOGridAnnularRadialCells: 16,
+                fullOGridCircumferentialCells: 128,
+                fullOGridCoreCellsPerSide: 32,
+                curvedElbowInletAxialCells: 80,
+                curvedElbowBendAxialCells: 48,
+                curvedElbowOutletAxialCells: 80,
+                curvedElbowAnnularRadialCells: 8,
+                curvedElbowCircumferentialCells: 64,
+                curvedElbowCoreCellsPerSide: 16
+              }
             }[meshResolution];
             onSolverChange({
               meshResolution,
-              ...(solver.meshMode === "full-ogrid" ? { meshControls: { ...controls, ...defaults } } : {})
+              ...(
+                solver.meshMode === "full-ogrid" || solver.meshMode === "curved-elbow-ogrid"
+                  ? { meshControls: { ...controls, ...defaults } }
+                  : {}
+              )
             });
           }}
         >
@@ -3492,6 +3559,13 @@ function MeshControlsPanel({
                       turbulence: "laminar",
                       meshControls: fullOGridControls()
                     }
+                  : meshMode === "curved-elbow-ogrid"
+                  ? {
+                      meshMode,
+                      runMode: "steady",
+                      turbulence: "laminar",
+                      meshControls: curvedElbowControls()
+                    }
                   : { meshMode }
               );
             }}
@@ -3499,6 +3573,7 @@ function MeshControlsPanel({
             <option value="planar-2d">Planar 2D (default)</option>
             <option value="axisymmetric">Axisymmetric (3D pipe)</option>
             <option value="full-ogrid">Full 360 O-grid (straight pipe)</option>
+            <option value="curved-elbow-ogrid">Canonical 90° elbow O-grid</option>
           </select>
         </label>
       )}
@@ -3549,6 +3624,79 @@ function MeshControlsPanel({
               step={1}
               value={controls.fullOGridCoreCellsPerSide ?? fullOGridDefaults.core}
               onChange={(event) => onMeshControlsChange(fullOGridControls({ core: Number(event.target.value) }))}
+            />
+          </label>
+        </div>
+      ) : null}
+      {solver.meshMode === "curved-elbow-ogrid" ? (
+        <div className="mesh-control-grid" aria-label="Curved-elbow exact cell controls">
+          <label>
+            Inlet axial
+            <input
+              aria-label="Curved-elbow inlet axial cells"
+              type="number"
+              min={4}
+              step={1}
+              value={controls.curvedElbowInletAxialCells ?? curvedElbowDefaults.inlet}
+              onChange={(event) => onMeshControlsChange(curvedElbowControls({ inlet: Number(event.target.value) }))}
+            />
+          </label>
+          <label>
+            Bend axial
+            <input
+              aria-label="Curved-elbow bend axial cells"
+              type="number"
+              min={4}
+              step={1}
+              value={controls.curvedElbowBendAxialCells ?? curvedElbowDefaults.bend}
+              onChange={(event) => onMeshControlsChange(curvedElbowControls({ bend: Number(event.target.value) }))}
+            />
+          </label>
+          <label>
+            Outlet axial
+            <input
+              aria-label="Curved-elbow outlet axial cells"
+              type="number"
+              min={4}
+              step={1}
+              value={controls.curvedElbowOutletAxialCells ?? curvedElbowDefaults.outlet}
+              onChange={(event) => onMeshControlsChange(curvedElbowControls({ outlet: Number(event.target.value) }))}
+            />
+          </label>
+          <label>
+            Annular radial
+            <input
+              aria-label="Curved-elbow annular radial cells"
+              type="number"
+              min={2}
+              step={1}
+              value={controls.curvedElbowAnnularRadialCells ?? curvedElbowDefaults.annular}
+              onChange={(event) => onMeshControlsChange(curvedElbowControls({ annular: Number(event.target.value) }))}
+            />
+          </label>
+          <label>
+            Circumference
+            <input
+              aria-label="Curved-elbow circumferential cells"
+              type="number"
+              min={16}
+              step={4}
+              value={controls.curvedElbowCircumferentialCells ?? curvedElbowDefaults.circumference}
+              onChange={(event) => {
+                const circumference = Number(event.target.value);
+                onMeshControlsChange(curvedElbowControls({ circumference, core: circumference / 4 }));
+              }}
+            />
+          </label>
+          <label>
+            Core side
+            <input
+              aria-label="Curved-elbow core cells per side"
+              type="number"
+              min={4}
+              step={1}
+              value={controls.curvedElbowCoreCellsPerSide ?? curvedElbowDefaults.core}
+              onChange={(event) => onMeshControlsChange(curvedElbowControls({ core: Number(event.target.value) }))}
             />
           </label>
         </div>

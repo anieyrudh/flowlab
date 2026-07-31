@@ -21,6 +21,14 @@ from .full_ogrid import (
     block_mesh_dict as full_ogrid_block_mesh_dict,
     preview_mesh as full_ogrid_preview_mesh,
 )
+from .curved_elbow import (
+    CURVED_ELBOW_PROFILE_SCHEMA,
+    CURVED_ELBOW_REPRESENTATION,
+    CURVED_ELBOW_VERIFICATION_SCHEMA,
+    CurvedElbowSpec,
+    block_mesh_dict as curved_elbow_block_mesh_dict,
+    preview_mesh as curved_elbow_preview_mesh,
+)
 from .mesh import (
     VTK_HEXAHEDRON,
     generate_mesh_bundle,
@@ -271,7 +279,15 @@ def _mesh_edge_cell_ranges(
             return None
         if cell_start < 0 or cell_start + cell_count > len(cells):
             return None
-        ranges.append({"edgeId": edge_id, "cellStart": cell_start, "cellCount": cell_count})
+        cell_range: dict[str, int | str] = {
+            "edgeId": edge_id,
+            "cellStart": cell_start,
+            "cellCount": cell_count,
+        }
+        component_id = region.get("componentId")
+        if isinstance(component_id, str) and component_id:
+            cell_range["componentId"] = component_id
+        ranges.append(cell_range)
 
     if not ranges or {str(item["edgeId"]) for item in ranges} != project_edge_ids:
         return None
@@ -310,7 +326,18 @@ def _result_component_map(
     # manifest before it permits a selection link.
     canonical_project = project_snapshot if isinstance(project_snapshot, str) else json.dumps(project, separators=(",", ":"), sort_keys=True)
     project_sha256 = hashlib.sha256(canonical_project.encode("utf-8")).hexdigest()
-    if len(edges) == 1:
+    explicit_range_map = _mesh_edge_cell_ranges(project, mesh_snapshot)
+    requires_explicit_ranges = False
+    if isinstance(mesh_snapshot, str):
+        try:
+            mesh_manifest = json.loads(mesh_snapshot)
+        except json.JSONDecodeError:
+            mesh_manifest = {}
+        requires_explicit_ranges = (
+            isinstance(mesh_manifest, dict)
+            and mesh_manifest.get("requiresExplicitSourceCellProvenance") is True
+        )
+    if len(edges) == 1 and not requires_explicit_ranges:
         edge_id = edges[0].get("id")
         if not isinstance(edge_id, str) or not edge_id:
             return None
@@ -322,7 +349,7 @@ def _result_component_map(
 
     if solver != "openfoam":
         return None
-    range_map = _mesh_edge_cell_ranges(project, mesh_snapshot)
+    range_map = explicit_range_map
     if range_map is None:
         return None
     source_cell_count, cell_ranges = range_map
@@ -1020,10 +1047,21 @@ FULL_OGRID_LEVELS: dict[str, tuple[int, int, int, int]] = {
     "fine": (64, 16, 128, 32),
 }
 
+CURVED_ELBOW_LEVELS: dict[str, tuple[int, int, int, int, int, int]] = {
+    "coarse": (20, 12, 20, 2, 16, 4),
+    "medium": (40, 24, 40, 4, 32, 8),
+    "fine": (80, 48, 80, 8, 64, 16),
+}
+
 
 def _openfoam_full_ogrid_mode_requested(project: dict[str, Any] | None) -> bool:
     solver = project.get("solver") if isinstance(project, dict) and isinstance(project.get("solver"), dict) else {}
     return str(solver.get("meshMode", "planar-2d")).strip().lower() == "full-ogrid"
+
+
+def _openfoam_curved_elbow_mode_requested(project: dict[str, Any] | None) -> bool:
+    solver = project.get("solver") if isinstance(project, dict) and isinstance(project.get("solver"), dict) else {}
+    return str(solver.get("meshMode", "planar-2d")).strip().lower() == "curved-elbow-ogrid"
 
 
 def _full_ogrid_positive_number(value: Any, label: str) -> float:
@@ -1061,6 +1099,37 @@ def _full_ogrid_cell_controls(project: dict[str, Any]) -> tuple[int, int, int, i
         return FULL_OGRID_LEVELS[resolution]
     except KeyError as exc:
         raise ValueError("Full O-grid mesh resolution must be coarse, medium, or fine.") from exc
+
+
+def _curved_elbow_cell_controls(
+    project: dict[str, Any],
+) -> tuple[int, int, int, int, int, int]:
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    controls = solver.get("meshControls") if isinstance(solver.get("meshControls"), dict) else {}
+    keys = (
+        "curvedElbowInletAxialCells",
+        "curvedElbowBendAxialCells",
+        "curvedElbowOutletAxialCells",
+        "curvedElbowAnnularRadialCells",
+        "curvedElbowCircumferentialCells",
+        "curvedElbowCoreCellsPerSide",
+    )
+    supplied = [controls.get(key) is not None for key in keys]
+    if any(supplied) and not all(supplied):
+        raise ValueError(
+            "Exact curved-elbow inlet, bend, outlet, annular-radial, "
+            "circumferential, and core cell counts must be supplied together."
+        )
+    if all(supplied):
+        values = tuple(controls[key] for key in keys)
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+            raise ValueError("Exact curved-elbow cell controls must be integers.")
+        return values  # type: ignore[return-value]
+    resolution = str(solver.get("meshResolution", "coarse")).strip().lower()
+    try:
+        return CURVED_ELBOW_LEVELS[resolution]
+    except KeyError as exc:
+        raise ValueError("Curved-elbow mesh resolution must be coarse, medium, or fine.") from exc
 
 
 def _full_ogrid_verification_request(
@@ -1252,6 +1321,252 @@ def _openfoam_full_ogrid_profile(
     return profile
 
 
+def _curved_elbow_verification_request(
+    project: dict[str, Any],
+    *,
+    spec: CurvedElbowSpec,
+) -> dict[str, Any]:
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    raw = solver.get("curvedElbowVerification")
+    if not isinstance(raw, dict):
+        raise ValueError(
+            "Curved-elbow O-grid mode requires an explicit curvedElbowVerification object."
+        )
+    if raw.get("contractId") != "canonical-circular-elbow-re100-v1":
+        raise ValueError("The curved-elbow verification request has an unsupported contractId.")
+    boundary = "fully-developed-parabolic-inlet-pressure-outlet"
+    if raw.get("boundaryCondition") != boundary:
+        raise ValueError(
+            "The curved-elbow verification request requires a fully-developed "
+            "parabolic inlet and pressure outlet."
+        )
+    exact_geometry = {
+        "diameterM": spec.diameter_m,
+        "centrelineRadiusM": spec.centreline_radius_m,
+        "inletLegLengthM": spec.inlet_leg_m,
+        "outletLegLengthM": spec.outlet_leg_m,
+        "bendAngleDegrees": spec.bend_angle_degrees,
+    }
+    for key, expected in exact_geometry.items():
+        supplied = _full_ogrid_positive_number(raw.get(key), f"curved-elbow {key}")
+        if not math.isclose(supplied, expected, rel_tol=1.0e-12, abs_tol=1.0e-15):
+            raise ValueError(f"The curved-elbow verification {key} must match the bounded geometry.")
+    flow_rate = _full_ogrid_positive_number(
+        raw.get("volumetricFlowRateM3PerS"),
+        "curved-elbow volumetricFlowRateM3PerS",
+    )
+    if raw.get("qoiHistoryWriteIntervalIterations") != 1:
+        raise ValueError(
+            "The curved-elbow verification request requires "
+            "qoiHistoryWriteIntervalIterations=1."
+        )
+    conditions = _case_conditions(project)
+    analytic_area = math.pi * spec.radius_m**2
+    mean_velocity = flow_rate / analytic_area
+    reynolds = (
+        conditions.density
+        * mean_velocity
+        * spec.diameter_m
+        / conditions.dynamic_viscosity
+    )
+    if not math.isclose(reynolds, 100.0, rel_tol=0.01, abs_tol=0.0):
+        raise ValueError("The bounded curved-elbow verification request requires Reynolds number approximately 100.")
+    return {
+        "schema": CURVED_ELBOW_VERIFICATION_SCHEMA,
+        "contractId": "canonical-circular-elbow-re100-v1",
+        "status": "prospective-request-not-validation",
+        "boundaryCondition": boundary,
+        "diameterM": spec.diameter_m,
+        "radiusM": spec.radius_m,
+        "centrelineRadiusM": spec.centreline_radius_m,
+        "centrelineRadiusOverDiameter": spec.centreline_radius_over_diameter,
+        "inletLegLengthM": spec.inlet_leg_m,
+        "outletLegLengthM": spec.outlet_leg_m,
+        "bendAngleDegrees": spec.bend_angle_degrees,
+        "targetVolumetricFlowRateM3PerS": flow_rate,
+        "analyticCircularAreaM2": analytic_area,
+        "meanVelocityTargetMPerS": mean_velocity,
+        "centerlineVelocityTargetMPerS": 2.0 * mean_velocity,
+        "densityKgPerM3": conditions.density,
+        "dynamicViscosityPaS": conditions.dynamic_viscosity,
+        "reynoldsNumber": reynolds,
+        "pressureFieldUnits": "m^2/s^2",
+        "pressureToPascalMultiplier": conditions.density,
+        "qoiHistoryWriteIntervalIterations": 1,
+        "resolution": spec.topology_manifest()["resolution"],
+        "qoiExtraction": {
+            "pressureLoss": "patchAverage(p,inlet) minus patchAverage(p,outlet), multiplied by densityKgPerM3",
+            "volumetricFlowRate": "signed surface sum(phi) on inlet and outlet",
+            "totalPressure": "volume-weighted cell-centred p+0.5|U|^2 at the first and last straight-leg cell planes",
+            "symmetry": "paired cell-centred p and U samples mirrored across z=0 using explicit source-cell identity",
+        },
+    }
+
+
+def _openfoam_curved_elbow_profile(
+    project: dict[str, Any],
+    advanced_mode: str,
+) -> dict[str, Any] | None:
+    """Compile exactly one bounded bend edge into the canonical elbow O-grid."""
+
+    if not _openfoam_curved_elbow_mode_requested(project):
+        return None
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    if advanced_mode != "incompressible-navier-stokes":
+        raise ValueError("Curved-elbow O-grid mode supports only incompressible Navier-Stokes.")
+    if str(solver.get("runMode", "")).strip().lower() != "steady":
+        raise ValueError("Curved-elbow O-grid mode requires a steady solver.")
+    if str(solver.get("turbulence", "")).strip().lower() != "laminar":
+        raise ValueError("Curved-elbow O-grid mode requires laminar flow.")
+
+    nodes = _project_nodes(project)
+    edges = _project_edges(project)
+    if len(nodes) != 2 or len(edges) != 1:
+        raise ValueError(
+            "Curved-elbow O-grid mode requires exactly one source, one sink, "
+            "and one bounded bend edge."
+        )
+    edge = edges[0]
+    nodes_by_id = {str(node.get("id") or ""): node for node in nodes}
+    if len(nodes_by_id) != 2 or "" in nodes_by_id:
+        raise ValueError("Curved-elbow editor nodes require unique non-empty IDs.")
+    source_id = str(edge.get("from") or "")
+    sink_id = str(edge.get("to") or "")
+    source = nodes_by_id.get(source_id)
+    sink = nodes_by_id.get(sink_id)
+    if source is None or sink is None or source.get("type") != "source" or sink.get("type") != "sink":
+        raise ValueError("Curved-elbow path must connect one source directly to one sink.")
+    if edge.get("type") != "bend":
+        raise ValueError("Curved-elbow O-grid mode supports only one bend edge.")
+    shape = edge.get("shape") if isinstance(edge.get("shape"), dict) else {}
+    if shape.get("kind") != "circular":
+        raise ValueError("Curved-elbow O-grid mode requires a circular section.")
+    diameter_m = _full_ogrid_positive_number(shape.get("diameter"), "curved-elbow diameter")
+    outlet_diameter_m = _full_ogrid_positive_number(
+        edge.get("outletDiameter", diameter_m),
+        "curved-elbow outlet diameter",
+    )
+    if not math.isclose(diameter_m, outlet_diameter_m, rel_tol=1.0e-12, abs_tol=1.0e-15):
+        raise ValueError("Curved-elbow O-grid mode requires one constant diameter.")
+    raw = solver.get("curvedElbowVerification")
+    if not isinstance(raw, dict):
+        raise ValueError(
+            "Curved-elbow O-grid mode requires an explicit curvedElbowVerification object."
+        )
+    centreline_radius = _full_ogrid_positive_number(
+        raw.get("centrelineRadiusM"),
+        "curved-elbow centrelineRadiusM",
+    )
+    inlet_leg = _full_ogrid_positive_number(
+        raw.get("inletLegLengthM"),
+        "curved-elbow inletLegLengthM",
+    )
+    outlet_leg = _full_ogrid_positive_number(
+        raw.get("outletLegLengthM"),
+        "curved-elbow outletLegLengthM",
+    )
+    bend_angle = _full_ogrid_positive_number(
+        raw.get("bendAngleDegrees"),
+        "curved-elbow bendAngleDegrees",
+    )
+    counts = _curved_elbow_cell_controls(project)
+    spec = CurvedElbowSpec(
+        diameter_m=diameter_m,
+        centreline_radius_m=centreline_radius,
+        inlet_leg_m=inlet_leg,
+        outlet_leg_m=outlet_leg,
+        inlet_axial_cells=counts[0],
+        bend_axial_cells=counts[1],
+        outlet_axial_cells=counts[2],
+        annular_radial_cells=counts[3],
+        circumferential_cells=counts[4],
+        core_cells_per_side=counts[5],
+        bend_angle_degrees=bend_angle,
+    )
+    if not math.isclose(spec.centreline_radius_over_diameter, 3.0, rel_tol=1.0e-12):
+        raise ValueError("The bounded curved-elbow O-grid requires centreline radius Rc/D=3.")
+    if not math.isclose(spec.inlet_leg_over_diameter, 10.0, rel_tol=1.0e-12):
+        raise ValueError("The bounded curved-elbow O-grid requires an inlet leg of exactly 10D.")
+    if not math.isclose(spec.outlet_leg_over_diameter, 10.0, rel_tol=1.0e-12):
+        raise ValueError("The bounded curved-elbow O-grid requires an outlet leg of exactly 10D.")
+    edge_length = _full_ogrid_positive_number(edge.get("length"), "curved-elbow edge length")
+    if not math.isclose(
+        edge_length,
+        spec.total_centreline_length_m,
+        rel_tol=1.0e-12,
+        abs_tol=1.0e-15,
+    ):
+        raise ValueError(
+            "The bounded curved-elbow edge length must equal inlet leg plus "
+            "90-degree centreline arc plus outlet leg."
+        )
+    start = _node_position(source)
+    end = _node_position(sink)
+    if math.isclose(start[0], end[0], abs_tol=1.0e-12) and math.isclose(start[1], end[1], abs_tol=1.0e-12):
+        raise ValueError("Curved-elbow source and sink require distinct editor positions.")
+    verification = _curved_elbow_verification_request(project, spec=spec)
+    return {
+        "schema": CURVED_ELBOW_PROFILE_SCHEMA,
+        "requestedMeshMode": "curved-elbow-ogrid",
+        "effectiveMeshMode": CURVED_ELBOW_REPRESENTATION,
+        "coordinateSystem": "physical-x-y-z-si",
+        "units": {"length": "m", "angle": "deg"},
+        "pathEdgeIds": [str(edge.get("id") or "")],
+        "sourceNodeId": source_id,
+        "sinkNodeId": sink_id,
+        "editorLayout": {
+            "source": [float(start[0]), float(start[1])],
+            "sink": [float(end[0]), float(end[1])],
+            "usedForPhysicalDimensions": False,
+        },
+        "diameterM": diameter_m,
+        "radiusM": spec.radius_m,
+        "centrelineRadiusM": centreline_radius,
+        "inletLegLengthM": inlet_leg,
+        "outletLegLengthM": outlet_leg,
+        "bendAngleDegrees": bend_angle,
+        "totalLengthM": spec.total_centreline_length_m,
+        "topology": spec.topology_manifest(),
+        "components": spec.component_regions(str(edge.get("id") or "")),
+        "boundaryRoles": {"inlet": "patch", "outlet": "patch", "walls": "wall"},
+        "verificationContract": verification,
+        "scope": {
+            "flow": "steady-incompressible-laminar",
+            "geometry": "one-canonical-90deg-constant-diameter-circular-elbow",
+            "unsupported": [
+                "arbitrary-cad",
+                "other-bend-angles",
+                "other-rc-over-d-ratios",
+                "branches",
+                "diameter-changes",
+                "turbulence",
+                "transient",
+                "multiphase",
+                "compressible",
+                "su2-without-supported-3d-result-identity",
+            ],
+        },
+    }
+
+
+def _curved_elbow_spec_from_profile(profile: dict[str, Any]) -> CurvedElbowSpec:
+    topology = profile.get("topology") if isinstance(profile.get("topology"), dict) else {}
+    resolution = topology.get("resolution") if isinstance(topology.get("resolution"), dict) else {}
+    return CurvedElbowSpec(
+        diameter_m=float(profile["diameterM"]),
+        centreline_radius_m=float(profile["centrelineRadiusM"]),
+        inlet_leg_m=float(profile["inletLegLengthM"]),
+        outlet_leg_m=float(profile["outletLegLengthM"]),
+        inlet_axial_cells=int(resolution["inletAxialCells"]),
+        bend_axial_cells=int(resolution["bendAxialCells"]),
+        outlet_axial_cells=int(resolution["outletAxialCells"]),
+        annular_radial_cells=int(resolution["annularRadialCells"]),
+        circumferential_cells=int(resolution["circumferentialCells"]),
+        core_cells_per_side=int(resolution["coreCellsPerSide"]),
+        bend_angle_degrees=float(profile["bendAngleDegrees"]),
+    )
+
+
 def _full_ogrid_spec_from_profile(profile: dict[str, Any]) -> FullOGridSpec:
     topology = profile.get("topology") if isinstance(profile.get("topology"), dict) else {}
     resolution = topology.get("resolution") if isinstance(topology.get("resolution"), dict) else {}
@@ -1317,6 +1632,16 @@ boundaryField
 }}
 """
     )
+
+
+def _openfoam_curved_elbow_parabolic_vector_field(
+    profile: dict[str, Any],
+    verification: dict[str, Any],
+) -> str:
+    return _openfoam_full_ogrid_parabolic_vector_field(
+        profile,
+        verification,
+    ).replace("fullOGridParabolicInlet", "curvedElbowParabolicInlet")
 
 
 def _openfoam_axisymmetric_block_mesh_dict(profile: dict[str, Any]) -> str:
@@ -2194,7 +2519,97 @@ def _openfoam_axisymmetric_probe_locations(profile: dict[str, Any]) -> list[tupl
     return locations
 
 
+def _openfoam_curved_elbow_probe_records(
+    profile: dict[str, Any],
+) -> list[dict[str, Any]]:
+    components = (
+        profile.get("components")
+        if isinstance(profile.get("components"), list)
+        else []
+    )
+    component_by_id = {
+        str(row.get("componentId")): row
+        for row in components
+        if isinstance(row, dict)
+    }
+    if set(component_by_id) != {"inlet-leg", "elbow", "outlet-leg"}:
+        raise ValueError(
+            "Curved-elbow probes require explicit inlet-leg, elbow, and "
+            "outlet-leg source-cell component ranges."
+        )
+    inlet = float(profile["inletLegLengthM"])
+    centreline = float(profile["centrelineRadiusM"])
+    outlet = float(profile["outletLegLengthM"])
+    radius = float(profile["radiusM"])
+    bend_x = inlet + centreline / math.sqrt(2.0)
+    bend_y = centreline - centreline / math.sqrt(2.0)
+    definitions = (
+        ("inlet-centre", "inlet-leg", (0.5 * inlet, 0.0, 0.0)),
+        ("elbow-centre", "elbow", (bend_x, bend_y, 0.0)),
+        (
+            "outlet-centre",
+            "outlet-leg",
+            (inlet + centreline, centreline + 0.5 * outlet, 0.0),
+        ),
+        (
+            "elbow-inner-half-radius",
+            "elbow",
+            (
+                bend_x - 0.5 * radius / math.sqrt(2.0),
+                bend_y + 0.5 * radius / math.sqrt(2.0),
+                0.0,
+            ),
+        ),
+        (
+            "elbow-outer-half-radius",
+            "elbow",
+            (
+                bend_x + 0.5 * radius / math.sqrt(2.0),
+                bend_y - 0.5 * radius / math.sqrt(2.0),
+                0.0,
+            ),
+        ),
+        ("elbow-positive-z-half-radius", "elbow", (bend_x, bend_y, 0.5 * radius)),
+        ("elbow-negative-z-half-radius", "elbow", (bend_x, bend_y, -0.5 * radius)),
+    )
+    return [
+        {
+            "probeId": probe_id,
+            "locationM": list(location),
+            "edgeId": str(component_by_id[component_id]["edgeId"]),
+            "componentId": component_id,
+            "sourceCellRange": {
+                "cellStart": int(component_by_id[component_id]["cellStart"]),
+                "cellCount": int(component_by_id[component_id]["cellCount"]),
+            },
+            "ownershipMethod": "explicit-result-component-map-v2-cell-range",
+            "geometryInferredOwnership": False,
+        }
+        for probe_id, component_id, location in definitions
+    ]
+
+
+def _openfoam_curved_elbow_probe_manifest(
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    records = _openfoam_curved_elbow_probe_records(profile)
+    return {
+        "schema": "flowlab.curved-elbow-probe-provenance.v1",
+        "profileSchema": CURVED_ELBOW_PROFILE_SCHEMA,
+        "probeFunctionObject": "curvedElbowXYZProbes",
+        "sourceCellIdentity": "result-component-map-v2-cell-ranges",
+        "geometryInferredOwnershipAllowed": False,
+        "probeCount": len(records),
+        "probes": records,
+    }
+
+
 def _openfoam_full_ogrid_probe_locations(profile: dict[str, Any]) -> list[tuple[float, float, float]]:
+    if profile.get("schema") == CURVED_ELBOW_PROFILE_SCHEMA:
+        return [
+            tuple(float(value) for value in record["locationM"])
+            for record in _openfoam_curved_elbow_probe_records(profile)
+        ]
     length_m = float(profile["totalLengthM"])
     radius_m = float(profile["radiusM"])
     return [
@@ -2226,7 +2641,10 @@ def _openfoam_function_object_entries(
     )
     probe_locations = "\n".join(f"            ({x:.9g} {y:.9g} {z:.9g})" for x, y, z in compiled_probe_locations)
     probe_object_name = (
-        "fullOGridXYZProbes"
+        "curvedElbowXYZProbes"
+        if isinstance(full_ogrid_profile, dict)
+        and full_ogrid_profile.get("schema") == CURVED_ELBOW_PROFILE_SCHEMA
+        else "fullOGridXYZProbes"
         if full_ogrid_profile is not None
         else "axisymmetricProfileProbes"
         if axisymmetric_profile is not None
@@ -5931,9 +6349,14 @@ class OpenFOAMAdapter(SolverAdapter):
         conditions = _case_conditions(request.project)
         axisymmetric_requested = _openfoam_axisymmetric_mode_requested(request.project)
         full_ogrid_requested = _openfoam_full_ogrid_mode_requested(request.project)
+        curved_elbow_requested = _openfoam_curved_elbow_mode_requested(request.project)
         # Full O-grid scope is independent of the planar source-strip mesh and
         # must fail closed on its own geometry contract first.
         full_ogrid_profile = _openfoam_full_ogrid_profile(request.project, request.advancedMode)
+        curved_elbow_profile = _openfoam_curved_elbow_profile(
+            request.project,
+            request.advancedMode,
+        )
         parallel_settings = _openfoam_parallel_settings(request.project, request.advancedMode)
         parallel_plan = _openfoam_parallel_plan(parallel_settings)
         parallel_readme = (
@@ -5951,39 +6374,60 @@ class OpenFOAMAdapter(SolverAdapter):
             "water-hammer": "incompressibleFluid",
         }
         solver = solver_by_mode.get(request.advancedMode, "incompressibleFluid")
-        try:
-            mesh_bundle = generate_mesh_bundle(request.project)
+        if curved_elbow_profile is not None:
+            source_strip_project = json.loads(json.dumps(request.project))
+            source_strip_edges = _project_edges(source_strip_project)
+            source_strip_edges[0]["type"] = "pipe"
+            mesh_bundle = generate_mesh_bundle(source_strip_project)
             mesh_files = mesh_bundle.files
-            mesh_provenance = mesh_bundle.provenance
+            mesh_provenance = [
+                *mesh_bundle.provenance,
+                "The retained planar source strip substitutes a straight inspection chord only; it is not the curved solver geometry.",
+            ]
             mesh = mesh_bundle.mesh
-            openfoam_mesh_files = mesh_to_openfoam_polymesh(mesh)
-            cht_region_mesh_files = (
-                mesh_to_openfoam_cht_region_polymesh(mesh)
-                if request.advancedMode == "conjugate-heat-transfer"
-                else {}
-            )
-        except ValueError as exc:
-            if axisymmetric_requested or full_ogrid_requested:
-                mode = "Axisymmetric" if axisymmetric_requested else "Full O-grid"
-                raise ValueError(f"{mode} case generation failed closed: {exc}") from exc
-            mesh_files = {
-                "mesh/README.md": (
-                    "# FlowLab mesh\n\n"
-                    f"Mesh was not generated: {exc}\n\n"
-                    "The OpenFOAM starter case still includes a simple blockMesh domain so dependency checks and template inspection can proceed.\n"
-                )
-            }
-            mesh_provenance = [f"Mesh export skipped: {exc}"]
-            mesh = None
             openfoam_mesh_files = {}
             cht_region_mesh_files = {}
+        else:
+            try:
+                mesh_bundle = generate_mesh_bundle(request.project)
+                mesh_files = mesh_bundle.files
+                mesh_provenance = mesh_bundle.provenance
+                mesh = mesh_bundle.mesh
+                openfoam_mesh_files = mesh_to_openfoam_polymesh(mesh)
+                cht_region_mesh_files = (
+                    mesh_to_openfoam_cht_region_polymesh(mesh)
+                    if request.advancedMode == "conjugate-heat-transfer"
+                    else {}
+                )
+            except ValueError as exc:
+                if axisymmetric_requested or full_ogrid_requested:
+                    mode = "Axisymmetric" if axisymmetric_requested else "Full O-grid"
+                    raise ValueError(f"{mode} case generation failed closed: {exc}") from exc
+                mesh_files = {
+                    "mesh/README.md": (
+                        "# FlowLab mesh\n\n"
+                        f"Mesh was not generated: {exc}\n\n"
+                        "The OpenFOAM starter case still includes a simple blockMesh domain so dependency checks and template inspection can proceed.\n"
+                    )
+                }
+                mesh_provenance = [f"Mesh export skipped: {exc}"]
+                mesh = None
+                openfoam_mesh_files = {}
+                cht_region_mesh_files = {}
         axisymmetric_profile = _openfoam_axisymmetric_profile(request.project, request.advancedMode, mesh)
         axisymmetric = axisymmetric_profile is not None
         full_ogrid = full_ogrid_profile is not None
+        curved_elbow = curved_elbow_profile is not None
         full_ogrid_verification = (
             full_ogrid_profile.get("verificationContract")
             if isinstance(full_ogrid_profile, dict)
             and isinstance(full_ogrid_profile.get("verificationContract"), dict)
+            else None
+        )
+        curved_elbow_verification = (
+            curved_elbow_profile.get("verificationContract")
+            if isinstance(curved_elbow_profile, dict)
+            and isinstance(curved_elbow_profile.get("verificationContract"), dict)
             else None
         )
         axisymmetric_benchmark = (
@@ -6039,7 +6483,40 @@ class OpenFOAMAdapter(SolverAdapter):
                 "Full O-grid inspection VTK/VTU is a true three-dimensional, full-volume, blockMesh-equivalent all-hex mesh.",
                 "The original editor strip is retained separately as flowlab_source_strip and is not solver-result geometry.",
             ]
-        far_patches = _WEDGE_FAR_FIELD_PATCHES if axisymmetric else "" if full_ogrid else None
+        if curved_elbow_profile is not None:
+            openfoam_mesh_files = {}
+            spec = _curved_elbow_spec_from_profile(curved_elbow_profile)
+            elbow_preview = curved_elbow_preview_mesh(spec, curved_elbow_profile)
+            source_strip_paths = {
+                "mesh/flowlab_mesh.json": "mesh/flowlab_source_strip.json",
+                "mesh/flowlab_mesh.vtk": "mesh/flowlab_source_strip.vtk",
+                "mesh/flowlab_mesh.vtu": "mesh/flowlab_source_strip.vtu",
+            }
+            for source_path, retained_path in source_strip_paths.items():
+                if source_path in mesh_files:
+                    mesh_files[retained_path] = mesh_files[source_path]
+            mesh_files["mesh/flowlab_mesh.json"] = json.dumps(
+                elbow_preview,
+                indent=2,
+                sort_keys=True,
+            ) + "\n"
+            mesh_files["mesh/flowlab_mesh.vtk"] = mesh_to_legacy_vtk(
+                elbow_preview,
+                "FlowLab canonical 90-degree curved-elbow O-grid preview",
+            )
+            mesh_files["mesh/flowlab_mesh.vtu"] = mesh_to_vtu(elbow_preview)
+            mesh_provenance = [
+                *mesh_provenance,
+                "Curved-elbow inspection VTK/VTU is the true three-dimensional, full-volume, 15-block all-hex geometry.",
+                "Inlet-leg, elbow, and outlet-leg source-cell ranges are explicit; the original editor strip is retained separately and is not solver-result geometry.",
+            ]
+        far_patches = (
+            _WEDGE_FAR_FIELD_PATCHES
+            if axisymmetric
+            else ""
+            if full_ogrid or curved_elbow
+            else None
+        )
         mode_files, mode_provenance = _openfoam_mode_files(request.advancedMode, conditions, request.project)
         pressure_dimensions = (
             "[1 -1 -2 0 0 0 0]"
@@ -6061,6 +6538,7 @@ class OpenFOAMAdapter(SolverAdapter):
             if request.advancedMode in {"compressible-flow", "heat-transfer", "conjugate-heat-transfer"}
             else _openfoam_transport_properties(request.advancedMode, conditions)
         )
+        volume_ogrid_profile = full_ogrid_profile or curved_elbow_profile
         files = {
             "README.md": (
                 f"# {self._project_name(request)}\n\n"
@@ -6080,6 +6558,10 @@ class OpenFOAMAdapter(SolverAdapter):
                 if axisymmetric_profile is not None
                 else full_ogrid_block_mesh_dict(_full_ogrid_spec_from_profile(full_ogrid_profile))
                 if full_ogrid_profile is not None
+                else curved_elbow_block_mesh_dict(
+                    _curved_elbow_spec_from_profile(curved_elbow_profile)
+                )
+                if curved_elbow_profile is not None
                 else _openfoam_block_mesh_dict(mesh)
             ),
             "system/controlDict": _openfoam_control_dict(
@@ -6088,14 +6570,14 @@ class OpenFOAMAdapter(SolverAdapter):
                 request.advancedMode,
                 request.project,
                 axisymmetric_profile,
-                full_ogrid_profile,
+                volume_ogrid_profile,
             ),
             "system/functions": _openfoam_function_object_entries(
                 mesh,
                 request.advancedMode,
                 request.project,
                 axisymmetric_profile,
-                full_ogrid_profile,
+                volume_ogrid_profile,
             ),
             "system/fvSchemes": (
                 _openfoam_axisymmetric_benchmark_fv_schemes()
@@ -6105,7 +6587,10 @@ class OpenFOAMAdapter(SolverAdapter):
             "system/fvSolution": _openfoam_fv_solution(
                 steady=_openfoam_steady_requested(request.advancedMode, request.project),
                 periodic_pressure_reference=axisymmetric_benchmark is not None,
-                strict_verification=full_ogrid_verification is not None,
+                strict_verification=(
+                    full_ogrid_verification is not None
+                    or curved_elbow_verification is not None
+                ),
             ),
             "0/U": (
                 _openfoam_axisymmetric_periodic_vector_field(
@@ -6117,6 +6602,12 @@ class OpenFOAMAdapter(SolverAdapter):
                     full_ogrid_verification,
                 )
                 if full_ogrid_profile is not None and full_ogrid_verification is not None
+                else _openfoam_curved_elbow_parabolic_vector_field(
+                    curved_elbow_profile,
+                    curved_elbow_verification,
+                )
+                if curved_elbow_profile is not None
+                and curved_elbow_verification is not None
                 else _openfoam_vector_field(
                     "U",
                     f"({conditions.inlet_velocity:.9g} 0 0)",
@@ -6198,6 +6689,32 @@ class OpenFOAMAdapter(SolverAdapter):
             ),
             **(
                 {
+                    "constant/flowlab_curved_elbow_profile.json": json.dumps(
+                        curved_elbow_profile,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n"
+                }
+                if curved_elbow_profile is not None
+                else {}
+            ),
+            **(
+                {
+                    "constant/flowlab_curved_elbow_probe_provenance.json": json.dumps(
+                        _openfoam_curved_elbow_probe_manifest(
+                            curved_elbow_profile
+                        ),
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n"
+                }
+                if curved_elbow_profile is not None
+                else {}
+            ),
+            **(
+                {
                     "system/fvConstraints": _openfoam_axisymmetric_benchmark_fv_constraints(
                         axisymmetric_profile
                     )
@@ -6239,6 +6756,12 @@ class OpenFOAMAdapter(SolverAdapter):
                 "The pre-solve VTK/VTU is the full-volume blockMesh-equivalent geometry; solver-produced VTK remains the authority after execution.",
             ]
             if full_ogrid
+            else [
+                "FlowLab compiled exactly one canonical 90-degree constant-diameter bend edge into an SI curved-elbow O-grid profile.",
+                "OpenFOAM blockMesh realizes inlet leg, circular bend, and outlet leg as 15 conformal all-hex blocks with shared internal interfaces.",
+                "The pre-solve VTK/VTU is the full-volume curved geometry and carries explicit source-cell component ranges; solver-produced VTK remains authoritative after execution.",
+            ]
+            if curved_elbow
             else [
                 "FlowLab v1 OpenFOAM volume mesh extrudes the port-aware FlowLab quad strip into one hexahedral layer with inlet, outlet, walls, and empty front/back patches."
             ]
