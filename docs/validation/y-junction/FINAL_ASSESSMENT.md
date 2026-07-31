@@ -1,6 +1,6 @@
 # Bounded symmetric Y-junction final assessment
 
-Status: **software path implemented; experimental numerical qualification
+Status: **software path implemented; V5 experimental numerical qualification
 failed and retained**
 
 Date: 2026-07-31
@@ -11,177 +11,160 @@ Independent empirical validation: **not performed**
 
 ## Decision
 
-FlowLab now has one deterministic true-3D OpenFOAM path for the prospectively
-declared symmetric Y-junction:
+FlowLab implements one bounded deterministic true-3D OpenFOAM path:
 
-- one 27 mm inlet and two identical 27 mm circular branches at `+30` and
-  `-30` degrees;
-- 6 mm diameter, steady incompressible laminar water flow, nominal `Re=100`;
+- one 27 mm inlet and two identical 27 mm branches at `+30` and `-30`
+  degrees, all nominally 6 mm diameter;
+- steady incompressible laminar water flow at nominal `Re=100`;
 - equal outlet pressures plus one lower-pressure-outlet negative control;
 - explicit construction-time `inlet-pipe`, `upper-branch`, and
   `lower-branch` source-cell ranges; and
-- a separate unowned `generated:y-junction:junction-core:v1` cell range with
-  no schematic owner.
+- a separate `generated:y-junction:junction-core:v1` range with no schematic
+  owner.
 
-The topology, ownership, deterministic generation, OpenFOAM execution,
-result-binding, and per-case physics gates are implemented and exercised.
-The bounded path is **not experimentally numerically qualified**, because the
-final prospectively frozen V4 sequence missed both convergence gates:
+V5 prospectively froze the retained V4 coarse Cartesian mask and uniformly
+subdivided every master hexahedron by factors 1, 2, and 4. Child region
+ownership and exterior patch identity were inherited from the master; neither
+was reclassified from geometry.
 
-- observed order `0.43937081563777536`, required `0.5 <= p <= 4`; and
-- fine-grid primary-QoI GCI `16.84937428352456%`, required `<= 5%`.
+The fixed-master hierarchy, duplicate generation, `checkMesh`, solver,
+conservation, symmetry, branch-drop, iterative-stability, and asymmetric
+negative-control gates all passed. The pressure-drop sequence had valid
+observed order `1.0014977186639435`, within the unchanged `0.5` to `4` gate.
+Fine-grid GCI was `7.248473067832084%`, above the unchanged `5%` maximum.
 
-The V4 stop rule therefore applies. No gate was changed, no retained evidence
-was edited, and no further post-hoc mesh or observation tuning was run.
+V5 therefore has terminal status `qualification-gate-failed-retained`.
+`validated=false` and `promotionAuthorized=false`. The V5 stop rule applies:
+no threshold was changed, no retained evidence was edited, and no V6
+experiment is authorized by this assessment.
 
-## Frozen authority and retained package
+## Frozen authority and retained evidence
 
-The V4 authority is
-`QUALIFICATION_CONTRACT_V4.json` with SHA-256
-`d6aa0c911a34fa13db3e1a7f57b2de5aee1ec422f9fbe3f47897d0a03b1fe4cd`.
-Its runbook SHA-256 is
-`c728f593491e31fd0510faa9a1e1e161401dbeb78d48a2d7e62b1f78f72e21da`.
+V5 was frozen and executed from source commit
+`e5a2ad8ad521bd1c2d7381708ef186d6d8d1dbb5`.
 
-The campaign was executed from source commit
-`1b0054a73b04b1bc0c9b411ec5d8620e7b775545` in the fresh ignored directory
-`benchmarks/cases/y-junction/campaigns/2026-07-31-v4-r1`.
+| Artifact | SHA-256 |
+|---|---|
+| `QUALIFICATION_CONTRACT_V5.json` | `3dad361d124edb4e0b8c91ea641f1781ed3f1b760fa44da15c34a10a0b29ee9c` |
+| `RUNBOOK_V5.md` | `6e662968e30d0d3fa6b387ae9377d1865124efa7f491278b0316f138dc8ffdf0` |
+| V5 campaign manifest | `04a5d8a0b9d5facf7730efa40a8497bd1fa8c3c3b1eb4f67e1caa2a55b46301d` |
+| V5 campaign assessment | `b03f274af078fbb174c1eca550c9baa4f26f5f42cfd2fa7c5fa9e80dbf5fbd65` |
+| V5 immutable package manifest | `09b4b5597223517eaae7ff06f684b8d8e009e3006658d8dcab54861da81da637` |
+| V5 immutable package tree | `c3c75b176b5e175390f2774abbe2ba7202f3eefcdc3b6d87642f97afae6241ed` |
 
-The retained evidence identities are:
+The fresh ignored campaign is
+`benchmarks/cases/y-junction/campaigns/2026-07-31-v5-r1`. Its immutable
+package contains 680 files. Raw cases and the package remain ignored local
+evidence and are not admitted to Git.
 
-- campaign manifest:
-  `fb43dfe18ba02abd71e0f8bf5b55abbac8d2b94ab2f4d3febfeacc28ad45cd99`;
-- campaign assessment:
-  `8a11c43aa0ff076d58d2a4cf3c3fa6393ab7f4eebb7be9257b5a685ab2f643d3`;
-- immutable package manifest:
-  `21465353cdea1a3590b2e2287a762e417f2d120a2a73fe2599102943efca67ea`;
-- immutable package tree:
-  `b7877c9be15d285dc49d1a05cac75b01ecdc0fe8a5474d0cd8aac7aae4143315`;
-  and
-- OpenFOAM image:
-  `flowlab/openfoam11-gmsh@sha256:4fa4e4961b90b0df2781d70b6c033be7e67d324c17e129667469099abf6568fe`
-  on `linux/amd64`.
+The OpenFOAM runtime was
+`flowlab/openfoam11-gmsh@sha256:4fa4e4961b90b0df2781d70b6c033be7e67d324c17e129667469099abf6568fe`
+on `linux/amd64`.
 
-Raw cases and the 680-file immutable package remain ignored local evidence.
-They are not admitted to Git.
+V4 remains separately retained and unchanged:
 
-The retained V4 `campaign-run-state.json` is the last live journal snapshot
-and still says `running`, while the authoritative `campaign-assessment.json`
-has the terminal `qualification-gate-failed-retained` status. The retained
-package is not edited. The final branch fixes the runner to write terminal
-state to both files for future campaigns and adds regression coverage; this
-reporting fix does not change any V4 measurement or gate result.
+| V4 artifact | SHA-256 |
+|---|---|
+| campaign assessment | `8a11c43aa0ff076d58d2a4cf3c3fa6393ab7f4eebb7be9257b5a685ab2f643d3` |
+| immutable package manifest | `21465353cdea1a3590b2e2287a762e417f2d120a2a73fe2599102943efca67ea` |
+| immutable package tree | `b7877c9be15d285dc49d1a05cac75b01ecdc0fe8a5474d0cd8aac7aae4143315` |
 
-## Deterministic generation and ownership
+## Fixed-master hierarchy and ownership
 
-Every case was materialized twice. The complete generated-file hash maps
-matched.
+Every V5 case was materialized twice. Complete generated-file maps and
+canonical generation hashes matched.
 
-| Case | Cell size | Cells | Generation SHA-256 | Generated-file tree SHA-256 |
+The common master identity is
+`ae7ffe7bac80e83399dc8513de30a7830c775e4333d10c6314bff655d38d17a8`.
+All levels have exact generated volume `2.24775e-6 m3` and identical physical
+patch areas:
+
+- inlet: `6.525e-5 m2`;
+- upper outlet: `6.75e-5 m2`;
+- lower outlet: `6.75e-5 m2`; and
+- walls: `0.00192825 m2`.
+
+| Case | Factor | Cells | Generation SHA-256 | Generated-file tree SHA-256 |
 |---|---:|---:|---|---|
-| coarse | 0.75 mm | 5,328 | `8b648d2e2f8dfb9c59ba8b544053e65db46a59553672a5a0ca918a784bb3619a` | `bbae4466d4a00946e5b6e35e86685ffd8670e18af7b5c77d2e59090c742538a4` |
-| medium | 0.375 mm | 42,460 | `ae72e02823f716511cbed19885b1bb6f841bf8a5606e19ea12ffcab72f382ac8` | `18039720cff2e2b9458bdb117f151381959c98e03c634330724328196cc7ac3a` |
-| fine | 0.1875 mm | 336,472 | `ac9f7cca9c227092b370d950c85508e30b92884ac82e1c26169aa0dd60ea4933` | `d66322ab4e6f191acb4c0f7db3f4d859ace935455d7d974bb86e3cd29c5161ba` |
-| fine asymmetric control | 0.1875 mm | 336,472 | `ac9f7cca9c227092b370d950c85508e30b92884ac82e1c26169aa0dd60ea4933` | `b1b4428bdb799d5ccc9057e6b9425f568a4c40805c8ddecb71f2e6107344ad98` |
-
-The fine equal-pressure and asymmetric cases have identical mesh generation
-identities; their complete file trees differ because the declared outlet
-pressure boundary condition differs.
+| coarse | 1 | 5,328 | `a5a513f9ecaf046f58d46fc668be550a29ac9ad698c6f02d95b4f3930b58ea00` | `2a1ea9b3f5a6a751082dea01b3a6877b5dda347775dfbaf0dfd8a5338f98f24c` |
+| medium | 2 | 42,624 | `8ad2f97cb26d6953410a82155b5a386a236368199d4eecd129dd62dd284dec20` | `c0a0b3a74c9b39ce8a78f3a41ab76c6f82a17cdce74db6482439087d75fc6862` |
+| fine | 4 | 340,992 | `6f361c407ea1fc450cf763ea5c17ed0b73b71feae97c1e3ca09459843334d798` | `2d82ce2829a6a2d9b568b8e4620670eb8d5e391ec269f69570c0b51d1717b13f` |
+| fine asymmetric control | 4 | 340,992 | `6f361c407ea1fc450cf763ea5c17ed0b73b71feae97c1e3ca09459843334d798` | `7b2ae225176b1c7fdbd21ef1b91e68c165d68b5a4969ea357bec6715c32b7b94` |
 
 Fine-grid result ownership is:
 
 | Region | Cell start | Cell count | Schematic ownership |
 |---|---:|---:|---|
-| `inlet-pipe` | 0 | 97,440 | explicit edge |
-| `upper-branch` | 97,440 | 96,550 | explicit edge |
-| `lower-branch` | 193,990 | 96,550 | explicit edge |
-| `generated:y-junction:junction-core:v1` | 290,540 | 45,932 | none |
+| `inlet-pipe` | 0 | 99,840 | explicit edge inherited from master |
+| `upper-branch` | 99,840 | 97,408 | explicit edge inherited from master |
+| `lower-branch` | 197,248 | 97,408 | explicit edge inherited from master |
+| `generated:y-junction:junction-core:v1` | 294,656 | 46,336 | none |
 
-The ranges are construction artifacts, not viewer geometry inference.
-Junction cells are outside every branch edge range. Result linking fails
-closed for the generated-unowned range.
+Every fine cell has one master-parent index; every master cell has exactly 64
+fine children. Region counts scale by factor cubed and boundary face counts by
+factor squared. Junction children remain outside every edge range. Result
+linking fails closed for the generated-unowned range.
 
 ## Per-case results
 
 All four cases passed `checkMesh`, had one connected all-hex fluid region,
-positive minimum cell volume, exactly the declared inlet, two outlet, and wall
-patches, finite `p` and `U`, zero solver exit status, and a normal retained
-termination marker.
+positive minimum cell volume, exactly three port patches plus `walls`, finite
+`p` and `U`, zero solver exit code, and normal termination.
 
-| Equal-pressure case | Minimum volume (m3) | Mass imbalance | Upper flow fraction | Mirrored p error | Mirrored U error | Branch-drop difference | Pressure-drop QoI (Pa) |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| coarse | 4.21875e-10 | 2.98197e-8 | 0.500000010 | 3.68080e-5 | 0.00555907 | 0 | 0.614664195 |
-| medium | 5.2734375e-11 | 1.14851e-9 | 0.500000000 | 5.32152e-7 | 0.000747217 | 0 | 0.659761220 |
-| fine | 6.591796875e-12 | 4.95816e-10 | 0.499999943 | 3.51374e-6 | 0.000221789 | 0 | 0.693018299 |
+| Equal-pressure case | Minimum volume (m3) | Mass imbalance | Upper flow fraction | Mirrored p error | Mirrored U error | Branch-drop difference | Stability range | Pressure drop (Pa) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| coarse | 4.21875e-10 | 2.98197e-8 | 0.500000010 | 3.68080e-5 | 0.00555907 | 0 | 9.25221e-10 | 0.614664195 |
+| medium | 5.2734375e-11 | 8.74051e-10 | 0.499904675 | 1.28781e-4 | 8.66707e-4 | 0 | 2.26168e-5 | 0.701282715 |
+| fine | 6.591796875e-12 | 4.22632e-8 | 0.500000140 | 2.19053e-6 | 2.63904e-4 | 0 | 7.23406e-8 | 0.744547037 |
 
-These pass the per-case limits of `0.1%` mass imbalance, `0.50 +/- 0.01`
-outlet split, `2%` mirrored pressure and velocity error, and `1%`
-branch-pressure-drop difference.
+These pass the inherited `0.1%` mass-imbalance, `0.50 +/- 0.01` split, `2%`
+mirrored pressure/velocity, and `1%` branch-drop gates. They also pass the new
+prospective final-window primary-QoI relative-range maximum of `0.001`.
 
-The asymmetric fine case also passed its declared negative control:
+The asymmetric fine case passed its declared negative control:
 
 - upper outlet pressure: `0 Pa` gauge;
 - lower outlet pressure: `-0.2 Pa` gauge;
-- upper outflow: `1.44665537047e-7 m3/s`;
-- lower outflow: `3.31115707263e-7 m3/s`; and
-- relative mass imbalance: `1.19593e-8`.
+- upper outflow: `1.691473409346e-7 m3/s`;
+- lower outflow: `3.183526583548e-7 m3/s`;
+- upper outlet flow fraction: `0.346968904987`; and
+- relative mass imbalance: `1.45764e-9`.
 
-The lower-pressure outlet therefore carried more flow.
+The lower-pressure outlet carried more flow.
 
-## Sequence failure and stop
+## Sequence failure and interpretation
 
 The equal-pressure primary pressure-drop QoIs were:
 
 1. coarse: `0.6146641946203 Pa`;
-2. medium: `0.6597612199256999 Pa`; and
-3. fine: `0.6930182988526999 Pa`.
+2. medium: `0.7012827146402 Pa`; and
+3. fine: `0.7445470369278 Pa`.
 
-They form a mathematically evaluable monotone sequence at `r=2`, but its
-observed order and fine GCI do not meet the frozen qualification thresholds.
-This is a scientific qualification failure, not an infrastructure failure and
-not a per-case software/runtime failure.
+They form a monotone mathematically qualified `r=2` sequence. Observed order
+`1.0014977186639435` passes. Fine-grid GCI `7.248473067832084%` fails the
+unchanged `5%` limit. This is a numerical qualification failure, not an
+infrastructure, mesh-validity, solver-termination, conservation, ownership,
+stability, or negative-control failure.
 
-Earlier retained V2 and V3 campaigns had already shown a non-monotone or
-negative-order sequence. V4 prospectively moved the unchanged operator to the
-finer nested 8/16/32-cells-across-diameter family. Its failure activates the
-declared stop condition; the next step, if ever authorized, must be a separate
-new hypothesis and contract rather than another tuning iteration.
+Compared with V4, fixing the generated domain changed the sequence from order
+`0.43937081563777536` and GCI `16.84937428352456%` to approximately
+first-order convergence and GCI `7.24847%`. This supports the prospective
+hypothesis that changing staircase geometry contaminated V4's convergence
+estimate, but it does not make V5 pass and does not establish why the
+remaining discretization error exceeds the gate.
 
-### Retained-data diagnosis
-
-The following is a post-campaign inference, not a changed gate or a new
-qualification result.
-
-The generator admits Cartesian cells whose centers fall inside the declared
-circular primitives. The inlet has a frozen uniform velocity, so its final
-integrated flow divided by that velocity gives the realized inlet area:
-
-| Level | Realized inlet area (m2) | Difference from declared circular area |
-|---|---:|---:|
-| coarse | 2.925e-5 | +3.450713% |
-| medium | 2.925e-5 | +3.450713% |
-| fine | 2.8546875e-5 | +0.963917% |
-
-The coarse-to-medium grid step therefore refines the solution while retaining
-the same realized inlet area, whereas the medium-to-fine step also changes the
-staircase geometry materially. The corresponding pressure-drop increments are
-`0.0450970253 Pa` and `0.0332570789 Pa`, whose ratio produces the retained
-order `0.439370816`.
-
-This supports, but does not prove, the hypothesis that changing staircase
-geometry contaminates the single-family asymptotic estimate. A future
-experiment would need to isolate solution refinement from geometry
-realization—for example with a prospectively defined fixed-geometry or
-geometry-matched mesh family. That would be a new scientific hypothesis and
-requires separate authorization, a new frozen contract, and a fresh immutable
-directory. It is not authorized by this assessment.
+Any further test would require a separately authorized hypothesis, prospective
+contract, fresh directory, and unchanged treatment of V4/V5 evidence. This
+assessment does not authorize that work.
 
 ## Claim boundary
 
 This work establishes software completeness for the bounded generator,
-provenance, fail-closed junction ownership, OpenFOAM case path, evaluator, and
-visualization path. It does **not** establish:
+fixed-master subdivision, explicit parent provenance, fail-closed junction
+ownership, OpenFOAM case path, evaluator, and result visualization. It does
+**not** establish:
 
-- experimental numerical qualification of the pressure-drop QoI;
+- numerical qualification of the primary pressure-drop QoI;
 - independent empirical validation;
 - product or benchmark promotion;
 - arbitrary branching networks, angles, or diameters;
@@ -190,5 +173,5 @@ visualization path. It does **not** establish:
 - native performance evidence; or
 - a notarized, portable, or external release.
 
-`promotionAuthorized` and `validated` remain `false`. No validated benchmark
-registry or promotion pointer is changed.
+No validated benchmark registry, campaign promotion pointer, UI promotion
+state, or release claim is changed.
