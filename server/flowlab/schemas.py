@@ -77,19 +77,36 @@ def default_experimental_capability() -> EvidenceCapability:
 
 
 class ResultComponentBinding(BaseModel):
-    """A conservative declaration that one generated result owns an entire edge."""
+    """A conservative declaration that one generated artifact owns an entire edge."""
 
     artifactName: str
     edgeId: str
     scope: Literal["all-cells"]
 
 
+class ResultComponentCellRange(BaseModel):
+    """A source-cell interval declared by the generated mesh, never reconstructed from geometry."""
+
+    edgeId: str
+    cellStart: int = Field(ge=0)
+    cellCount: int = Field(gt=0)
+
+
+class ResultComponentCellBinding(BaseModel):
+    """A generated result family whose source-cell ordering is explicitly edge-bound."""
+
+    artifactName: str
+    scope: Literal["cell-ranges"]
+    sourceCellCount: int = Field(gt=0)
+    cellRanges: list[ResultComponentCellRange] = Field(default_factory=list)
+
+
 class ResultComponentMap(BaseModel):
     """Optional case-local result-to-schematic provenance; never inferred from geometry."""
 
-    version: Literal[1]
+    version: Literal[1, 2]
     projectSha256: str
-    artifactBindings: list[ResultComponentBinding] = Field(default_factory=list)
+    artifactBindings: list[ResultComponentBinding | ResultComponentCellBinding] = Field(default_factory=list)
 
 
 class SolverCase(BaseModel):

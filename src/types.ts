@@ -352,14 +352,27 @@ export type SolverCase = {
 };
 
 export type ResultComponentMap = {
-  version: 1;
+  version: 1 | 2;
   projectSha256: string;
-  /** "*" is a case-local all-artifacts binding, valid only for a verified single-edge case. */
-  artifactBindings: Array<{
-    artifactName: string;
-    edgeId: EdgeId;
-    scope: "all-cells";
-  }>;
+  artifactBindings: Array<
+    | {
+        /** "*" is a case-local all-artifacts binding, valid only for a verified single-edge case. */
+        artifactName: string;
+        edgeId: EdgeId;
+        scope: "all-cells";
+      }
+    | {
+        /** A bounded `*` glob over a generated volume-result path, never an imported artifact. */
+        artifactName: string;
+        scope: "cell-ranges";
+        sourceCellCount: number;
+        cellRanges: Array<{
+          edgeId: EdgeId;
+          cellStart: number;
+          cellCount: number;
+        }>;
+      }
+  >;
 };
 
 export type EvidenceCapability = {
@@ -801,6 +814,10 @@ export type VtkResultDataset = {
     vectors: Record<string, [number, number, number][]>;
   };
   fields: string[];
+  /** Original artifact cell indices; previews retain these through deterministic sampling. */
+  sourceCellIndices?: number[];
+  /** Cell count of the unsampled source artifact used to validate a case-local provenance map. */
+  sourceCellCount?: number;
   sourceName?: string;
   sourceText?: string;
 };

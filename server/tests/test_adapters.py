@@ -65,11 +65,60 @@ def test_single_edge_case_records_verified_result_component_map() -> None:
     assert manifest["files"]["flowlab_project.json"]["sha256"] == case.resultComponentMap.projectSha256
 
 
-def test_multi_edge_projects_do_not_receive_a_result_component_map() -> None:
+def test_multi_edge_openfoam_case_records_deterministic_source_cell_ranges() -> None:
+    project = _parameterized_project()
+    project["nodes"]["junction"] = {
+        "id": "junction",
+        "type": "junction",
+        "position": {"x": 300, "y": 200},
+    }
+    project["edges"]["pipe"]["to"] = "junction"
+    project["edges"]["outlet"] = {
+        **project["edges"]["pipe"],
+        "id": "outlet",
+        "from": "junction",
+        "to": "sink",
+    }
+
+    case = adapters.generate_case(
+        CaseRequest.model_construct(project=project, solver="openfoam", advancedMode="incompressible-navier-stokes")
+    )
+
+    assert case.resultComponentMap is not None
+    assert case.resultComponentMap.version == 2
+    mesh = json.loads(case.files["mesh/flowlab_mesh.json"])
+    bindings = [binding.model_dump() for binding in case.resultComponentMap.artifactBindings]
+    assert {binding["artifactName"] for binding in bindings} == {
+        "postProcessing/flowlabNative/*.vtk",
+        "VTK/*.vtk",
+    }
+    for binding in bindings:
+        assert binding["scope"] == "cell-ranges"
+        assert binding["sourceCellCount"] == len(mesh["cells"])
+        assert {cell_range["edgeId"] for cell_range in binding["cellRanges"]} == {"pipe", "outlet"}
+        assert all(cell_range["cellCount"] > 0 for cell_range in binding["cellRanges"])
+    connector_regions = [region for region in mesh["regions"] if region.get("edgeType") == "connector"]
+    assert connector_regions
+    connector_cells = {
+        cell_index
+        for region in connector_regions
+        for cell_index in range(region["cellStart"], region["cellStart"] + region["cellCount"])
+    }
+    declared_cells = {
+        cell_index
+        for cell_range in bindings[0]["cellRanges"]
+        for cell_index in range(cell_range["cellStart"], cell_range["cellStart"] + cell_range["cellCount"])
+    }
+    assert connector_cells.isdisjoint(declared_cells)
+    manifest = json.loads(case.files[adapters.CASE_MANIFEST_PATH])
+    assert manifest["resultComponentMap"] == case.resultComponentMap.model_dump(mode="json")
+
+
+def test_unsupported_multi_edge_solver_omits_result_component_map() -> None:
     project = _parameterized_project()
     project["edges"]["bypass"] = {**project["edges"]["pipe"], "id": "bypass"}
 
-    assert adapters._result_component_map(project) is None
+    assert adapters._result_component_map(project, solver="su2", mesh_snapshot="{}") is None
 
 
 def test_browser_estimates_do_not_declare_cfd_result_component_maps() -> None:
@@ -1847,6 +1896,14 @@ def test_openfoam_axisymmetric_multi_edge_venturi_emits_conformal_profile(monkey
     assert preview["boundsSpanM"][0] == pytest.approx(profile["totalLengthM"])
     assert preview["boundsSpanM"][1] > 0
     assert preview["boundsSpanM"][2] > 0
+    assert case.resultComponentMap is not None
+    assert case.resultComponentMap.version == 2
+    cell_binding = case.resultComponentMap.artifactBindings[0].model_dump()
+    assert cell_binding["sourceCellCount"] == len(preview["cells"])
+    assert {cell_range["edgeId"] for cell_range in cell_binding["cellRanges"]} == {"inlet-pipe", "venturi"}
+    for region in preview["regions"]:
+        assert region["cellStart"] >= 0
+        assert region["cellCount"] == region["nAxial"] * profile["nRadial"]
     assert validate_solver_case(case) == []
 
 

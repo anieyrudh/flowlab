@@ -1055,7 +1055,11 @@ export function SimulationCanvas({
     }
 
     if (canvasRenderMode === "cinema" && cinemaRef.current) {
-      const pick = cinemaPick(event);
+      // Once a result surface is present, a canvas click may select a schematic
+      // edge only through verified result-cell provenance in App. Picking the
+      // schematic preview hidden behind the field would infer ownership from
+      // display geometry.
+      const pick = resultDataset ? null : cinemaPick(event);
       const point = cinemaPoint(event);
       const rect = event.currentTarget.getBoundingClientRect();
       if (pick?.kind === "rotate") {

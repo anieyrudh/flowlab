@@ -120,6 +120,14 @@ export function datasetFromPreview(preview: JobArtifactPreview, sourceName = pre
   if (!preview.points || !preview.cells || !preview.cellTypes || !preview.fieldSamples) {
     throw new Error("Result preview is missing geometry or field samples.");
   }
+  if (
+    !preview.cellIndices
+    || preview.cellIndices.length !== preview.cells.length
+    || !Number.isInteger(preview.sourceCellCount)
+    || (preview.sourceCellCount ?? 0) < preview.cells.length
+  ) {
+    throw new Error("Result preview is missing deterministic source-cell provenance.");
+  }
   const pointScalars: Record<string, number[]> = {};
   const pointVectors: Record<string, [number, number, number][]> = {};
   const cellScalars: Record<string, number[]> = {};
@@ -148,6 +156,8 @@ export function datasetFromPreview(preview: JobArtifactPreview, sourceName = pre
     pointData: { scalars: pointScalars, vectors: pointVectors },
     cellData: { scalars: cellScalars, vectors: cellVectors },
     fields: Array.from(new Set([...Object.keys(pointScalars), ...Object.keys(pointVectors), ...Object.keys(cellScalars), ...Object.keys(cellVectors)])).sort(),
+    sourceCellIndices: [...preview.cellIndices],
+    sourceCellCount: preview.sourceCellCount,
     sourceName,
     sourceText: undefined
   };
@@ -237,6 +247,8 @@ export function parseLegacyVtkResult(text: string, sourceName?: string): VtkResu
     pointData: { scalars, vectors },
     cellData: { scalars: cellScalars, vectors: cellVectors },
     fields: Array.from(new Set([...Object.keys(scalars), ...Object.keys(vectors), ...Object.keys(cellScalars), ...Object.keys(cellVectors)])).sort(),
+    sourceCellIndices: cells.map((_cell, index) => index),
+    sourceCellCount: cells.length,
     sourceName,
     sourceText: text
   };
@@ -350,6 +362,8 @@ export function parseAsciiVtuResult(text: string, sourceName?: string): VtkResul
     pointData: { scalars, vectors },
     cellData: { scalars: cellScalars, vectors: cellVectors },
     fields: Array.from(new Set([...Object.keys(scalars), ...Object.keys(vectors), ...Object.keys(cellScalars), ...Object.keys(cellVectors)])).sort(),
+    sourceCellIndices: cells.map((_cell, index) => index),
+    sourceCellCount: cells.length,
     sourceName,
     sourceText: text
   };

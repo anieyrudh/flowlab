@@ -237,28 +237,111 @@ def _case_file_digest(content: str) -> dict[str, str | int]:
     return {"size": len(encoded), "sha256": hashlib.sha256(encoded).hexdigest()}
 
 
-def _result_component_map(project: dict[str, Any], project_snapshot: str | None = None) -> ResultComponentMap | None:
-    """Declare only whole-domain, single-edge result ownership.
+def _mesh_edge_cell_ranges(
+    project: dict[str, Any],
+    mesh_snapshot: str | None,
+) -> tuple[int, list[dict[str, int | str]]] | None:
+    """Read deterministic edge ranges declared by the generated mesh metadata."""
+    if not isinstance(mesh_snapshot, str):
+        return None
+    try:
+        mesh = json.loads(mesh_snapshot)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    cells = mesh.get("cells")
+    regions = mesh.get("regions")
+    if not isinstance(cells, list) or not cells or not isinstance(regions, list):
+        return None
+
+    project_edge_ids = {
+        str(edge.get("id"))
+        for edge in _project_edges(project)
+        if isinstance(edge.get("id"), str) and edge.get("id")
+    }
+    ranges: list[dict[str, int | str]] = []
+    for region in regions:
+        if not isinstance(region, dict) or region.get("edgeId") not in project_edge_ids:
+            continue
+        edge_id = str(region["edgeId"])
+        cell_start = region.get("cellStart")
+        cell_count = region.get("cellCount")
+        if not isinstance(cell_start, int) or isinstance(cell_start, bool):
+            return None
+        if not isinstance(cell_count, int) or isinstance(cell_count, bool) or cell_count <= 0:
+            return None
+        if cell_start < 0 or cell_start + cell_count > len(cells):
+            return None
+        ranges.append({"edgeId": edge_id, "cellStart": cell_start, "cellCount": cell_count})
+
+    if not ranges or {str(item["edgeId"]) for item in ranges} != project_edge_ids:
+        return None
+    ranges.sort(key=lambda item: (int(item["cellStart"]), str(item["edgeId"])))
+    previous_stop = 0
+    for item in ranges:
+        start = int(item["cellStart"])
+        stop = start + int(item["cellCount"])
+        if start < previous_stop:
+            return None
+        previous_stop = stop
+    return len(cells), ranges
+
+
+def _result_component_map(
+    project: dict[str, Any],
+    project_snapshot: str | None = None,
+    *,
+    solver: str | None = None,
+    mesh_snapshot: str | None = None,
+) -> ResultComponentMap | None:
+    """Declare whole-artifact or source-cell result ownership.
 
     Generic VTK/VTU data does not contain a dependable component identifier.  A
     FlowLab-generated case with exactly one edge is the one safe v1 exception:
-    every generated result cell belongs to that edge.  All multi-edge cases
-    intentionally omit this metadata until they emit per-cell provenance.
+    every generated result cell belongs to that edge.  Supported multi-edge
+    OpenFOAM cases use the generated mesh's explicit cell ranges and only admit
+    known whole-volume result artifact families with the exact source cell
+    count. Imported and unsupported artifacts intentionally receive no map.
     """
     edges = _project_edges(project)
-    if len(edges) != 1:
-        return None
-    edge_id = edges[0].get("id")
-    if not isinstance(edge_id, str) or not edge_id:
+    if not edges:
         return None
     # Bind the map to the exact queued snapshot file, not a re-serialized
     # in-memory object.  The client verifies this digest against the case
     # manifest before it permits a selection link.
     canonical_project = project_snapshot if isinstance(project_snapshot, str) else json.dumps(project, separators=(",", ":"), sort_keys=True)
+    project_sha256 = hashlib.sha256(canonical_project.encode("utf-8")).hexdigest()
+    if len(edges) == 1:
+        edge_id = edges[0].get("id")
+        if not isinstance(edge_id, str) or not edge_id:
+            return None
+        return ResultComponentMap(
+            version=1,
+            projectSha256=project_sha256,
+            artifactBindings=[{"artifactName": "*", "edgeId": edge_id, "scope": "all-cells"}],
+        )
+
+    if solver != "openfoam":
+        return None
+    range_map = _mesh_edge_cell_ranges(project, mesh_snapshot)
+    if range_map is None:
+        return None
+    source_cell_count, cell_ranges = range_map
+    artifact_patterns = (
+        "postProcessing/flowlabNative/*.vtk",
+        "VTK/*.vtk",
+    )
     return ResultComponentMap(
-        version=1,
-        projectSha256=hashlib.sha256(canonical_project.encode("utf-8")).hexdigest(),
-        artifactBindings=[{"artifactName": "*", "edgeId": edge_id, "scope": "all-cells"}],
+        version=2,
+        projectSha256=project_sha256,
+        artifactBindings=[
+            {
+                "artifactName": artifact_pattern,
+                "scope": "cell-ranges",
+                "sourceCellCount": source_cell_count,
+                "cellRanges": cell_ranges,
+            }
+            for artifact_pattern in artifact_patterns
+        ],
     )
 
 
@@ -1405,6 +1488,8 @@ def _openfoam_axisymmetric_preview_mesh(profile: dict[str, Any]) -> dict[str, An
         raise ValueError("Axisymmetric preview requires a complete compiled profile.")
 
     axial_planes: list[tuple[float, float]] = []
+    preview_regions: list[dict[str, Any]] = []
+    source_cell_start = 0
     for segment in segments:
         start = stations[int(segment["fromStation"])]
         end = stations[int(segment["toStation"])]
@@ -1428,6 +1513,15 @@ def _openfoam_axisymmetric_preview_mesh(profile: dict[str, Any]) -> dict[str, An
                     start_radius + (end_radius - start_radius) * fraction,
                 )
             )
+        cell_count = n_axial * n_radial
+        preview_regions.append(
+            {
+                **segment,
+                "cellStart": source_cell_start,
+                "cellCount": cell_count,
+            }
+        )
+        source_cell_start += cell_count
 
     tangent = math.tan(math.radians(AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG))
     points: list[list[float]] = []
@@ -1476,7 +1570,7 @@ def _openfoam_axisymmetric_preview_mesh(profile: dict[str, Any]) -> dict[str, An
         "points": points,
         "cells": cells,
         "cellTypes": [VTK_HEXAHEDRON for _ in cells],
-        "regions": profile.get("segments"),
+        "regions": preview_regions,
     }
 
 
@@ -6535,8 +6629,20 @@ def generate_case(request: CaseRequest) -> SolverCase:
         raise ValueError(f"Unsupported solver: {request.solver}")
     case = add_case_manifest(adapter.generate_case(request))
     case.evidenceCapability = experimental_capability()
-    case.resultComponentMap = _result_component_map(request.project, case.files.get("flowlab_project.json"))
+    case.resultComponentMap = _result_component_map(
+        request.project,
+        case.files.get("flowlab_project.json"),
+        solver=case.solver,
+        mesh_snapshot=case.files.get("mesh/flowlab_mesh.json"),
+    )
     if case.resultComponentMap:
-        case.provenance.append("Result-to-schematic linkage is declared only for this single-edge case; imported and multi-edge results remain unlinked.")
+        if case.resultComponentMap.version == 1:
+            case.provenance.append(
+                "Result-to-schematic linkage uses a whole-artifact declaration for this single-edge generated case; imported results remain unlinked."
+            )
+        else:
+            case.provenance.append(
+                "Result-to-schematic linkage uses generated source-cell ranges for supported OpenFOAM volume artifacts; imported, unmatched, unsupported, and unowned cells remain probe-only."
+            )
     case.files[EVIDENCE_CAPABILITY_PATH] = json.dumps(case.evidenceCapability.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
     return add_case_manifest(case)

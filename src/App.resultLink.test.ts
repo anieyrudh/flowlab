@@ -35,6 +35,51 @@ function snapshot(provenance: ResultSnapshot["provenance"]): ResultSnapshot {
   return { id: "snapshot-1", label: "VTK/result.vtk", time: 0, dataset: {} as ResultSnapshot["dataset"], provenance };
 }
 
+function cellSnapshot(
+  artifactName = "postProcessing/flowlabNative/time_1.vtk",
+  sourceCellIndices = [0, 1, 2],
+  sourceCellCount = 3
+): ResultSnapshot {
+  return {
+    id: "snapshot-cells",
+    label: artifactName,
+    time: 1,
+    dataset: {
+      format: "legacy-vtk-ascii-v1",
+      points: [],
+      cells: sourceCellIndices.map(() => []),
+      cellTypes: sourceCellIndices.map(() => 9),
+      pointData: { scalars: {}, vectors: {} },
+      cellData: { scalars: {}, vectors: {} },
+      fields: [],
+      sourceCellIndices,
+      sourceCellCount
+    },
+    provenance: { kind: "case-artifact", caseId: "case-verified", jobId: "job-verified", artifactName }
+  };
+}
+
+function multiEdgeSolverCase(overrides: Partial<SolverCase> = {}): SolverCase {
+  return solverCase({
+    resultComponentMap: {
+      version: 2,
+      projectSha256,
+      artifactBindings: [
+        {
+          artifactName: "postProcessing/flowlabNative/*.vtk",
+          scope: "cell-ranges",
+          sourceCellCount: 3,
+          cellRanges: [
+            { edgeId: "inlet", cellStart: 0, cellCount: 1 },
+            { edgeId: "outlet", cellStart: 2, cellCount: 1 }
+          ]
+        }
+      ]
+    },
+    ...overrides
+  });
+}
+
 const job = { id: "job-verified", caseId: "case-verified" } as JobRecord;
 
 describe("verified result component linkage", () => {
@@ -47,6 +92,53 @@ describe("verified result component linkage", () => {
     );
 
     expect(link).toMatchObject({ state: "linked", edgeId });
+  });
+
+  it("resolves multi-edge selection only from explicit source-cell ranges", () => {
+    expect(verifiedResultComponentLink(cellSnapshot(), project, multiEdgeSolverCase(), job)).toMatchObject({
+      state: "linked",
+      message: expect.stringMatching(/probe a result cell/i)
+    });
+    expect(verifiedResultComponentLink(cellSnapshot(), project, multiEdgeSolverCase(), job, 0)).toMatchObject({
+      state: "linked",
+      edgeId: "inlet"
+    });
+    expect(verifiedResultComponentLink(cellSnapshot(), project, multiEdgeSolverCase(), job, 2)).toMatchObject({
+      state: "linked",
+      edgeId: "outlet"
+    });
+    expect(verifiedResultComponentLink(cellSnapshot(), project, multiEdgeSolverCase(), job, 1)).toMatchObject({
+      state: "unlinked",
+      message: expect.stringMatching(/no unique verified schematic owner/i)
+    });
+  });
+
+  it("maps sampled preview cells through their retained source indices", () => {
+    expect(verifiedResultComponentLink(cellSnapshot(undefined, [2], 3), project, multiEdgeSolverCase(), job, 0)).toMatchObject({
+      state: "linked",
+      edgeId: "outlet"
+    });
+  });
+
+  it("allows presentation-only stage changes while keeping the queued model immutable", () => {
+    const inspectProject = structuredClone(project);
+    inspectProject.visualization.mode = "analyze";
+    inspectProject.viewport = { x: 120, y: -40, zoom: 1.5 };
+
+    expect(verifiedResultComponentLink(cellSnapshot(), inspectProject, multiEdgeSolverCase(), job, 2)).toMatchObject({
+      state: "linked",
+      edgeId: "outlet"
+    });
+  });
+
+  it("fails closed for unmatched artifacts and source-cell counts", () => {
+    expect(
+      verifiedResultComponentLink(cellSnapshot("VTK/inlet/inlet_1.vtk"), project, multiEdgeSolverCase(), job, 0)
+    ).toMatchObject({ state: "unlinked", message: expect.stringMatching(/No matching schematic component/i) });
+    expect(verifiedResultComponentLink(cellSnapshot(undefined, [0], 4), project, multiEdgeSolverCase(), job, 0)).toMatchObject({
+      state: "unlinked",
+      message: expect.stringMatching(/does not match the generated case/i)
+    });
   });
 
   it("leaves imports, stale projects, and mismatched map hashes as explicit probes", () => {

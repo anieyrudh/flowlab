@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 
 const nativeOpenFoamResult = `# vtk DataFile Version 3.0
@@ -19,6 +20,39 @@ LOOKUP_TABLE default
 101325
 VECTORS U float
 1.5 0 0
+`;
+
+const multiEdgeOpenFoamResult = `# vtk DataFile Version 3.0
+FlowLab multi-edge OpenFOAM native time 1
+ASCII
+DATASET UNSTRUCTURED_GRID
+POINTS 8 float
+0 0 0
+1 0 0
+2 0 0
+3 0 0
+0 1 0
+1 1 0
+2 1 0
+3 1 0
+CELLS 3 15
+4 0 1 5 4
+4 1 2 6 5
+4 2 3 7 6
+CELL_TYPES 3
+9
+9
+9
+CELL_DATA 3
+SCALARS p float 1
+LOOKUP_TABLE default
+103000
+102000
+101000
+VECTORS U float
+1 0 0
+1.5 0 0
+2 0 0
 `;
 
 const patchMetricsFixture = {
@@ -144,9 +178,11 @@ function meshQualityFixture(kind: "passed" | "failed" | "missing" | "production"
 async function openFresh(
   page: Page,
   meshKind: "passed" | "failed" | "missing" | "production" = "passed",
-  options: { keepCinema?: boolean; runnableOpenfoam?: boolean } = {}
+  options: { keepCinema?: boolean; runnableOpenfoam?: boolean; verifiedMultiEdgeLink?: boolean } = {}
 ) {
-  const { runnableOpenfoam = false } = options;
+  const { runnableOpenfoam = false, verifiedMultiEdgeLink = false } = options;
+  let generatedProjectText = "";
+  let generatedProjectSha256 = "";
   await page.route("**/api/health", async (route) => {
     await route.fulfill({ json: { status: "ok" } });
   });
@@ -186,6 +222,26 @@ async function openFresh(
     });
   });
   await page.route("**/api/cases/generate", async (route) => {
+    const payload = route.request().postDataJSON() as { project?: unknown };
+    generatedProjectText = JSON.stringify(payload.project ?? {}, null, 2);
+    generatedProjectSha256 = createHash("sha256").update(generatedProjectText).digest("hex");
+    const resultComponentMap = verifiedMultiEdgeLink
+      ? {
+          version: 2,
+          projectSha256: generatedProjectSha256,
+          artifactBindings: [
+            {
+              artifactName: "postProcessing/flowlabNative/*.vtk",
+              scope: "cell-ranges",
+              sourceCellCount: 3,
+              cellRanges: [
+                { edgeId: "inlet", cellStart: 0, cellCount: 1 },
+                { edgeId: "outlet", cellStart: 2, cellCount: 1 }
+              ]
+            }
+          ]
+        }
+      : null;
     await route.fulfill({
       json: {
         id: "case-openfoam-e2e",
@@ -193,9 +249,18 @@ async function openFresh(
         solver: "openfoam",
         advancedMode: "incompressible-navier-stokes",
         status: "generated",
-        files: {},
+        files: verifiedMultiEdgeLink
+          ? {
+              "flowlab_project.json": generatedProjectText,
+              "flowlab_case_manifest.json": JSON.stringify({
+                files: { "flowlab_project.json": { sha256: generatedProjectSha256 } },
+                resultComponentMap
+              })
+            }
+          : {},
         runCommand: ["bash", "Allrun"],
-        provenance: []
+        provenance: [],
+        resultComponentMap
       }
     });
   });
@@ -232,8 +297,8 @@ async function openFresh(
           resultFiles: [
             {
               path: "postProcessing/flowlabNative/time_0_002.vtk",
-              size: nativeOpenFoamResult.length,
-              text: nativeOpenFoamResult,
+              size: (verifiedMultiEdgeLink ? multiEdgeOpenFoamResult : nativeOpenFoamResult).length,
+              text: verifiedMultiEdgeLink ? multiEdgeOpenFoamResult : nativeOpenFoamResult,
               time: 0.002,
               timeText: "0.002",
               timeSource: "openfoam-time-directory",
@@ -393,6 +458,38 @@ test.describe("FlowLab editor workspace", () => {
     await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.resultViewMode)).toBe("3d");
     await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("cinema");
     await expect(page.getByText(/Using pressure from venturi-result\.vtk/)).toBeVisible();
+  });
+
+  test("selects multi-edge generated results only through verified source-cell provenance", async ({ page }) => {
+    test.setTimeout(45_000);
+    await openFresh(page, "passed", { runnableOpenfoam: true, verifiedMultiEdgeLink: true });
+    await page.getByRole("button", { name: /^Nodes \(3\)$/ }).click();
+    await expect(page.getByTestId("schematic-canvas")).toHaveAttribute("data-selected-id", "source");
+
+    await showStage(page, "CFD");
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await showStage(page, "Inspect");
+    await expect(page.getByText(/Verified per-cell case link/i).first()).toBeVisible();
+
+    const cinema = page.getByTestId("cinema-canvas");
+    const schematic = page.getByTestId("schematic-canvas");
+    const box = await cinema.boundingBox();
+    if (!box) throw new Error("Cinema canvas bounds missing.");
+
+    const linkedEdges = new Set<string>();
+    for (const yFraction of [0.35, 0.45, 0.55, 0.65]) {
+      for (let xFraction = 0.2; xFraction <= 0.8; xFraction += 0.05) {
+        await page.mouse.click(box.x + box.width * xFraction, box.y + box.height * yFraction);
+        const selectedId = await schematic.getAttribute("data-selected-id");
+        if (selectedId === "inlet" || selectedId === "outlet") linkedEdges.add(selectedId);
+        if (linkedEdges.size === 2) break;
+      }
+      if (linkedEdges.size === 2) break;
+    }
+
+    expect(linkedEdges).toEqual(new Set(["inlet", "outlet"]));
+    await expect(cinema).toHaveAttribute("data-selected-id", await schematic.getAttribute("data-selected-id") ?? "");
   });
 
   test("keeps viewport gestures, visible camera actions, and result modes coherent", async ({ page }) => {

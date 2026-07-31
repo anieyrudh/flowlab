@@ -123,7 +123,7 @@ type LoadedResultProvenance =
   | { kind: "case-artifact"; caseId: string; jobId: string; artifactName: string };
 
 type ResultComponentLink =
-  | { state: "linked"; edgeId: string; message: string }
+  | { state: "linked"; edgeId?: string; message: string }
   | { state: "unlinked"; message: string };
 
 type DockPanelId = "field" | "sweep" | "metrics" | "mesh" | "diagnostics" | "warnings";
@@ -736,11 +736,27 @@ export function canonicalProjectJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
+function resultLinkProjectModel(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { visualization: _visualization, viewport: _viewport, ...model } = value as Record<string, unknown>;
+  return model;
+}
+
+function artifactNameMatches(pattern: string, artifactName: string) {
+  if (pattern === "*") return true;
+  const expression = pattern
+    .split("*")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${expression}$`).test(artifactName);
+}
+
 export function verifiedResultComponentLink(
   snapshot: ResultSnapshot | null,
   currentProject: ReturnType<typeof useFlowStore.getState>["project"],
   solverCase: SolverCase | null,
-  job: JobRecord | null
+  job: JobRecord | null,
+  ownerCellIndex?: number
 ): ResultComponentLink {
   const provenance = snapshot?.provenance;
   if (!provenance || provenance.kind !== "case-artifact") {
@@ -750,12 +766,16 @@ export function verifiedResultComponentLink(
     return { state: "unlinked", message: "Result case provenance is unavailable — probe only." };
   }
   const componentMap: ResultComponentMap | null | undefined = solverCase.resultComponentMap;
-  if (!componentMap || componentMap.version !== 1 || !/^[a-f0-9]{64}$/i.test(componentMap.projectSha256)) {
+  if (!componentMap || ![1, 2].includes(componentMap.version) || !/^[a-f0-9]{64}$/i.test(componentMap.projectSha256)) {
     return { state: "unlinked", message: "This generated case has no verified component map — probe only." };
   }
   const projectSnapshot = solverCase.files["flowlab_project.json"];
   try {
-    if (!projectSnapshot || canonicalProjectJson(JSON.parse(projectSnapshot)) !== canonicalProjectJson(currentProject)) {
+    if (
+      !projectSnapshot
+      || canonicalProjectJson(resultLinkProjectModel(JSON.parse(projectSnapshot)))
+        !== canonicalProjectJson(resultLinkProjectModel(currentProject))
+    ) {
       return { state: "unlinked", message: "Result belongs to a different project snapshot — probe only." };
     }
     const manifest = JSON.parse(solverCase.files["flowlab_case_manifest.json"] ?? "{}") as {
@@ -767,13 +787,50 @@ export function verifiedResultComponentLink(
   } catch {
     return { state: "unlinked", message: "Case project snapshot cannot be verified — probe only." };
   }
-  const binding = componentMap.artifactBindings.find(
-    (candidate) => candidate.scope === "all-cells" && (candidate.artifactName === provenance.artifactName || candidate.artifactName === "*")
-  );
-  if (!binding || !currentProject.edges[binding.edgeId]) {
+  const binding = componentMap.artifactBindings.find((candidate) => artifactNameMatches(candidate.artifactName, provenance.artifactName));
+  if (!binding) {
     return { state: "unlinked", message: "No matching schematic component is verified for this result — probe only." };
   }
-  return { state: "linked", edgeId: binding.edgeId, message: `Verified case link: ${currentProject.edges[binding.edgeId].label}` };
+  if (binding.scope === "all-cells") {
+    if (!currentProject.edges[binding.edgeId]) {
+      return { state: "unlinked", message: "No matching schematic component is verified for this result — probe only." };
+    }
+    return { state: "linked", edgeId: binding.edgeId, message: `Verified case link: ${currentProject.edges[binding.edgeId].label}` };
+  }
+
+  const sourceCellIndices = snapshot.dataset.sourceCellIndices;
+  if (
+    !Number.isInteger(binding.sourceCellCount)
+    || binding.sourceCellCount <= 0
+    || snapshot.dataset.sourceCellCount !== binding.sourceCellCount
+    || !Array.isArray(sourceCellIndices)
+    || sourceCellIndices.length !== snapshot.dataset.cells.length
+  ) {
+    return { state: "unlinked", message: "Result cell provenance does not match the generated case — probe only." };
+  }
+  if (ownerCellIndex === undefined) {
+    return { state: "linked", message: "Verified per-cell case link — probe a result cell to select its schematic edge." };
+  }
+  const sourceCellIndex = sourceCellIndices[ownerCellIndex];
+  if (!Number.isInteger(sourceCellIndex) || sourceCellIndex < 0 || sourceCellIndex >= binding.sourceCellCount) {
+    return { state: "unlinked", message: "Probed result cell has no verified source-cell identity — probe only." };
+  }
+  const owners = binding.cellRanges.filter(
+    (candidate) =>
+      currentProject.edges[candidate.edgeId]
+      && Number.isInteger(candidate.cellStart)
+      && Number.isInteger(candidate.cellCount)
+      && candidate.cellStart >= 0
+      && candidate.cellCount > 0
+      && candidate.cellStart + candidate.cellCount <= binding.sourceCellCount
+      && sourceCellIndex >= candidate.cellStart
+      && sourceCellIndex < candidate.cellStart + candidate.cellCount
+  );
+  if (owners.length !== 1) {
+    return { state: "unlinked", message: "Probed result cell has no unique verified schematic owner — probe only." };
+  }
+  const edge = currentProject.edges[owners[0].edgeId];
+  return { state: "linked", edgeId: edge.id, message: `Verified cell link: ${edge.label}` };
 }
 
 export default function App() {
@@ -1908,7 +1965,16 @@ export default function App() {
                 onUpdateEdgeEndpoint={updateEdgeEndpoint}
                 onProbePoint={(point, size, surfaceProbe) => {
                   setProbeTarget(surfaceProbe ? { kind: "surface", ...surfaceProbe } : surfaceProbe === null ? null : { kind: "canvas", point, size });
-                  if (surfaceProbe && activeResultLink.state === "linked") select("edge", activeResultLink.edgeId);
+                  if (surfaceProbe) {
+                    const probedLink = verifiedResultComponentLink(
+                      activeSnapshot,
+                      project,
+                      caseRecord,
+                      jobRecord,
+                      surfaceProbe.ownerCellIndex
+                    );
+                    if (probedLink.state === "linked" && probedLink.edgeId) select("edge", probedLink.edgeId);
+                  }
                 }}
                 testId="cinema-canvas"
                 ariaLabel="FlowLab linked 3D result view"

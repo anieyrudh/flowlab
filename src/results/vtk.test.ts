@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  datasetFromPreview,
   fieldDescriptiveStats,
   fieldHistogramForValues,
   fieldCoverageForSnapshots,
@@ -48,8 +49,32 @@ describe("VTK result parsing", () => {
     expect(parsed.sourceName).toBe("fixture.vtk");
     expect(parsed.points).toHaveLength(4);
     expect(parsed.cells).toEqual([[0, 1, 2, 3]]);
+    expect(parsed.sourceCellIndices).toEqual([0]);
+    expect(parsed.sourceCellCount).toBe(1);
     expect(parsed.pointData.scalars.pressure).toEqual([1, 2, 3, 4]);
     expect(parsed.pointData.vectors.velocity[2]).toEqual([3, 0, 0]);
+  });
+
+  it("retains original source-cell indices in bounded previews", () => {
+    const parsed = datasetFromPreview({
+      path: "postProcessing/flowlabNative/time_1.vtk",
+      size: 120,
+      schema: "flowlab.result_preview.v1",
+      sourcePointCount: 12,
+      sourceCellCount: 8,
+      pointIndices: [0, 1, 2, 3],
+      cellIndices: [6],
+      points: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]],
+      cells: [[0, 1, 2, 3]],
+      cellTypes: [9],
+      fieldSamples: {
+        point: [],
+        cell: [{ name: "p", kind: "scalar", values: [101325] }]
+      }
+    });
+
+    expect(parsed.sourceCellIndices).toEqual([6]);
+    expect(parsed.sourceCellCount).toBe(8);
   });
 
   it("fails closed for unsupported legacy cell types", () => {
