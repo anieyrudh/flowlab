@@ -3415,9 +3415,9 @@ function MeshControlsPanel({
     fine: { axial: 64, annular: 16, circumference: 128, core: 32 }
   }[solver.meshResolution];
   const yJunctionCellSizeDefaults = {
-    coarse: 0.001125,
+    coarse: 0.0015,
     medium: 0.00075,
-    fine: 0.0005
+    fine: 0.000375
   }[solver.meshResolution];
 
   function fullOGridControls(
@@ -3488,9 +3488,9 @@ function MeshControlsPanel({
                       meshControls: {
                         ...controls,
                         yJunctionCellSizeM: {
-                          coarse: 0.001125,
+                          coarse: 0.0015,
                           medium: 0.00075,
-                          fine: 0.0005
+                          fine: 0.000375
                         }[meshResolution]
                       }
                     }

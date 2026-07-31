@@ -443,11 +443,11 @@ test.describe("FlowLab editor workspace", () => {
     await page.getByLabel("Mesh mode").selectOption("y-junction");
 
     await expect(page.getByLabel("Run mode")).toHaveValue("steady");
-    await expect(page.getByLabel("Y-junction cell size")).toHaveValue("0.001125");
+    await expect(page.getByLabel("Y-junction cell size")).toHaveValue("0.0015");
     await expect(page.getByText(/junction cells retain a generated artifact identity/i)).toBeVisible();
 
     await page.getByLabel("Mesh resolution").selectOption("fine");
-    await expect(page.getByLabel("Y-junction cell size")).toHaveValue("0.0005");
+    await expect(page.getByLabel("Y-junction cell size")).toHaveValue("0.000375");
 
     const generatedRequest = page.waitForRequest((request) => request.url().endsWith("/api/cases/generate"));
     await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
@@ -467,7 +467,7 @@ test.describe("FlowLab editor workspace", () => {
       runMode: "steady",
       turbulence: "laminar",
       meshControls: {
-        yJunctionCellSizeM: 0.0005
+        yJunctionCellSizeM: 0.000375
       }
     });
   });

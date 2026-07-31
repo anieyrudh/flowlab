@@ -772,7 +772,7 @@ describe("FlowLab result visualization", () => {
     fireEvent.change(screen.getByLabelText("Mesh mode"), { target: { value: "y-junction" } });
 
     expect(screen.getByLabelText("Run mode")).toHaveValue("steady");
-    expect(screen.getByLabelText("Y-junction cell size")).toHaveValue(0.001125);
+    expect(screen.getByLabelText("Y-junction cell size")).toHaveValue(0.0015);
     expect(screen.getByText(/junction cells retain a generated artifact identity/i)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Mesh resolution"), { target: { value: "medium" } });

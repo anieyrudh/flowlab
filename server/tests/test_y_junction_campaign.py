@@ -88,12 +88,17 @@ def test_materialization_freezes_duplicate_hashes_and_unowned_junction(tmp_path:
     )
 
 
-def test_v2_contract_freezes_fixed_cell_point_probe_sampling() -> None:
+def test_v3_contract_freezes_nested_grids_and_fixed_cell_point_probe_sampling() -> None:
     contract = load_contract()
     case = build_case(_level_rows(contract)[-1], contract)
     profile = json.loads(case.files["constant/flowlab_y_junction_profile.json"])
 
-    assert contract["contractId"] == "bounded-symmetric-y-junction-v2"
+    assert contract["contractId"] == "bounded-symmetric-y-junction-v3"
+    assert [row["cellSizeM"] for row in _level_rows(contract)] == [
+        0.0015,
+        0.00075,
+        0.000375,
+    ]
     assert profile["probeSampling"] == contract["probeSampling"]
     assert "fixedLocations  true;" in case.files["system/functions"]
     assert "interpolationScheme cellPoint;" in case.files["system/functions"]
@@ -147,9 +152,9 @@ def test_solver_header_is_not_a_crash_but_real_floating_point_signal_is(tmp_path
 def test_three_grid_order_and_gci_fail_closed() -> None:
     contract = load_contract()
     convergent = {
-        "coarse": {"qoi": {"primaryPressureDropPa": 1.09}},
+        "coarse": {"qoi": {"primaryPressureDropPa": 1.20}},
         "medium": {"qoi": {"primaryPressureDropPa": 1.04}},
-        "fine": {"qoi": {"primaryPressureDropPa": 1.0177777777777777}},
+        "fine": {"qoi": {"primaryPressureDropPa": 1.0}},
     }
     accepted = _sequence(convergent, contract)
     assert accepted["observedOrder"] == pytest.approx(2.0)
