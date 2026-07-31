@@ -13,7 +13,8 @@ sending project data to a hosted service.
   with clear dependency checks before execution.
 - Supports a bounded full-360 O-grid path for steady, incompressible, laminar
   flow through a straight circular pipe.
-- Loads VTK/VTU results into a true 3D viewer with XYZ surface probing.
+- Loads VTK/VTU results into a true 3D viewer with XYZ surface probing and
+  [solver-derived steady streamlines](docs/solver-derived-streamlines.md).
 - Fails closed when geometry, topology, physics, or a solver runtime is not
   supported.
 

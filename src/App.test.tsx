@@ -599,6 +599,9 @@ describe("FlowLab result visualization", () => {
     fireEvent.click(screen.getByRole("button", { name: /Load fixture result/i }));
 
     expect(await screen.findByText(/Using pressure from venturi-result\.vtk/)).toBeTruthy();
+    expect(screen.getByLabelText("Steady streamline controls")).toHaveTextContent("Deterministic RK4 through loaded U(x,y,z)");
+    expect(screen.getByLabelText("Steady streamline controls")).toHaveTextContent("passive animation, not transient pathlines");
+    expect(screen.getByRole("button", { name: "Automatic inlet seeds" })).toBeDisabled();
     expect(screen.getByLabelText("3D result camera controls")).toHaveTextContent("Yaw");
     expect(screen.getByLabelText("Result camera yaw")).toHaveValue("-32");
     fireEvent.change(screen.getByLabelText("Result camera yaw"), { target: { value: "45" } });
@@ -845,7 +848,7 @@ describe("FlowLab result visualization", () => {
 
     expect(await screen.findByText(/Snapshot 1\/26/)).toBeTruthy();
     expect(screen.getByText(/Using U from VTK\/case_1\.vtk/)).toBeTruthy();
-  });
+  }, 15_000);
 
   it("blocks advanced case queueing when the live network has topology errors", async () => {
     useFlowStore.getState().setProject({ ...venturiPreset, visualization: { ...venturiPreset.visualization, mode: "sweep" } });

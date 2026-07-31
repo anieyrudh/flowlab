@@ -460,6 +460,45 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByText(/Using pressure from venturi-result\.vtk/)).toBeVisible();
   });
 
+  test("derives user-plane steady streamlines in a worker and keeps passive tracers distinct from pathlines", async ({ page }) => {
+    test.setTimeout(45_000);
+    await openFresh(page, "passed", { keepCinema: true });
+    await loadFixtureResult(page);
+    await page.getByLabel("Streamline seed count").selectOption("16");
+
+    const controls = page.getByLabel("Steady streamline controls");
+    await expect(controls).toContainText("Deterministic RK4 through loaded U(x,y,z)");
+    await expect(controls).toContainText("Sprites are passive animation, not transient pathlines");
+    await expect(controls.getByRole("button", { name: "Automatic inlet seeds" })).toBeDisabled();
+    await controls.getByRole("button", { name: "Derive" }).click();
+
+    await expect(page.getByTestId("streamline-status")).toContainText("16 steady streamlines");
+    await expect(controls).toContainText("artifact-local, unlinked");
+    await controls.getByLabel("Streamline colour field").selectOption("pressure");
+    await expect(controls.getByLabel("Streamline colour field")).toHaveValue("pressure");
+  });
+
+  test("keeps max-seed passive streamline cinema frames within budget", async ({ page }) => {
+    test.setTimeout(90_000);
+    await openFresh(page, "passed", { keepCinema: true });
+    await loadFixtureResult(page);
+    const controls = page.getByLabel("Steady streamline controls");
+    await controls.getByLabel("Streamline seed count").selectOption("256");
+    await controls.getByRole("button", { name: "Derive" }).click();
+    await expect(page.getByTestId("streamline-status")).toContainText("256 steady streamlines");
+
+    await page.evaluate(() => window.__flowlabEditorPerformance?.reset());
+    await page.waitForTimeout(750);
+    const performanceSnapshot = await page.evaluate(() => window.__flowlabEditorPerformance?.get());
+    expect(performanceSnapshot).toBeTruthy();
+    await test.info().attach("streamline-cinema-performance.json", {
+      body: Buffer.from(JSON.stringify(performanceSnapshot, null, 2)),
+      contentType: "application/json"
+    });
+    expect(performanceSnapshot?.counts["cinema-frame"]).toBeGreaterThan(10);
+    expect(performanceSnapshot?.p95["cinema-frame"]).toBeLessThan(16);
+  });
+
   test("selects multi-edge generated results only through verified source-cell provenance", async ({ page }) => {
     test.setTimeout(45_000);
     await openFresh(page, "passed", { runnableOpenfoam: true, verifiedMultiEdgeLink: true });

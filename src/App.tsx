@@ -52,7 +52,15 @@ import {
   type ResultFieldTimelineSample,
   type ResultVectorComponent
 } from "./results/vtk";
+import { datasetSeedPlane, generatePlaneSeeds } from "./streamlines/core";
+import { runStreamlinesInWorker, type StreamlineWorkerRun } from "./streamlines/client";
 import {
+  STREAMLINE_LIMITS,
+  type StreamlineDisplayOptions,
+  type StreamlineResult
+} from "./streamlines/types";
+import {
+  deriveJobArtifactStreamlines,
   fetchHealth,
   fetchJob,
   fetchJobArtifactChunk,
@@ -894,10 +902,18 @@ export default function App() {
   const [resultFieldFilter, setResultFieldFilter] = useState("");
   const [probeTarget, setProbeTarget] = useState<ProbeTarget | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
+  const [streamlineResult, setStreamlineResult] = useState<StreamlineResult | null>(null);
+  const [streamlineBusy, setStreamlineBusy] = useState(false);
+  const [streamlineMessage, setStreamlineMessage] = useState<string | null>(null);
+  const [streamlineSeedAxis, setStreamlineSeedAxis] = useState<0 | 1 | 2>(0);
+  const [streamlineSeedPosition, setStreamlineSeedPosition] = useState(0.02);
+  const [streamlineSeedCount, setStreamlineSeedCount] = useState<number>(STREAMLINE_LIMITS.defaultSeeds);
+  const [streamlineColorField, setStreamlineColorField] = useState<StreamlineDisplayOptions["colorField"]>("velocity");
   const [projectMessage, setProjectMessage] = useState<string | null>(null);
   const [storageReady, setStorageReady] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const resultFileRef = useRef<HTMLInputElement | null>(null);
+  const streamlineWorkerRef = useRef<StreamlineWorkerRun | null>(null);
 
   const selected = selectedEntity(project, selectedKind, selectedId);
   const selectedEdge = selectedKind === "edge" && selected ? (selected as FluidEdge) : null;
@@ -906,6 +922,18 @@ export default function App() {
   const selectedNodeResult = selectedNode ? result.nodeResults[selectedNode.id] : null;
   const activeSnapshot = resultSnapshots[activeResultIndex] ?? null;
   const loadedResult = activeSnapshot?.dataset ?? null;
+  const inletManifestAvailable = Boolean(caseRecord?.files["mesh/flowlab_boundary_faces.json"])
+    && activeSnapshot?.provenance?.kind === "case-artifact";
+  const reducedMotion = typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const streamlineDisplay = useMemo<StreamlineDisplayOptions>(() => ({
+    colorField: streamlineColorField,
+    colorMap: resultColorMap,
+    showLines: project.visualization.streamlines,
+    showSprites: project.visualization.particles,
+    reducedMotion
+  }), [project.visualization.particles, project.visualization.streamlines, reducedMotion, resultColorMap, streamlineColorField]);
   const currentOpenBoundaryCampaign = validatedBenchmarks.find(
     (benchmark) => benchmark.id === "laminar-open-boundary-all-hex-v1"
   ) ?? null;
@@ -913,6 +941,16 @@ export default function App() {
     () => verifiedResultComponentLink(activeSnapshot, project, caseRecord, jobRecord),
     [activeSnapshot, caseRecord, jobRecord, project]
   );
+  const activeCaseArtifactName = activeSnapshot?.provenance?.kind === "case-artifact"
+    ? activeSnapshot.provenance.artifactName
+    : null;
+  const verifiedStreamlineCellOrder = activeResultLink.state === "linked"
+    && activeCaseArtifactName !== null
+    && caseRecord?.resultComponentMap?.artifactBindings.some(
+      (binding) => binding.scope === "cell-ranges"
+        && artifactNameMatches(binding.artifactName, activeCaseArtifactName)
+        && binding.sourceCellCount === loadedResult?.sourceCellCount
+    ) === true;
 
   useEffect(() => {
     setActiveDockPanel(defaultDockPanelByMode[project.visualization.mode]);
@@ -922,6 +960,13 @@ export default function App() {
     if (!loadedResult) return;
     setActiveDockPanel("field");
   }, [loadedResult]);
+  useEffect(() => {
+    streamlineWorkerRef.current?.cancel();
+    streamlineWorkerRef.current = null;
+    setStreamlineResult(null);
+    setStreamlineBusy(false);
+    setStreamlineMessage(activeSnapshot?.preview ? "Full result required. A backend derivation may use the complete artifact." : null);
+  }, [activeSnapshot?.id, activeSnapshot?.preview]);
   const loadedFieldInventory = useMemo(() => listResultFields(loadedResult), [loadedResult]);
   const filteredFieldInventory = useMemo(() => {
     const query = resultFieldFilter.trim().toLowerCase();
@@ -1351,6 +1396,75 @@ export default function App() {
     } catch (error) {
       setResultError(error instanceof Error ? error.message : "Could not load preview result.");
     }
+  }
+
+  async function runSteadyStreamlines(seedMode: "user-plane" | "inlet-manifest" = "user-plane") {
+    if (!loadedResult || !activeSnapshot) {
+      setStreamlineMessage("Load a full result containing U/velocity before deriving steady streamlines.");
+      return;
+    }
+    streamlineWorkerRef.current?.cancel();
+    streamlineWorkerRef.current = null;
+    setStreamlineBusy(true);
+    setStreamlineResult(null);
+    try {
+      const provenance = activeSnapshot.provenance;
+      const canUseFullArtifactEndpoint = provenance?.kind === "case-artifact"
+        && jobRecord?.id === provenance.jobId;
+      if (seedMode === "inlet-manifest" || activeSnapshot.preview) {
+        if (!canUseFullArtifactEndpoint || !jobRecord) {
+          throw new Error("Full result required.");
+        }
+        setStreamlineMessage(
+          activeSnapshot.preview
+            ? "Preview excluded — deriving from the complete on-disk artifact."
+            : "Deriving inlet-seeded steady streamlines from the complete on-disk artifact."
+        );
+        const derived = await deriveJobArtifactStreamlines(jobRecord.id, {
+          artifactPath: provenance.artifactName,
+          sourceRepresentation: "full",
+          seedMode,
+          seedAxis: streamlineSeedAxis,
+          seedPosition: streamlineSeedPosition,
+          seedCount: streamlineSeedCount
+        });
+        setStreamlineResult(derived);
+        setStreamlineMessage(
+          `${derived.seedCount} steady streamlines · ${derived.vertexCount.toLocaleString()} vertices · ${derived.velocityInterpolation}.`
+        );
+        return;
+      }
+
+      const plane = datasetSeedPlane(loadedResult, streamlineSeedAxis, streamlineSeedPosition, streamlineSeedCount);
+      const run = runStreamlinesInWorker({
+        dataset: loadedResult,
+        seeds: generatePlaneSeeds(plane),
+        sourceIdentity: provenance?.kind === "case-artifact"
+          && caseRecord?.solver !== "su2"
+          && verifiedStreamlineCellOrder
+          ? "verified-case-cell-order"
+          : "artifact-local-unlinked"
+      });
+      streamlineWorkerRef.current = run;
+      setStreamlineMessage("Integrating deterministic RK4 steady streamlines in a cancellable worker...");
+      const derived = await run.promise;
+      streamlineWorkerRef.current = null;
+      setStreamlineResult(derived);
+      setStreamlineMessage(
+        `${derived.seedCount} steady streamlines · ${derived.vertexCount.toLocaleString()} vertices · ${derived.velocityInterpolation}.`
+      );
+    } catch (error) {
+      setStreamlineMessage(error instanceof Error ? error.message : "Steady streamline integration failed.");
+    } finally {
+      setStreamlineBusy(false);
+    }
+  }
+
+  function cancelSteadyStreamlines() {
+    streamlineWorkerRef.current?.cancel();
+    streamlineWorkerRef.current = null;
+    setStreamlineBusy(false);
+    setStreamlineMessage("Streamline integration cancelled.");
   }
 
   useEffect(() => {
@@ -1950,6 +2064,8 @@ export default function App() {
                 resultFieldSelection={activeResultField}
                 resultVectorComponent={activeVectorComponent}
                 resultColorMap={resultColorMap}
+                streamlines={streamlineResult}
+                streamlineDisplay={streamlineDisplay}
                 canvasRenderMode="cinema"
                 cinemaCamera={cinemaCamera}
                 resultViewMode="3d"
@@ -2306,6 +2422,121 @@ export default function App() {
                 ))}
               </select>
             </label>
+          ) : null}
+          {loadedResult ? (
+            <section className="streamline-controls" aria-label="Steady streamline controls">
+              <div className="streamline-control-header">
+                <div>
+                  <strong>Steady streamlines</strong>
+                  <small>Deterministic RK4 through loaded U(x,y,z)</small>
+                </div>
+                {streamlineBusy ? (
+                  <button type="button" onClick={cancelSteadyStreamlines}>Cancel</button>
+                ) : (
+                  <button type="button" onClick={() => void runSteadyStreamlines("user-plane")}>Derive</button>
+                )}
+              </div>
+              <div className="streamline-grid">
+                <label>
+                  Seed plane normal
+                  <select
+                    aria-label="Streamline seed plane normal"
+                    value={streamlineSeedAxis}
+                    onChange={(event) => setStreamlineSeedAxis(Number(event.target.value) as 0 | 1 | 2)}
+                  >
+                    <option value={0}>X</option>
+                    <option value={1}>Y</option>
+                    <option value={2}>Z</option>
+                  </select>
+                </label>
+                <label>
+                  Plane position
+                  <input
+                    aria-label="Streamline seed plane position"
+                    type="range"
+                    min="0.001"
+                    max="0.999"
+                    step="0.001"
+                    value={streamlineSeedPosition}
+                    onChange={(event) => setStreamlineSeedPosition(Number(event.target.value))}
+                  />
+                  <strong>{Math.round(streamlineSeedPosition * 100)}%</strong>
+                </label>
+                <label>
+                  Seeds
+                  <select
+                    aria-label="Streamline seed count"
+                    value={streamlineSeedCount}
+                    onChange={(event) => setStreamlineSeedCount(Number(event.target.value))}
+                  >
+                    {[16, 64, 144, 256].map((count) => <option key={count} value={count}>{count}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Line colour
+                  <select
+                    aria-label="Streamline colour field"
+                    value={streamlineColorField}
+                    onChange={(event) => setStreamlineColorField(event.target.value as StreamlineDisplayOptions["colorField"])}
+                  >
+                    {([
+                      ["velocity", "Velocity"],
+                      ["pressure", "Pressure"],
+                      ["temperature", "Temperature"],
+                      ["phase", "Phase"],
+                      ["vorticity", "Vorticity (loaded field)"]
+                    ] as const).map(([field, label]) => (
+                      <option
+                        key={field}
+                        value={field}
+                        disabled={Boolean(streamlineResult) && !streamlineResult?.lines.some((line) => line.vertices.some((vertex) => Number.isFinite(vertex.fields[field])))}
+                      >
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="streamline-toggles">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={project.visualization.streamlines}
+                    onChange={(event) => updateVisualization({ streamlines: event.target.checked })}
+                  />
+                  Coloured lines
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={project.visualization.particles}
+                    onChange={(event) => updateVisualization({ particles: event.target.checked })}
+                  />
+                  Passive tracer sprites
+                </label>
+              </div>
+              <button
+                type="button"
+                disabled={!inletManifestAvailable || streamlineBusy}
+                title={inletManifestAvailable ? "Seed from generator-authored inlet faces" : "Generator-authored boundary-face manifest required"}
+                onClick={() => void runSteadyStreamlines("inlet-manifest")}
+              >
+                Automatic inlet seeds
+              </button>
+              {activeSnapshot?.preview ? <small className="streamline-warning">Full result required. The sampled preview is never integrated.</small> : null}
+              <small>
+                Point fields use barycentric interpolation; cell fields are piecewise constant. Sprites are passive animation, not transient pathlines.
+              </small>
+              {caseRecord?.solver === "su2" ? (
+                <small className="streamline-warning">SU2 user-seed support is explicitly 2D and unlinked pending stable cell identity.</small>
+              ) : null}
+              {streamlineResult ? (
+                <small>
+                  Source identity: {streamlineResult.sourceIdentity === "verified-case-cell-order" ? "verified generated cell order" : "artifact-local, unlinked"}.
+                </small>
+              ) : null}
+              {streamlineMessage ? <p data-testid="streamline-status" role="status">{streamlineMessage}</p> : null}
+            </section>
           ) : null}
           {resultSnapshots.length > 0 ? (
             <div className="time-controls" aria-label="Result timestep controls">
