@@ -599,6 +599,9 @@ describe("FlowLab result visualization", () => {
     fireEvent.click(screen.getByRole("button", { name: /Load fixture result/i }));
 
     expect(await screen.findByText(/Using pressure from venturi-result\.vtk/)).toBeTruthy();
+    expect(screen.getAllByText("Fixture result — developer example · probe only").length).toBeGreaterThan(1);
+    expect(screen.getByRole("button", { name: "Streamlines" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pathlines" })).toBeDisabled();
     expect(screen.getByLabelText("3D result camera controls")).toHaveTextContent("Yaw");
     expect(screen.getByLabelText("Result camera yaw")).toHaveValue("-32");
     fireEvent.change(screen.getByLabelText("Result camera yaw"), { target: { value: "45" } });
@@ -677,6 +680,82 @@ describe("FlowLab result visualization", () => {
 
     expect(await screen.findByLabelText("Probe sample")).toHaveTextContent("U @ c0");
     expect(screen.getByLabelText("Probe sample")).toHaveTextContent("4 m/s");
+  });
+
+  it("keeps concept animation opt-in and labels imported data probe-only", async () => {
+    render(<App />);
+    const stages = screen.getByRole("navigation", { name: "FlowLab workflow stages" });
+
+    fireEvent.click(within(stages).getByRole("button", { name: /Define/ }));
+    expect(screen.getAllByText("Concept preview").length).toBeGreaterThan(0);
+
+    fireEvent.click(within(stages).getByRole("button", { name: /Estimate/ }));
+    const illustration = screen.getByRole("button", { name: "Illustrative estimate animation—not CFD" });
+    expect(illustration).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(illustration);
+    expect(illustration).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(within(stages).getByRole("button", { name: /Inspect/ }));
+    const imported = new File([fixture], "imported-result.vtk", { type: "text/plain" });
+    fireEvent.change(screen.getByTestId("result-import-file"), { target: { files: [imported] } });
+
+    expect((await screen.findAllByText("Imported result — probe only")).length).toBeGreaterThan(0);
+    expect(screen.getByText("2D projection fallback — WebGL/accessibility/export")).toBeTruthy();
+    const projectionFallback = screen.getByRole("button", { name: "Use 2D projection fallback" });
+    expect(projectionFallback).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(projectionFallback);
+    expect(projectionFallback).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("cinema-canvas")).toHaveAttribute("data-canvas-render-mode", "projection");
+    expect(screen.getByRole("button", { name: "Streamlines" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pathlines" })).toBeDisabled();
+  });
+
+  it("shows an eligible generated-case mesh as the CFD authority before solver fields arrive", async () => {
+    const defaultFetch = vi.mocked(fetch);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/cases/generate") {
+          return new Response(JSON.stringify({
+            id: "case-generated-mesh-test",
+            projectName: "Venturi Cavitation Lab",
+            solver: "openfoam",
+            advancedMode: "incompressible-navier-stokes",
+            status: "generated",
+            files: {
+              "flowlab_project.json": JSON.stringify({ solver: { meshMode: "full-ogrid" } }),
+              "mesh/flowlab_mesh.vtk": openFoamFixture
+            },
+            runCommand: ["bash", "Allrun"],
+            provenance: []
+          }));
+        }
+        if (url === "/api/jobs" && init?.method === "POST") {
+          return new Response(JSON.stringify({
+            id: "job-generated-mesh-test",
+            caseId: "case-generated-mesh-test",
+            solver: "openfoam",
+            status: "running",
+            createdAt: "2026-07-31T00:00:00Z",
+            updatedAt: "2026-07-31T00:00:01Z",
+            execution: "native",
+            command: ["bash", "Allrun"],
+            logs: ["Meshing"],
+            result: null
+          }));
+        }
+        return defaultFetch(input, init);
+      })
+    );
+
+    render(<App />);
+    await screen.findByLabelText("Solver runtime readiness");
+    fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
+    fireEvent.click(screen.getByRole("button", { name: /Generate and queue experimental CFD case/i }));
+
+    expect((await screen.findAllByText("Generated-case mesh preview")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Deterministic pre-solve mesh from the current generated case/)).toBeTruthy();
   });
 
   it("persists advanced mesh controls from the inspector", async () => {
@@ -773,6 +852,7 @@ describe("FlowLab result visualization", () => {
     fireEvent.click(screen.getByRole("button", { name: /Generate and queue experimental CFD case/i }));
 
     expect(await screen.findByText("Job complete")).toBeTruthy();
+    expect(screen.getAllByText("Solver-produced mesh").length).toBeGreaterThan(0);
     expect(screen.getByText(/Final artifacts: 2 field, 1 diagnostic · skipped 2 field, 1 diagnostic/)).toBeTruthy();
     expect(screen.getByLabelText("Skipped artifact summary")).toHaveTextContent("VTK/large_case.vtk");
     expect(screen.getByLabelText("Skipped artifact summary")).toHaveTextContent("file too large");
@@ -824,6 +904,9 @@ describe("FlowLab result visualization", () => {
     fireEvent.click(within(screen.getByLabelText("Indexed result artifacts")).getByRole("button", { name: /Preview sequence \(24\)/i }));
 
     expect(await screen.findByText(/Snapshot 25\/25/)).toBeTruthy();
+    expect(screen.getAllByText("Thinned artifact preview — surface only").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Streamlines" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pathlines" })).toBeDisabled();
     expect(screen.getByText(/Using U from VTK\/case_24\.vtk preview/)).toBeTruthy();
     expect(screen.getByLabelText("Result field timeline")).toHaveTextContent("Trend");
     expect(screen.getByLabelText("Result field coverage")).toHaveTextContent("25/25 snapshots");

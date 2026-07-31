@@ -1,6 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
 const testPython = process.env.FLOWLAB_TEST_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
+const frontendPort = Number(process.env.FLOWLAB_E2E_FRONTEND_PORT ?? 5173);
+const backendPort = Number(process.env.FLOWLAB_E2E_BACKEND_PORT ?? 8787);
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -9,20 +11,20 @@ export default defineConfig({
   expect: { timeout: 5_000 },
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:5173",
+    baseURL: `http://127.0.0.1:${frontendPort}`,
     trace: "retain-on-failure",
     screenshot: "only-on-failure"
   },
   webServer: [
     {
-      command: `${testPython} -m uvicorn server.app:app --host 127.0.0.1 --port 8787`,
-      url: "http://127.0.0.1:8787/api/health",
+      command: `${testPython} -m uvicorn server.app:app --host 127.0.0.1 --port ${backendPort}`,
+      url: `http://127.0.0.1:${backendPort}/api/health`,
       reuseExistingServer: true,
       timeout: 20_000
     },
     {
-      command: "npm run dev -- --port 5173",
-      url: "http://127.0.0.1:5173",
+      command: `npm run dev -- --port ${frontendPort}`,
+      url: `http://127.0.0.1:${frontendPort}`,
       reuseExistingServer: true,
       timeout: 20_000
     }

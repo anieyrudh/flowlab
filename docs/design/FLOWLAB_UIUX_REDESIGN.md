@@ -26,6 +26,11 @@ collapsible and owns only the active stage or selection. A single evidence
 drawer at the bottom owns runtime, scientific disposition, and provenance. No
 other area may duplicate those responsibilities.
 
+The workflow-stage preview authority and fallback boundaries are specified in
+[`FLOWLAB_PREVIEW_GOVERNANCE.md`](FLOWLAB_PREVIEW_GOVERNANCE.md). Labels in
+that contract are product-state labels, not scientific validation or promotion
+claims.
+
 ## Visual thesis
 
 **A calm scientific instrument with an instructor beside it: the schematic and

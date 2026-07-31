@@ -1,5 +1,24 @@
 import { expect, test, type Page } from "@playwright/test";
 
+const generatedScreenshotMesh = `# vtk DataFile Version 3.0
+FlowLab generated-case volume mesh
+ASCII
+DATASET UNSTRUCTURED_GRID
+POINTS 8 float
+0 0 0
+1 0 0
+1 1 0
+0 1 0
+0 0 1
+1 0 1
+1 1 1
+0 1 1
+CELLS 1 9
+8 0 1 2 3 4 5 6 7
+CELL_TYPES 1
+12
+`;
+
 async function assertNoViewportOverflow(page: Page) {
   const overflow = await page.evaluate(() => {
     const elements = [...document.body.querySelectorAll<HTMLElement>("*")];
@@ -25,6 +44,25 @@ async function assertNoViewportOverflow(page: Page) {
   });
   expect(overflow.bodyWidth).toBeLessThanOrEqual(overflow.viewportWidth + 2);
   expect(overflow.offenders).toEqual([]);
+}
+
+async function assertPrimaryControlsAccessible(page: Page) {
+  const unlabeled = await page.locator("button, select, input:not([type='hidden']), canvas").evaluateAll((elements) =>
+    elements.flatMap((element) => {
+      const id = element.getAttribute("id");
+      const explicitLabel = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`)?.textContent : "";
+      const wrappingLabel = element.closest("label")?.textContent;
+      const name = [
+        element.getAttribute("aria-label"),
+        element.getAttribute("title"),
+        explicitLabel,
+        wrappingLabel,
+        element.textContent
+      ].find((value) => value?.trim());
+      return name ? [] : [`${element.tagName.toLowerCase()}${id ? `#${id}` : ""}`];
+    })
+  );
+  expect(unlabeled).toEqual([]);
 }
 
 test.describe("FlowLab workspace shell", () => {
@@ -145,5 +183,84 @@ test.describe("FlowLab workspace shell", () => {
     await viewSwitcher.getByRole("button", { name: "3D view" }).click();
     await expect(page.getByTestId("cinema-pane")).toBeVisible();
     await expect(page.getByTestId("schematic-pane")).toBeHidden();
+  });
+
+  test("captures governed desktop stages and checks accessible primary controls", async ({ page }) => {
+    await page.route("**/api/runtime", async (route) => {
+      await route.fulfill({
+        json: [
+          { solver: "instant-1d", runnable: true, preferredExecution: "browser", blockers: [], notes: [] },
+          {
+            solver: "openfoam",
+            runnable: true,
+            preferredExecution: "native",
+            nativeCommand: "foamRun",
+            nativeAvailable: true,
+            dockerAvailable: false,
+            blockers: [],
+            notes: []
+          }
+        ]
+      });
+    });
+    await page.route("**/api/cases/generate", async (route) => {
+      const payload = route.request().postDataJSON() as { project?: unknown };
+      await route.fulfill({
+        json: {
+          id: "case-preview-screenshot",
+          projectName: "Venturi Cavitation Lab",
+          solver: "openfoam",
+          advancedMode: "incompressible-navier-stokes",
+          status: "generated",
+          files: {
+            "flowlab_project.json": JSON.stringify(payload.project ?? {}, null, 2),
+            "mesh/flowlab_mesh.vtk": generatedScreenshotMesh
+          },
+          runCommand: ["bash", "Allrun"],
+          provenance: []
+        }
+      });
+    });
+    await page.route("**/api/jobs", async (route) => {
+      await route.fulfill({
+        json: {
+          id: "job-preview-screenshot",
+          caseId: "case-preview-screenshot",
+          solver: "openfoam",
+          status: "running",
+          createdAt: "2026-07-31T00:00:00Z",
+          updatedAt: "2026-07-31T00:00:01Z",
+          caseDir: "/tmp/flowlab/preview-screenshot",
+          execution: "native",
+          command: ["bash", "Allrun"],
+          logs: ["Generating case mesh."]
+        }
+      });
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    const stages = page.getByRole("navigation", { name: "FlowLab workflow stages" });
+
+    const define = stages.getByRole("button", { name: /Define/ });
+    await define.focus();
+    await expect(define).toBeFocused();
+    await expect(page.getByText("Concept preview", { exact: true }).first()).toBeVisible();
+    await assertPrimaryControlsAccessible(page);
+    await page.screenshot({ path: "test-results/preview-governance/define.png" });
+
+    await stages.getByRole("button", { name: /CFD/ }).click();
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByLabel("Mesh mode").selectOption("full-ogrid");
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await expect(page.getByText("Generated-case mesh preview", { exact: true }).first()).toBeVisible();
+    await assertPrimaryControlsAccessible(page);
+    await page.screenshot({ path: "test-results/preview-governance/cfd.png" });
+
+    await stages.getByRole("button", { name: /Inspect/ }).click();
+    await page.getByLabel("Examples / Developer tooling").getByRole("button", { name: "Load fixture result" }).click();
+    await expect(page.getByText("Fixture result — developer example · probe only", { exact: true }).first()).toBeVisible();
+    await expect(page.getByTestId("cinema-canvas")).toHaveAttribute("aria-describedby", "cinema-canvas-status");
+    await assertPrimaryControlsAccessible(page);
+    await page.screenshot({ path: "test-results/preview-governance/inspect-fixture.png" });
   });
 });
