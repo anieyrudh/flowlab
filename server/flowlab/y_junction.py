@@ -563,6 +563,7 @@ def mesh_to_openfoam_polymesh(
                 raise ValueError("Y-junction polyMesh boundary provenance is incomplete.")
             boundary_faces[patch_name].append((owner, vertices))
 
+    internal_faces.sort(key=lambda record: (record[0], record[1]))
     face_values: list[list[int]] = []
     owner_values: list[int] = []
     neighbour_values: list[int] = []

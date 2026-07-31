@@ -170,6 +170,21 @@ def test_y_junction_polymesh_declares_edge_zones_and_generated_unowned_junction(
 
     boundary = files["constant/polyMesh/boundary"]
     assert set(("inlet", "outletUpper", "outletLower", "walls")) <= set(boundary.split())
+    owner_values = [
+        int(line)
+        for line in files["constant/polyMesh/owner"].splitlines()
+        if line.strip().isdigit()
+    ][1:]
+    neighbour_values = [
+        int(line)
+        for line in files["constant/polyMesh/neighbour"].splitlines()
+        if line.strip().isdigit()
+    ][1:]
+    internal_pairs = list(
+        zip(owner_values[: len(neighbour_values)], neighbour_values, strict=True)
+    )
+    assert all(owner < neighbour for owner, neighbour in internal_pairs)
+    assert internal_pairs == sorted(internal_pairs)
     zones = files["constant/polyMesh/cellZones"]
     for zone in ("edge_inlet_pipe", "edge_upper_branch", "edge_lower_branch", "junction_generated"):
         assert zone in zones
