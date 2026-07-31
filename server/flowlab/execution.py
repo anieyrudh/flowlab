@@ -1873,6 +1873,48 @@ def _apply_patch_metric_file(metrics: dict[str, Any], relative_path: str, kind: 
         patch["sources"].append(relative_path)
         return True
 
+    if kind == "wall-shear":
+        vector_rows: list[
+            tuple[float, str, tuple[float, float, float], tuple[float, float, float]]
+        ] = []
+        number = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+        row_pattern = re.compile(
+            rf"^\s*({number})\s+([A-Za-z0-9_.-]+)\s+"
+            rf"\(\s*({number})\s+({number})\s+({number})\s*\)\s+"
+            rf"\(\s*({number})\s+({number})\s+({number})\s*\)\s*$"
+        )
+        for raw_line in text.splitlines():
+            match = row_pattern.match(raw_line)
+            if match is None:
+                continue
+            values = [float(value) for value in match.groups()[2:]]
+            vector_rows.append(
+                (
+                    float(match.group(1)),
+                    str(match.group(2)),
+                    (values[0], values[1], values[2]),
+                    (values[3], values[4], values[5]),
+                )
+            )
+        if vector_rows:
+            time_value, patch_name, component_minimum, component_maximum = (
+                vector_rows[-1]
+            )
+            patch = _ensure_patch(metrics, patch_name)
+            patch["wallShear"] = {
+                "min": None,
+                "mean": None,
+                "max": None,
+                "componentMinimumVector": list(component_minimum),
+                "componentMaximumVector": list(component_maximum),
+                "unit": "solver vector units",
+                "time": time_value,
+                "path": relative_path,
+                "aggregation": "componentwise-extrema-not-pointwise-magnitude",
+            }
+            patch["sources"].append(relative_path)
+            return True
+
     columns, rows = _numeric_table_rows(text)
     if not rows:
         raise ValueError("no parseable numeric table rows")

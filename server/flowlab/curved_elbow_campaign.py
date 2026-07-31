@@ -24,6 +24,7 @@ from .execution import (
     OPENFOAM_DIAGNOSTICS_ACCEPTANCE_PATH,
     TERMINAL_STATUSES,
     JobManager,
+    collect_patch_metrics,
     materialize_case_files,
     validate_solver_case,
 )
@@ -84,6 +85,7 @@ FROZEN_SOURCE_PATHS = (
     "src/types.ts",
     "docs/validation/curved-elbow-re100/QUALIFICATION_CONTRACT_V2.json",
     "docs/validation/curved-elbow-re100/RUNBOOK_V2.md",
+    "docs/validation/curved-elbow-re100/RECOVERY_RUNBOOK_V2_R2.md",
 )
 
 
@@ -1233,7 +1235,11 @@ def evaluate_completed_level(
         expected_cell_count,
     )
 
-    patch_metrics = _patch_metrics(case_dir)
+    # Parse the retained raw operators with the evaluator's current, committed
+    # parser. Do not privilege an older run-time acceptance summary: a parser
+    # recovery must be able to correct diagnostics interpretation without
+    # editing the immutable solver directory.
+    patch_metrics = collect_patch_metrics(case_dir)
     flow_balance = patch_metrics.get("flowBalance")
     pressure_drops = patch_metrics.get("pressureDrops")
     if (
@@ -1567,6 +1573,241 @@ def _artifact_manifest(campaign_dir: Path) -> dict[str, Any]:
     return manifest
 
 
+def _verify_source_artifact_manifest(source_dir: Path) -> dict[str, Any]:
+    manifest_path = source_dir / "artifact-manifest.json"
+    manifest = _read_json(manifest_path)
+    if manifest.get("schema") != ARTIFACT_MANIFEST_SCHEMA:
+        raise CurvedElbowCampaignError(
+            "source campaign lacks the curved-elbow artifact manifest"
+        )
+    entries = manifest.get("artifacts")
+    if not isinstance(entries, list) or not entries:
+        raise CurvedElbowCampaignError(
+            "source campaign artifact manifest has no entries"
+        )
+    normalized: list[dict[str, Any]] = []
+    for row in entries:
+        if not isinstance(row, dict):
+            raise CurvedElbowCampaignError(
+                "source campaign artifact manifest contains a malformed entry"
+            )
+        relative = Path(str(row.get("path", "")))
+        candidate = (source_dir / relative).resolve()
+        if (
+            relative.is_absolute()
+            or not candidate.is_relative_to(source_dir)
+            or not candidate.is_file()
+        ):
+            raise CurvedElbowCampaignError(
+                "source campaign artifact manifest escapes or misses its tree"
+            )
+        size = candidate.stat().st_size
+        digest = _sha256_file(candidate)
+        if size != int(row.get("size", -1)) or digest != row.get("sha256"):
+            raise CurvedElbowCampaignError(
+                f"source campaign artifact changed after retention: {relative}"
+            )
+        normalized.append(
+            {
+                "path": str(relative),
+                "size": size,
+                "sha256": digest,
+            }
+        )
+    tree_digest = hashlib.sha256(
+        "".join(
+            f"{row['path']}\0{row['sha256']}\0{row['size']}\n"
+            for row in normalized
+        ).encode("utf-8")
+    ).hexdigest()
+    if (
+        int(manifest.get("artifactCount", -1)) != len(normalized)
+        or manifest.get("treeDigestSha256") != tree_digest
+    ):
+        raise CurvedElbowCampaignError(
+            "source campaign artifact tree digest does not verify"
+        )
+    return {
+        "artifactManifestPath": str(manifest_path),
+        "artifactManifestSha256": _sha256_file(manifest_path),
+        "artifactCount": len(normalized),
+        "treeDigestSha256": tree_digest,
+    }
+
+
+def recover_campaign_evaluation(
+    source_dir: Path,
+    output_dir: Path,
+    *,
+    freeze: bool = True,
+) -> dict[str, Any]:
+    """Re-evaluate one immutable solver campaign into a separate package."""
+
+    source_dir = source_dir.resolve()
+    output_dir = output_dir.resolve()
+    if source_dir == output_dir or output_dir.is_relative_to(source_dir):
+        raise CurvedElbowCampaignError(
+            "recovery output must be separate from the immutable source campaign"
+        )
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise CurvedElbowCampaignError(
+            f"refusing to overwrite non-empty output directory: {output_dir}"
+        )
+    source_report_path = source_dir / "qualification-report.json"
+    source_report = _read_json(source_report_path)
+    contract = load_contract()
+    contract_digest = _sha256_file(CONTRACT_PATH)
+    if (
+        source_report.get("schema") != REPORT_SCHEMA
+        or source_report.get("caseId") != CASE_ID
+        or source_report.get("contractSha256") != contract_digest
+        or source_report.get("promotionAuthorized") is not False
+    ):
+        raise CurvedElbowCampaignError(
+            "source campaign does not match the frozen curved-elbow contract"
+        )
+    source_artifacts = _verify_source_artifact_manifest(source_dir)
+    source_control = source_report.get("sourceControl")
+    if (
+        not isinstance(source_control, dict)
+        or not re.fullmatch(
+            r"[0-9a-f]{40}",
+            str(source_control.get("commit", "")),
+        )
+        or source_control.get("contractSha256") != contract_digest
+    ):
+        raise CurvedElbowCampaignError(
+            "source campaign lacks its clean solver-source identity"
+        )
+    level_records = source_report.get("levels")
+    if not isinstance(level_records, list):
+        raise CurvedElbowCampaignError(
+            "source campaign has no retained level records"
+        )
+    record_by_level = {
+        str(row.get("level")): row
+        for row in level_records
+        if isinstance(row, dict)
+    }
+    if set(record_by_level) != {"coarse", "medium", "fine"}:
+        raise CurvedElbowCampaignError(
+            "recovery requires all three retained solver levels"
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    evaluations: dict[str, dict[str, Any]] = {}
+    recovered_levels: list[dict[str, Any]] = []
+    for level in _level_rows(contract):
+        level_id = str(level["id"])
+        source_record = record_by_level[level_id]
+        if source_record.get("exitCode") != 0:
+            raise CurvedElbowCampaignError(
+                f"{level_id} retained solver exit is not zero"
+            )
+        case_relative = Path(str(source_record.get("caseDirectory", "")))
+        case_dir = (source_dir / case_relative).resolve()
+        if (
+            case_relative.is_absolute()
+            or not case_dir.is_relative_to(source_dir)
+            or not case_dir.is_dir()
+        ):
+            raise CurvedElbowCampaignError(
+                f"{level_id} retained case directory is unavailable"
+            )
+        evaluation = evaluate_completed_level(
+            case_dir,
+            level,
+            solver_exit_code=0,
+            contract=contract,
+        )
+        evaluations[level_id] = evaluation
+        evaluation_path = output_dir / "evaluations" / f"{level_id}.json"
+        _write_json(evaluation_path, evaluation)
+        recovered_levels.append(
+            {
+                "level": level_id,
+                "sourceCaseDirectory": str(case_relative),
+                "sourceJobId": source_record.get("jobId"),
+                "sourceSolverCaseId": source_record.get("solverCaseId"),
+                "sourceRuntimeVtkSha256": evaluation["provenance"][
+                    "runtimeVtkSha256"
+                ],
+                "evaluationPath": str(
+                    evaluation_path.relative_to(output_dir)
+                ),
+                "evaluationSha256": _sha256_file(evaluation_path),
+                "allPerLevelGatesPassed": evaluation[
+                    "allPerLevelGatesPassed"
+                ],
+            }
+        )
+    sequence = _sequence_assessment(evaluations, contract)
+    qualified = (
+        all(
+            row["allPerLevelGatesPassed"]
+            for row in recovered_levels
+        )
+        and sequence["passed"]
+    )
+    source_binding = {
+        "schema": "flowlab.curved-elbow-recovery-source-binding.v1",
+        "caseId": CASE_ID,
+        "sourceCampaignPath": str(source_dir),
+        "sourceCampaignReportSha256": _sha256_file(source_report_path),
+        "sourceCampaignStatus": source_report.get("status"),
+        "sourceCampaignError": record_by_level["fine"].get("error"),
+        "sourceSolverCommit": source_control["commit"],
+        "sourceArtifacts": source_artifacts,
+    }
+    _write_json(output_dir / "source-campaign-binding.json", source_binding)
+    report = {
+        "schema": "flowlab.curved-elbow-qualification-recovery-report.v1",
+        "caseId": CASE_ID,
+        "status": (
+            "numerical-qualification-candidate-passed"
+            if qualified
+            else "scientific-gate-failed"
+        ),
+        "scientificStatus": (
+            "bounded-numerical-qualification-candidate"
+            if qualified
+            else "curved-elbow-qualification-gates-failed"
+        ),
+        "qualified": qualified,
+        "validated": False,
+        "promotionAuthorized": False,
+        "recoveryScope": (
+            "parser-only re-evaluation of immutable solver artifacts; "
+            "no CFD rerun and no source evidence mutation"
+        ),
+        "contractSha256": contract_digest,
+        "runbookSha256": _sha256_file(RUNBOOK_PATH),
+        "sourceBindingSha256": _sha256_file(
+            output_dir / "source-campaign-binding.json"
+        ),
+        "sourceSolverControl": source_control,
+        "evaluatorControl": _source_control_identity(),
+        "levels": recovered_levels,
+        "sequence": sequence,
+        "limitations": contract["claim"]["excluded"],
+        "finishedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_json(output_dir / "qualification-recovery-report.json", report)
+    artifact_manifest = _artifact_manifest(output_dir)
+    result = {
+        **report,
+        "artifactManifestSha256": _sha256_file(
+            output_dir / "artifact-manifest.json"
+        ),
+        "artifactTreeDigestSha256": artifact_manifest[
+            "treeDigestSha256"
+        ],
+    }
+    if freeze:
+        _freeze_tree(output_dir)
+    return result
+
+
 def _freeze_tree(path: Path) -> None:
     for child in sorted(path.rglob("*"), reverse=True):
         if child.is_file():
@@ -1774,6 +2015,15 @@ def _parser() -> argparse.ArgumentParser:
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--materialize-only", action="store_true")
     action.add_argument("--run", action="store_true")
+    action.add_argument(
+        "--recover-from",
+        type=Path,
+        metavar="SOURCE_CAMPAIGN",
+        help=(
+            "re-evaluate an immutable three-level source campaign into the "
+            "separate output_dir without rerunning CFD"
+        ),
+    )
     parser.add_argument(
         "--no-freeze",
         action="store_true",
@@ -1786,6 +2036,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.materialize_only:
         result = materialize_campaign(args.output_dir)
+    elif args.recover_from is not None:
+        result = recover_campaign_evaluation(
+            args.recover_from,
+            args.output_dir,
+            freeze=not args.no_freeze,
+        )
     else:
         result = execute_campaign(
             args.output_dir,

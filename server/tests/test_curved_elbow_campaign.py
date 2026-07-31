@@ -15,8 +15,10 @@ from server.flowlab.curved_elbow_campaign import (
     _component_ranges,
     _field_physics,
     _geometry_metrics,
+    _artifact_manifest,
     _sequence_assessment,
     _spec,
+    _verify_source_artifact_manifest,
     build_level_case,
     load_contract,
 )
@@ -246,3 +248,22 @@ def test_sequence_operator_passes_only_a_valid_bounded_three_grid_order() -> Non
     failed = _sequence_assessment(evaluations, contract)
     assert failed["passed"] is False
     assert failed["gates"]["gciMathematicallyQualified"] is False
+
+
+def test_recovery_source_manifest_rejects_any_retained_artifact_drift(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    artifact = source / "solver-output.dat"
+    artifact.write_text("frozen\n", encoding="utf-8")
+    manifest = _artifact_manifest(source)
+
+    verified = _verify_source_artifact_manifest(source)
+
+    assert verified["artifactCount"] == 1
+    assert verified["treeDigestSha256"] == manifest["treeDigestSha256"]
+
+    artifact.write_text("changed\n", encoding="utf-8")
+    with pytest.raises(CurvedElbowCampaignError, match="changed after retention"):
+        _verify_source_artifact_manifest(source)
