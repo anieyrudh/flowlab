@@ -146,6 +146,35 @@ finer nested 8/16/32-cells-across-diameter family. Its failure activates the
 declared stop condition; the next step, if ever authorized, must be a separate
 new hypothesis and contract rather than another tuning iteration.
 
+### Retained-data diagnosis
+
+The following is a post-campaign inference, not a changed gate or a new
+qualification result.
+
+The generator admits Cartesian cells whose centers fall inside the declared
+circular primitives. The inlet has a frozen uniform velocity, so its final
+integrated flow divided by that velocity gives the realized inlet area:
+
+| Level | Realized inlet area (m2) | Difference from declared circular area |
+|---|---:|---:|
+| coarse | 2.925e-5 | +3.450713% |
+| medium | 2.925e-5 | +3.450713% |
+| fine | 2.8546875e-5 | +0.963917% |
+
+The coarse-to-medium grid step therefore refines the solution while retaining
+the same realized inlet area, whereas the medium-to-fine step also changes the
+staircase geometry materially. The corresponding pressure-drop increments are
+`0.0450970253 Pa` and `0.0332570789 Pa`, whose ratio produces the retained
+order `0.439370816`.
+
+This supports, but does not prove, the hypothesis that changing staircase
+geometry contaminates the single-family asymptotic estimate. A future
+experiment would need to isolate solution refinement from geometry
+realization—for example with a prospectively defined fixed-geometry or
+geometry-matched mesh family. That would be a new scientific hypothesis and
+requires separate authorization, a new frozen contract, and a fresh immutable
+directory. It is not authorized by this assessment.
+
 ## Claim boundary
 
 This work establishes software completeness for the bounded generator,
