@@ -48,6 +48,7 @@ FROZEN_SOURCE_PATHS = (
     "tests/e2e/editor.spec.ts",
     "server/tests/test_y_junction.py",
     "server/tests/test_y_junction_campaign.py",
+    "server/tests/test_execution.py",
     "docs/validation/y-junction/QUALIFICATION_CONTRACT_V1.json",
     "docs/validation/y-junction/RUNBOOK.md",
     "docs/validation/y-junction/QUALIFICATION_CONTRACT_V2.json",

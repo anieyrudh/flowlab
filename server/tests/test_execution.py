@@ -2842,6 +2842,32 @@ def test_collect_patch_metrics_summarizes_openfoam_postprocessing(tmp_path: Path
     assert metrics["pressureProbes"][0]["pressureSpan"] == 2325.0
 
 
+def test_collect_patch_metrics_parses_foundation_vector_wall_shear_table(tmp_path: Path) -> None:
+    case_dir = tmp_path / "case"
+    _write_openfoam_patch_metric_outputs(case_dir)
+    shear_path = (
+        case_dir
+        / "postProcessing"
+        / "wallShearStress"
+        / "0"
+        / "wallShearStress.dat"
+    )
+    shear_path.write_text(
+        "# Wall shear stress\n"
+        "# Time patch min max\n"
+        "2500 walls (-7.5e-05 -5e-05 -2e-05) (5e-07 5e-05 2e-05)\n",
+        encoding="utf-8",
+    )
+
+    metrics = collect_patch_metrics(case_dir)
+
+    wall_shear = metrics["patches"]["walls"]["wallShear"]
+    assert wall_shear["sourceForm"] == "OpenFOAM vector min/max table"
+    assert wall_shear["time"] == 2500.0
+    assert wall_shear["min"] == pytest.approx(math.sqrt(5e-07**2 + 5e-05**2 + 2e-05**2))
+    assert wall_shear["max"] == pytest.approx(math.sqrt(7.5e-05**2 + 5e-05**2 + 2e-05**2))
+
+
 def test_collect_patch_metrics_builds_pressure_drop_from_per_patch_surface_field_value(tmp_path: Path) -> None:
     # Regression: FlowLab writes per-patch `patchAverage_<patch>/surfaceFieldValue.dat`
     # (not a single `patchAverage/p.dat`). The numeric-table parser drops the real

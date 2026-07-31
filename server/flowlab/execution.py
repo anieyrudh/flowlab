@@ -1873,6 +1873,49 @@ def _apply_patch_metric_file(metrics: dict[str, Any], relative_path: str, kind: 
         patch["sources"].append(relative_path)
         return True
 
+    if kind == "wall-shear":
+        vector_rows: list[tuple[float, str, tuple[float, float, float], tuple[float, float, float]]] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            vectors = re.findall(r"\(([^()]+)\)", stripped)
+            prefix = stripped.split("(", 1)[0].split()
+            if len(prefix) < 2 or len(vectors) < 2:
+                continue
+            time_value = _float_or_none(prefix[0])
+            parsed_vectors = [_parse_openfoam_vector(f"({value})") for value in vectors[:2]]
+            if time_value is None or any(value is None for value in parsed_vectors):
+                continue
+            vector_rows.append(
+                (
+                    time_value,
+                    prefix[1],
+                    parsed_vectors[0],
+                    parsed_vectors[1],
+                )
+            )
+        if vector_rows:
+            time_value, patch_name, minimum_vector, maximum_vector = vector_rows[-1]
+            magnitudes = [
+                math.sqrt(sum(component * component for component in vector))
+                for vector in (minimum_vector, maximum_vector)
+            ]
+            minimum = min(magnitudes)
+            maximum = max(magnitudes)
+            patch = _ensure_patch(metrics, _clean_patch_column_name(patch_name))
+            patch["wallShear"] = {
+                "min": minimum,
+                "mean": 0.5 * (minimum + maximum),
+                "max": maximum,
+                "unit": "Pa",
+                "time": time_value,
+                "path": relative_path,
+                "sourceForm": "OpenFOAM vector min/max table",
+            }
+            patch["sources"].append(relative_path)
+            return True
+
     columns, rows = _numeric_table_rows(text)
     if not rows:
         raise ValueError("no parseable numeric table rows")
