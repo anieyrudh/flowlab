@@ -8,9 +8,15 @@ import pytest
 
 from server.flowlab import adapters, result_identity
 from server.flowlab.execution import materialize_case_files
+from server.flowlab.full_ogrid import (
+    FullOGridPathSegment,
+    FullOGridPathSpec,
+    path_preview_mesh,
+)
 from server.flowlab.result_identity import (
     SOURCE_CELL_ID_FIELD,
     SOURCE_IDENTITY_ALGORITHM,
+    SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH,
     SOURCE_IDENTITY_ALGORITHM_V1,
     SOURCE_IDENTITY_CONTRACT_PATH,
     ResultIdentityError,
@@ -143,6 +149,57 @@ def test_axisymmetric_logical_identity_is_invariant_to_prospective_grading() -> 
         graded_points,
         mesh["cells"],
     )
+
+
+def test_full_ogrid_logical_identity_is_invariant_to_axial_grading_and_radius() -> None:
+    spec = FullOGridPathSpec(
+        segments=(
+            FullOGridPathSegment(
+                edge_id="contraction",
+                edge_type="contraction",
+                length_m=0.03,
+                inlet_radius_m=0.006,
+                outlet_radius_m=0.003,
+                axial_cells=4,
+            ),
+            FullOGridPathSegment(
+                edge_id="recovery",
+                edge_type="expansion",
+                length_m=0.06,
+                inlet_radius_m=0.003,
+                outlet_radius_m=0.006,
+                axial_cells=8,
+            ),
+        ),
+        annular_radial_cells=2,
+        circumferential_cells=16,
+        core_cells_per_side=4,
+    )
+    mesh = path_preview_mesh(
+        spec,
+        {"schema": "flowlab.full-ogrid-path-profile.v1"},
+    )
+    graded_points = [
+        [
+            float(point[0]) ** 2,
+            float(point[1]) * (1.0 + 2.0 * float(point[0])),
+            float(point[2]) * (1.0 + 2.0 * float(point[0])),
+        ]
+        for point in mesh["points"]
+    ]
+
+    assert result_identity._full_ogrid_logical_signatures(
+        mesh["points"],
+        mesh["cells"],
+    ) == result_identity._full_ogrid_logical_signatures(
+        graded_points,
+        mesh["cells"],
+    )
+    contract = result_identity.source_cell_identity_contract(
+        json.dumps(mesh)
+    )
+    assert contract["algorithm"] == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+    assert contract["orderingAssumptionAllowed"] is False
 
 
 def test_solver_values_are_reordered_only_through_verified_mapping() -> None:

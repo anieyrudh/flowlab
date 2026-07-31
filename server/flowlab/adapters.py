@@ -16,10 +16,15 @@ from typing import Any
 
 from .acceleration import build_openfoam_parallel_plan
 from .full_ogrid import (
+    FULL_OGRID_PATH_PROFILE_SCHEMA,
     FULL_OGRID_PROFILE_SCHEMA,
     FULL_OGRID_VERIFICATION_SCHEMA,
+    FullOGridPathSegment,
+    FullOGridPathSpec,
     FullOGridSpec,
     block_mesh_dict as full_ogrid_block_mesh_dict,
+    path_block_mesh_dict as full_ogrid_path_block_mesh_dict,
+    path_preview_mesh as full_ogrid_path_preview_mesh,
     preview_mesh as full_ogrid_preview_mesh,
 )
 from .mesh import (
@@ -1141,6 +1146,12 @@ FULL_OGRID_LEVELS: dict[str, tuple[int, int, int, int]] = {
     "medium": (32, 8, 64, 16),
     "fine": (64, 16, 128, 32),
 }
+FULL_OGRID_QUALIFICATION_SCHEMA = (
+    "flowlab.full-ogrid-geometry-experimental-qualification-request.v1"
+)
+FULL_OGRID_QUALIFICATION_CONTRACT_ID = (
+    "full-ogrid-generated-geometry-experimental-qualification-v3"
+)
 
 
 def _openfoam_full_ogrid_mode_requested(project: dict[str, Any] | None) -> bool:
@@ -1272,6 +1283,346 @@ def _full_ogrid_verification_request(
     return verification
 
 
+def _full_ogrid_path_cell_controls(
+    project: dict[str, Any],
+    ordered_edges: list[dict[str, Any]],
+) -> tuple[dict[str, int], int, int, int]:
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    controls = (
+        solver.get("meshControls")
+        if isinstance(solver.get("meshControls"), dict)
+        else {}
+    )
+    axial_raw = controls.get("fullOGridAxialCellsByEdge")
+    if not isinstance(axial_raw, dict) or not axial_raw:
+        raise ValueError(
+            "Full O-grid geometry qualification requires "
+            "fullOGridAxialCellsByEdge."
+        )
+    edge_ids = [str(edge.get("id") or "") for edge in ordered_edges]
+    if set(axial_raw) != set(edge_ids):
+        raise ValueError(
+            "fullOGridAxialCellsByEdge must contain exactly every ordered path edge."
+        )
+    axial_by_edge: dict[str, int] = {}
+    for edge_id in edge_ids:
+        value = axial_raw.get(edge_id)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 4:
+            raise ValueError(
+                f"Exact full O-grid axial cells for `{edge_id}` must be an integer >= 4."
+            )
+        axial_by_edge[edge_id] = value
+    cross_keys = (
+        "fullOGridAnnularRadialCells",
+        "fullOGridCircumferentialCells",
+        "fullOGridCoreCellsPerSide",
+    )
+    values = [controls.get(key) for key in cross_keys]
+    if any(
+        not isinstance(value, int) or isinstance(value, bool)
+        for value in values
+    ):
+        raise ValueError(
+            "Full O-grid geometry qualification requires exact annular-radial, "
+            "circumferential, and core-side integer controls."
+        )
+    return (
+        axial_by_edge,
+        int(values[0]),
+        int(values[1]),
+        int(values[2]),
+    )
+
+
+def _full_ogrid_qualification_request(
+    project: dict[str, Any],
+    *,
+    ordered_edges: list[dict[str, Any]],
+    controls: tuple[dict[str, int], int, int, int],
+    inlet_radius_m: float,
+) -> dict[str, Any]:
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    raw = solver.get("fullOGridQualification")
+    if not isinstance(raw, dict):
+        raise ValueError("fullOGridQualification must be an object.")
+    if raw.get("contractId") != FULL_OGRID_QUALIFICATION_CONTRACT_ID:
+        raise ValueError(
+            "Full O-grid geometry qualification has an unsupported contractId."
+        )
+    contract_sha = raw.get("contractSha256")
+    if (
+        not isinstance(contract_sha, str)
+        or re.fullmatch(r"[a-f0-9]{64}", contract_sha) is None
+    ):
+        raise ValueError(
+            "Full O-grid geometry qualification requires the frozen contract SHA-256."
+        )
+    if raw.get("qoiHistoryWriteIntervalIterations") != 1:
+        raise ValueError(
+            "Full O-grid geometry qualification requires QoI history every SIMPLE iteration."
+        )
+    flow_rate = _full_ogrid_positive_number(
+        raw.get("volumetricFlowRateM3PerS"),
+        "full O-grid qualification volumetricFlowRateM3PerS",
+    )
+    conditions = _case_conditions(project)
+    area = math.pi * inlet_radius_m**2
+    mean_velocity = flow_rate / area
+    axial_by_edge, annular, circumference, core = controls
+    return {
+        "schema": FULL_OGRID_QUALIFICATION_SCHEMA,
+        "contractId": FULL_OGRID_QUALIFICATION_CONTRACT_ID,
+        "contractSha256": contract_sha,
+        "caseId": str(raw.get("caseId") or ""),
+        "status": "prospective-experimental-software-geometry-qualification",
+        "qoiHistoryWriteIntervalIterations": 1,
+        "targetVolumetricFlowRateM3PerS": flow_rate,
+        "analyticCircularAreaM2": area,
+        "meanVelocityTargetMPerS": mean_velocity,
+        "centerlineVelocityTargetMPerS": 2.0 * mean_velocity,
+        "inletRadiusM": inlet_radius_m,
+        "densityKgPerM3": conditions.density,
+        "dynamicViscosityPaS": conditions.dynamic_viscosity,
+        "resolution": {
+            "axialCellsByEdge": axial_by_edge,
+            "annularRadialCells": annular,
+            "circumferentialCells": circumference,
+            "coreCellsPerSide": core,
+        },
+        "validated": False,
+        "promotionAuthorized": False,
+    }
+
+
+def _openfoam_full_ogrid_path_profile(
+    project: dict[str, Any],
+) -> dict[str, Any]:
+    ordered_edges, nodes_by_id = _axisymmetric_ordered_path(project)
+    controls = _full_ogrid_path_cell_controls(project, ordered_edges)
+    axial_by_edge, annular, circumference, core = controls
+    stations: list[dict[str, Any]] = []
+    compiled_segments: list[FullOGridPathSegment] = []
+    profile_segments: list[dict[str, Any]] = []
+    cumulative_x = 0.0
+    previous_outlet_diameter: float | None = None
+
+    def add_station(
+        x_m: float,
+        radius_m: float,
+        feature: str,
+        edge_id: str,
+    ) -> int:
+        if stations and math.isclose(
+            float(stations[-1]["xM"]),
+            x_m,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        ):
+            if not math.isclose(
+                float(stations[-1]["radiusM"]),
+                radius_m,
+                rel_tol=1.0e-9,
+                abs_tol=1.0e-12,
+            ):
+                raise ValueError(
+                    f"Full O-grid path has a diameter discontinuity at edge `{edge_id}`."
+                )
+            stations[-1]["features"] = sorted(
+                {*stations[-1]["features"], feature}
+            )
+            stations[-1]["edgeIds"] = [*stations[-1]["edgeIds"], edge_id]
+            return len(stations) - 1
+        stations.append(
+            {
+                "index": len(stations),
+                "xM": round(x_m, 12),
+                "radiusM": round(radius_m, 12),
+                "features": [feature],
+                "edgeIds": [edge_id],
+            }
+        )
+        return len(stations) - 1
+
+    for edge_index, edge in enumerate(ordered_edges):
+        edge_id = str(edge.get("id") or "")
+        edge_type = str(edge.get("type") or "")
+        shape = edge.get("shape") if isinstance(edge.get("shape"), dict) else {}
+        if edge_type not in AXISYMMETRIC_ALLOWED_EDGE_TYPES:
+            raise ValueError(
+                "Full O-grid geometry qualification supports only straight circular "
+                "pipe, venturi, expansion, contraction, and nozzle edges."
+            )
+        if shape.get("kind") != "circular":
+            raise ValueError(f"Full O-grid edge `{edge_id}` must be circular.")
+        inlet_diameter = _full_ogrid_positive_number(
+            shape.get("diameter"),
+            f"diameter for edge `{edge_id}`",
+        )
+        outlet_diameter = _full_ogrid_positive_number(
+            edge.get("outletDiameter", inlet_diameter),
+            f"outletDiameter for edge `{edge_id}`",
+        )
+        if edge_type == "expansion" and outlet_diameter <= inlet_diameter:
+            raise ValueError(
+                f"Full O-grid expansion `{edge_id}` requires a larger outlet."
+            )
+        if (
+            edge_type in {"contraction", "nozzle"}
+            and outlet_diameter >= inlet_diameter
+        ):
+            raise ValueError(
+                f"Full O-grid {edge_type} `{edge_id}` requires a smaller outlet."
+            )
+        if previous_outlet_diameter is not None and not math.isclose(
+            previous_outlet_diameter,
+            inlet_diameter,
+            rel_tol=1.0e-9,
+            abs_tol=1.0e-12,
+        ):
+            raise ValueError(
+                f"Full O-grid path has a diameter discontinuity before `{edge_id}`."
+            )
+        length_m = _full_ogrid_positive_number(
+            edge.get("length"),
+            f"physical length for edge `{edge_id}`",
+        )
+        local_profile: list[tuple[float, float, str]] = [
+            (
+                0.0,
+                inlet_diameter,
+                "inlet" if edge_index == 0 else "junction",
+            )
+        ]
+        if edge_type == "venturi":
+            throat_diameter = _full_ogrid_positive_number(
+                edge.get("throatDiameter"),
+                f"throatDiameter for Venturi `{edge_id}`",
+            )
+            if throat_diameter >= min(inlet_diameter, outlet_diameter):
+                raise ValueError(
+                    f"Full O-grid Venturi `{edge_id}` requires a smaller throat."
+                )
+            throat_position = float(edge.get("throatPosition", 0.5))
+            if not math.isfinite(throat_position) or not 0.0 < throat_position < 1.0:
+                raise ValueError(
+                    f"Full O-grid Venturi `{edge_id}` throatPosition must be inside the edge."
+                )
+            throat_length = _axisymmetric_nonnegative_number(
+                edge.get("throatLength", 0.0),
+                f"throatLength for Venturi `{edge_id}`",
+            )
+            throat_center = throat_position * length_m
+            throat_start = throat_center - throat_length / 2.0
+            throat_end = throat_center + throat_length / 2.0
+            if throat_start <= 0.0 or throat_end >= length_m:
+                raise ValueError(
+                    f"Full O-grid Venturi `{edge_id}` throat must remain inside its edge."
+                )
+            local_profile.append((throat_start, throat_diameter, "throat"))
+            if throat_length > 1.0e-12:
+                local_profile.append((throat_end, throat_diameter, "throat"))
+        local_profile.append(
+            (
+                length_m,
+                outlet_diameter,
+                "outlet"
+                if edge_index == len(ordered_edges) - 1
+                else "junction",
+            )
+        )
+        local_lengths = [
+            local_profile[index + 1][0] - local_profile[index][0]
+            for index in range(len(local_profile) - 1)
+        ]
+        cell_counts = _axisymmetric_cell_distribution(
+            axial_by_edge[edge_id],
+            local_lengths,
+        )
+        station_indices = [
+            add_station(
+                cumulative_x + local_x,
+                diameter / 2.0,
+                feature,
+                edge_id,
+            )
+            for local_x, diameter, feature in local_profile
+        ]
+        for segment_index, axial_cells in enumerate(cell_counts):
+            from_station = station_indices[segment_index]
+            to_station = station_indices[segment_index + 1]
+            start = stations[from_station]
+            end = stations[to_station]
+            segment = FullOGridPathSegment(
+                edge_id=edge_id,
+                edge_type=edge_type,
+                length_m=float(end["xM"]) - float(start["xM"]),
+                inlet_radius_m=float(start["radiusM"]),
+                outlet_radius_m=float(end["radiusM"]),
+                axial_cells=axial_cells,
+            )
+            compiled_segments.append(segment)
+            profile_segments.append(
+                {
+                    "index": len(profile_segments),
+                    "edgeId": edge_id,
+                    "edgeType": edge_type,
+                    "fromStation": from_station,
+                    "toStation": to_station,
+                    "nAxial": axial_cells,
+                }
+            )
+        cumulative_x += length_m
+        previous_outlet_diameter = outlet_diameter
+
+    spec = FullOGridPathSpec(
+        segments=tuple(compiled_segments),
+        annular_radial_cells=annular,
+        circumferential_cells=circumference,
+        core_cells_per_side=core,
+    )
+    qualification = _full_ogrid_qualification_request(
+        project,
+        ordered_edges=ordered_edges,
+        controls=controls,
+        inlet_radius_m=compiled_segments[0].inlet_radius_m,
+    )
+    return {
+        "schema": FULL_OGRID_PATH_PROFILE_SCHEMA,
+        "requestedMeshMode": "full-ogrid",
+        "effectiveMeshMode": "full-revolution-multi-segment-five-block-ogrid",
+        "coordinateSystem": "physical-x-y-z-si",
+        "units": {"length": "m", "angle": "deg"},
+        "pathEdgeIds": [str(edge.get("id") or "") for edge in ordered_edges],
+        "sourceNodeId": str(ordered_edges[0].get("from") or ""),
+        "sinkNodeId": str(ordered_edges[-1].get("to") or ""),
+        "totalLengthM": round(spec.total_length_m, 12),
+        "inletRadiusM": compiled_segments[0].inlet_radius_m,
+        "outletRadiusM": compiled_segments[-1].outlet_radius_m,
+        "stations": stations,
+        "segments": profile_segments,
+        "topology": spec.topology_manifest(),
+        "boundaryRoles": {
+            "inlet": "patch",
+            "outlet": "patch",
+            "walls": "wall",
+        },
+        "qualificationContract": qualification,
+        "scope": {
+            "flow": "steady-incompressible-laminar",
+            "geometry": "straight-axis-circular-multi-segment-path",
+            "unsupported": [
+                "elbows",
+                "branches",
+                "arbitrary-cad",
+                "turbulence",
+                "transient",
+                "multiphase",
+                "compressible",
+            ],
+        },
+    }
+
+
 def _openfoam_full_ogrid_profile(
     project: dict[str, Any],
     advanced_mode: str,
@@ -1287,6 +1638,8 @@ def _openfoam_full_ogrid_profile(
         raise ValueError("Full O-grid mesh mode requires a steady solver.")
     if str(solver.get("turbulence", "")).strip().lower() != "laminar":
         raise ValueError("Full O-grid mesh mode requires laminar flow.")
+    if solver.get("fullOGridQualification") is not None:
+        return _openfoam_full_ogrid_path_profile(project)
 
     nodes = _project_nodes(project)
     edges = _project_edges(project)
@@ -1387,11 +1740,58 @@ def _full_ogrid_spec_from_profile(profile: dict[str, Any]) -> FullOGridSpec:
     )
 
 
+def _full_ogrid_path_spec_from_profile(
+    profile: dict[str, Any],
+) -> FullOGridPathSpec:
+    topology = (
+        profile.get("topology")
+        if isinstance(profile.get("topology"), dict)
+        else {}
+    )
+    resolution = (
+        topology.get("resolution")
+        if isinstance(topology.get("resolution"), dict)
+        else {}
+    )
+    stations = (
+        profile.get("stations")
+        if isinstance(profile.get("stations"), list)
+        else []
+    )
+    segments = (
+        profile.get("segments")
+        if isinstance(profile.get("segments"), list)
+        else []
+    )
+    compiled: list[FullOGridPathSegment] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            raise ValueError("Full O-grid path profile contains an invalid segment.")
+        start = stations[int(segment["fromStation"])]
+        end = stations[int(segment["toStation"])]
+        compiled.append(
+            FullOGridPathSegment(
+                edge_id=str(segment["edgeId"]),
+                edge_type=str(segment["edgeType"]),
+                length_m=float(end["xM"]) - float(start["xM"]),
+                inlet_radius_m=float(start["radiusM"]),
+                outlet_radius_m=float(end["radiusM"]),
+                axial_cells=int(segment["nAxial"]),
+            )
+        )
+    return FullOGridPathSpec(
+        segments=tuple(compiled),
+        annular_radial_cells=int(resolution["annularRadialCells"]),
+        circumferential_cells=int(resolution["circumferentialCells"]),
+        core_cells_per_side=int(resolution["coreCellsPerSide"]),
+    )
+
+
 def _openfoam_full_ogrid_parabolic_vector_field(
     profile: dict[str, Any],
     verification: dict[str, Any],
 ) -> str:
-    radius = float(profile["radiusM"])
+    radius = float(profile.get("inletRadiusM", profile.get("radiusM")))
     flow_rate = float(verification["targetVolumetricFlowRateM3PerS"])
     mean_velocity = float(verification["meanVelocityTargetMPerS"])
     return (
@@ -2317,6 +2717,32 @@ def _openfoam_axisymmetric_probe_locations(profile: dict[str, Any]) -> list[tupl
 
 
 def _openfoam_full_ogrid_probe_locations(profile: dict[str, Any]) -> list[tuple[float, float, float]]:
+    stations = (
+        profile.get("stations")
+        if isinstance(profile.get("stations"), list)
+        else []
+    )
+    segments = (
+        profile.get("segments")
+        if isinstance(profile.get("segments"), list)
+        else []
+    )
+    if stations and segments:
+        locations: list[tuple[float, float, float]] = []
+        for segment in segments:
+            start = stations[int(segment["fromStation"])]
+            end = stations[int(segment["toStation"])]
+            x_m = (float(start["xM"]) + float(end["xM"])) / 2.0
+            radius_m = (
+                float(start["radiusM"]) + float(end["radiusM"])
+            ) / 2.0
+            locations.extend(
+                [
+                    (x_m, 0.0, 0.0),
+                    (x_m, 0.5 * radius_m, 0.0),
+                ]
+            )
+        return locations
     length_m = float(profile["totalLengthM"])
     radius_m = float(profile["radiusM"])
     return [
@@ -2361,6 +2787,9 @@ def _openfoam_function_object_entries(
         full_ogrid_profile.get("verificationContract")
         if isinstance(full_ogrid_profile, dict)
         and isinstance(full_ogrid_profile.get("verificationContract"), dict)
+        else full_ogrid_profile.get("qualificationContract")
+        if isinstance(full_ogrid_profile, dict)
+        and isinstance(full_ogrid_profile.get("qualificationContract"), dict)
         else axisymmetric_profile.get("experimentalQualificationContract")
         if isinstance(axisymmetric_profile, dict)
         and isinstance(
@@ -6114,6 +6543,15 @@ class OpenFOAMAdapter(SolverAdapter):
             and isinstance(full_ogrid_profile.get("verificationContract"), dict)
             else None
         )
+        full_ogrid_qualification = (
+            full_ogrid_profile.get("qualificationContract")
+            if isinstance(full_ogrid_profile, dict)
+            and isinstance(full_ogrid_profile.get("qualificationContract"), dict)
+            else None
+        )
+        full_ogrid_flow_contract = (
+            full_ogrid_verification or full_ogrid_qualification
+        )
         axisymmetric_benchmark = (
             axisymmetric_profile.get("benchmarkContract")
             if isinstance(axisymmetric_profile, dict)
@@ -6146,8 +6584,23 @@ class OpenFOAMAdapter(SolverAdapter):
         if full_ogrid_profile is not None:
             # The canonical full-volume blockMesh is the solver geometry.
             openfoam_mesh_files = {}
-            spec = _full_ogrid_spec_from_profile(full_ogrid_profile)
-            full_preview = full_ogrid_preview_mesh(spec, full_ogrid_profile)
+            if (
+                full_ogrid_profile.get("schema")
+                == FULL_OGRID_PATH_PROFILE_SCHEMA
+            ):
+                path_spec = _full_ogrid_path_spec_from_profile(
+                    full_ogrid_profile
+                )
+                full_preview = full_ogrid_path_preview_mesh(
+                    path_spec,
+                    full_ogrid_profile,
+                )
+            else:
+                spec = _full_ogrid_spec_from_profile(full_ogrid_profile)
+                full_preview = full_ogrid_preview_mesh(
+                    spec,
+                    full_ogrid_profile,
+                )
             source_strip_paths = {
                 "mesh/flowlab_mesh.json": "mesh/flowlab_source_strip.json",
                 "mesh/flowlab_mesh.vtk": "mesh/flowlab_source_strip.vtk",
@@ -6219,6 +6672,12 @@ class OpenFOAMAdapter(SolverAdapter):
             "system/blockMeshDict": (
                 _openfoam_axisymmetric_block_mesh_dict(axisymmetric_profile)
                 if axisymmetric_profile is not None
+                else full_ogrid_path_block_mesh_dict(
+                    _full_ogrid_path_spec_from_profile(full_ogrid_profile)
+                )
+                if full_ogrid_profile is not None
+                and full_ogrid_profile.get("schema")
+                == FULL_OGRID_PATH_PROFILE_SCHEMA
                 else full_ogrid_block_mesh_dict(_full_ogrid_spec_from_profile(full_ogrid_profile))
                 if full_ogrid_profile is not None
                 else _openfoam_block_mesh_dict(mesh)
@@ -6246,7 +6705,7 @@ class OpenFOAMAdapter(SolverAdapter):
             "system/fvSolution": _openfoam_fv_solution(
                 steady=_openfoam_steady_requested(request.advancedMode, request.project),
                 periodic_pressure_reference=axisymmetric_benchmark is not None,
-                strict_verification=full_ogrid_verification is not None,
+                strict_verification=full_ogrid_flow_contract is not None,
             ),
             "0/U": (
                 _openfoam_axisymmetric_periodic_vector_field(
@@ -6255,9 +6714,10 @@ class OpenFOAMAdapter(SolverAdapter):
                 if axisymmetric_benchmark is not None
                 else _openfoam_full_ogrid_parabolic_vector_field(
                     full_ogrid_profile,
-                    full_ogrid_verification,
+                    full_ogrid_flow_contract,
                 )
-                if full_ogrid_profile is not None and full_ogrid_verification is not None
+                if full_ogrid_profile is not None
+                and full_ogrid_flow_contract is not None
                 else _openfoam_vector_field(
                     "U",
                     f"({conditions.inlet_velocity:.9g} 0 0)",
@@ -6375,6 +6835,14 @@ class OpenFOAMAdapter(SolverAdapter):
                 "The retained FlowLab canvas mesh remains an inspection proxy until the actual wedge polyMesh/foamToVTK artifact is loaded for 3D visualization.",
             ]
             if axisymmetric
+            else [
+                "FlowLab compiled one straight, non-branching circular multi-edge path into a conformal full-revolution O-grid profile.",
+                "OpenFOAM blockMesh realizes every profile segment with five all-hex blocks; shared cross-sections are internal faces, not connector patches.",
+                "Generated source-cell ranges retain explicit edge ownership; graph connectors own no cells.",
+            ]
+            if full_ogrid
+            and full_ogrid_profile.get("schema")
+            == FULL_OGRID_PATH_PROFILE_SCHEMA
             else [
                 "FlowLab compiled exactly one editor-authored constant-diameter circular source-to-sink pipe into an SI full-revolution O-grid profile.",
                 "OpenFOAM blockMesh realizes the profile as a conformal five-block all-hex volume with a center block, four circumferential wall blocks, and internal shared interfaces.",

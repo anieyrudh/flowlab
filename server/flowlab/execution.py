@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterable
 from . import adapters
 from .result_identity import (
     SOURCE_CELL_ID_FIELD,
+    SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH,
     ResultIdentityError,
     reorder_solver_values_to_source,
     resolve_openfoam_source_cell_identity,
@@ -3420,9 +3421,17 @@ def validate_solver_case(case: SolverCase) -> list[str]:
             full_ogrid_profile = json.loads(files.get("constant/flowlab_full_ogrid_profile.json", ""))
         except json.JSONDecodeError:
             full_ogrid_profile = {}
-        is_full_ogrid = (
-            isinstance(full_ogrid_profile, dict)
-            and full_ogrid_profile.get("schema") == "flowlab.full-ogrid-profile.v1"
+        full_ogrid_schema = (
+            full_ogrid_profile.get("schema")
+            if isinstance(full_ogrid_profile, dict)
+            else None
+        )
+        is_full_ogrid = full_ogrid_schema in {
+            "flowlab.full-ogrid-profile.v1",
+            "flowlab.full-ogrid-path-profile.v1",
+        }
+        is_full_ogrid_path = (
+            full_ogrid_schema == "flowlab.full-ogrid-path-profile.v1"
         )
         if is_axisymmetric_wedge:
             try:
@@ -3482,8 +3491,16 @@ def validate_solver_case(case: SolverCase) -> list[str]:
             ):
                 issues.append("OpenFOAM axisymmetric wedge requires a non-degenerate 3D blockMesh-equivalent inspection artifact.")
         if is_full_ogrid:
-            if full_ogrid_profile.get("effectiveMeshMode") != "full-revolution-five-block-ogrid":
-                issues.append("OpenFOAM full O-grid profile must declare the five-block full-revolution representation.")
+            expected_mesh_mode = (
+                "full-revolution-multi-segment-five-block-ogrid"
+                if is_full_ogrid_path
+                else "full-revolution-five-block-ogrid"
+            )
+            if full_ogrid_profile.get("effectiveMeshMode") != expected_mesh_mode:
+                issues.append(
+                    "OpenFOAM full O-grid profile must declare the expected "
+                    "five-block full-revolution representation."
+                )
             topology = full_ogrid_profile.get("topology") if isinstance(full_ogrid_profile.get("topology"), dict) else {}
             resolution = topology.get("resolution") if isinstance(topology.get("resolution"), dict) else {}
             interfaces = topology.get("interfaces") if isinstance(topology.get("interfaces"), dict) else {}
@@ -3493,9 +3510,14 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                 expected_cells = int(resolution["cellCount"])
             except (KeyError, TypeError, ValueError):
                 circumference = core = expected_cells = 0
+            expected_block_count = (
+                5 * int(topology.get("geometrySegmentCount", 0))
+                if is_full_ogrid_path
+                else 5
+            )
             if (
                 topology.get("spatialDimension") != 3
-                or topology.get("blockCount") != 5
+                or topology.get("blockCount") != expected_block_count
                 or topology.get("cellTypes") != ["hex"]
                 or topology.get("collapsedAxisCells") != 0
                 or circumference < 16
@@ -3504,14 +3526,25 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                 or expected_cells <= 0
             ):
                 issues.append("OpenFOAM full O-grid profile has an invalid or non-conformal topology contract.")
+            interface_count_valid = (
+                interfaces.get("crossSectionBlockInterfaces")
+                == 4 * int(topology.get("geometrySegmentCount", 0))
+                and interfaces.get("axialSegmentInterfaces")
+                == int(topology.get("geometrySegmentCount", 0)) - 1
+                if is_full_ogrid_path
+                else interfaces.get("count") == 4
+            )
             if (
-                interfaces.get("count") != 4
+                not interface_count_valid
                 or interfaces.get("treatment") != "conformal-internal-faces"
                 or interfaces.get("boundaryPatchCount") != 0
             ):
                 issues.append("OpenFOAM full O-grid center/wall interfaces must remain conformal internal faces.")
-            if block_mesh.count("    hex (") != 5:
-                issues.append("OpenFOAM full O-grid blockMeshDict must contain exactly five hexahedral blocks.")
+            if block_mesh.count("    hex (") != expected_block_count:
+                issues.append(
+                    "OpenFOAM full O-grid blockMeshDict must contain the "
+                    "contracted number of hexahedral blocks."
+                )
             if any(token in block_mesh for token in ("type wedge", "frontAndBack", "neighbourPatch")):
                 issues.append("OpenFOAM full O-grid blockMeshDict cannot contain wedge, planar, or cyclic proxy patches.")
             try:
@@ -3524,7 +3557,12 @@ def validate_solver_case(case: SolverCase) -> list[str]:
             volume_quality = full_preview.get("volumeQuality") if isinstance(full_preview, dict) and isinstance(full_preview.get("volumeQuality"), dict) else {}
             if (
                 full_preview.get("spatialDimension") != 3
-                or full_preview.get("representation") != "pre-solve-blockMesh-equivalent-full-ogrid"
+                or full_preview.get("representation")
+                != (
+                    "pre-solve-blockMesh-equivalent-full-ogrid-path"
+                    if is_full_ogrid_path
+                    else "pre-solve-blockMesh-equivalent-full-ogrid"
+                )
                 or full_preview.get("proxyGeometry") is not False
                 or not isinstance(spans, list)
                 or len(spans) != 3
@@ -3556,6 +3594,66 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                     issues.append("OpenFOAM full O-grid verification requires a discrete-flux-normalized parabolic inlet and pressure-coupled outlet.")
                 if "residualControl" not in files.get("system/fvSolution", ""):
                     issues.append("OpenFOAM full O-grid verification requires direct steady SIMPLE residual controls.")
+            qualification_contract = full_ogrid_profile.get(
+                "qualificationContract"
+            )
+            if is_full_ogrid_path:
+                if (
+                    not isinstance(qualification_contract, dict)
+                    or qualification_contract.get("schema")
+                    != (
+                        "flowlab.full-ogrid-geometry-experimental-"
+                        "qualification-request.v1"
+                    )
+                    or qualification_contract.get("status")
+                    != (
+                        "prospective-experimental-software-geometry-"
+                        "qualification"
+                    )
+                    or qualification_contract.get("validated") is not False
+                    or qualification_contract.get("promotionAuthorized")
+                    is not False
+                    or qualification_contract.get(
+                        "qoiHistoryWriteIntervalIterations"
+                    )
+                    != 1
+                ):
+                    issues.append(
+                        "OpenFOAM full O-grid path requires a supported "
+                        "prospective nonpromotional qualification contract."
+                    )
+                if len(full_ogrid_profile.get("pathEdgeIds", [])) > 1:
+                    identity_contract_text = files.get(
+                        "constant/flowlab_result_identity_contract.json", ""
+                    )
+                    try:
+                        identity_contract = json.loads(identity_contract_text)
+                    except json.JSONDecodeError:
+                        identity_contract = {}
+                    if (
+                        identity_contract.get("algorithm")
+                        != SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+                        or identity_contract.get("orderingAssumptionAllowed")
+                        is not False
+                        or identity_contract.get("unownedRanges") != []
+                    ):
+                        issues.append(
+                            "OpenFOAM multi-edge full O-grid path requires "
+                            "fail-closed explicit source-cell identity with "
+                            "complete edge ownership."
+                        )
+                velocity_field = files.get("0/U", "")
+                if (
+                    "fullOGridParabolicInlet" not in velocity_field
+                    or "targetFlow/weightedArea" not in velocity_field
+                    or "pressureInletOutletVelocity" not in velocity_field
+                    or "residualControl"
+                    not in files.get("system/fvSolution", "")
+                ):
+                    issues.append(
+                        "OpenFOAM full O-grid path qualification requires "
+                        "the contracted inlet, outlet, and steady solver controls."
+                    )
         expected_block_patches = (
             ("inlet", "outlet", "walls", "front", "back")
             if is_axisymmetric_wedge

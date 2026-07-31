@@ -12,9 +12,13 @@ SOURCE_IDENTITY_CONTRACT_SCHEMA = "flowlab.source-cell-identity-contract.v1"
 SOURCE_IDENTITY_REPORT_SCHEMA = "flowlab.openfoam-source-cell-identity.v1"
 SOURCE_IDENTITY_ALGORITHM_V1 = "polyMesh-cell-vertex-signature-v1"
 SOURCE_IDENTITY_ALGORITHM = "axisymmetric-logical-cell-vertex-signature-v2"
+SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH = (
+    "full-ogrid-normalized-logical-vertex-signature-v3"
+)
 SUPPORTED_SOURCE_IDENTITY_ALGORITHMS = {
     SOURCE_IDENTITY_ALGORITHM_V1,
     SOURCE_IDENTITY_ALGORITHM,
+    SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH,
 }
 SOURCE_CELL_ID_FIELD = "flowlabSourceCellId"
 SOURCE_IDENTITY_CONTRACT_PATH = "constant/flowlab_result_identity_contract.json"
@@ -201,6 +205,84 @@ def _axisymmetric_logical_signatures(
     return signatures
 
 
+def _full_ogrid_logical_signatures(
+    points: list[Any],
+    cells: list[Any],
+) -> list[str]:
+    parsed_points: list[tuple[float, float, float]] = []
+    for point in points:
+        if not isinstance(point, (list, tuple)) or len(point) != 3:
+            raise ResultIdentityError(
+                "full O-grid logical identity points require three coordinates"
+            )
+        coordinate = tuple(float(value) for value in point)
+        if any(not math.isfinite(value) for value in coordinate):
+            raise ResultIdentityError(
+                "full O-grid logical identity coordinates must be finite"
+            )
+        parsed_points.append(coordinate)
+    x_ranks, x_count = _clustered_ranks([point[0] for point in parsed_points])
+    if x_count < 2:
+        raise ResultIdentityError(
+            "full O-grid logical identity requires multiple axial stations"
+        )
+    station_scales: dict[int, float] = {}
+    for x_rank in range(x_count):
+        radii = [
+            math.hypot(point[1], point[2])
+            for index, point in enumerate(parsed_points)
+            if x_ranks[index] == x_rank
+        ]
+        scale = max(radii, default=0.0)
+        if not math.isfinite(scale) or scale <= 0.0:
+            raise ResultIdentityError(
+                "full O-grid logical identity has an invalid cross-section radius"
+            )
+        station_scales[x_rank] = scale
+
+    logical_points = [
+        (
+            x_ranks[index],
+            _canonical_coordinate(point[1] / station_scales[x_ranks[index]]),
+            _canonical_coordinate(point[2] / station_scales[x_ranks[index]]),
+        )
+        for index, point in enumerate(parsed_points)
+    ]
+    signatures: list[str] = []
+    for cell in cells:
+        if not isinstance(cell, list):
+            raise ResultIdentityError(
+                "full O-grid logical identity contains a non-list cell"
+            )
+        labels: set[tuple[int, str, str]] = set()
+        for raw_index in cell:
+            if (
+                not isinstance(raw_index, int)
+                or isinstance(raw_index, bool)
+                or raw_index < 0
+                or raw_index >= len(logical_points)
+            ):
+                raise ResultIdentityError(
+                    "full O-grid logical cell connectivity escapes the point array"
+                )
+            labels.add(logical_points[raw_index])
+        if len(labels) != 8:
+            raise ResultIdentityError(
+                "full O-grid cell identity requires eight unique logical vertices"
+            )
+        signatures.append(
+            "|".join(
+                f"{x_rank},{y_value},{z_value}"
+                for x_rank, y_value, z_value in sorted(labels)
+            )
+        )
+    if len(set(signatures)) != len(signatures):
+        raise ResultIdentityError(
+            "full O-grid logical cell vertex signatures are not unique"
+        )
+    return signatures
+
+
 def source_cell_identity_contract(mesh_snapshot: str) -> dict[str, Any]:
     try:
         mesh = json.loads(mesh_snapshot)
@@ -237,14 +319,17 @@ def source_cell_identity_contract(mesh_snapshot: str) -> dict[str, Any]:
     )
     if not math.isfinite(coordinate_scale) or coordinate_scale <= 0.0:
         raise ResultIdentityError("generated mesh identity coordinate scale is invalid")
-    algorithm = (
-        SOURCE_IDENTITY_ALGORITHM
-        if mesh.get("profileSchema") == "flowlab.axisymmetric-profile.v1"
-        else SOURCE_IDENTITY_ALGORITHM_V1
-    )
+    if mesh.get("profileSchema") == "flowlab.axisymmetric-profile.v1":
+        algorithm = SOURCE_IDENTITY_ALGORITHM
+    elif mesh.get("profileSchema") == "flowlab.full-ogrid-path-profile.v1":
+        algorithm = SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+    else:
+        algorithm = SOURCE_IDENTITY_ALGORITHM_V1
     signatures = (
         _axisymmetric_logical_signatures(points, mesh.get("cells", []))
         if algorithm == SOURCE_IDENTITY_ALGORITHM
+        else _full_ogrid_logical_signatures(points, mesh.get("cells", []))
+        if algorithm == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
         else _source_signatures(
             mesh,
             projection=projection,
@@ -430,6 +515,11 @@ def resolve_openfoam_source_cell_identity(
             generated_mesh.get("cells", []),
         )
         if algorithm == SOURCE_IDENTITY_ALGORITHM
+        else _full_ogrid_logical_signatures(
+            generated_mesh.get("points", []),
+            generated_mesh.get("cells", []),
+        )
+        if algorithm == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
         else _source_signatures(
             generated_mesh,
             projection=projection,
@@ -447,6 +537,8 @@ def resolve_openfoam_source_cell_identity(
     solver_signatures = (
         _axisymmetric_logical_signatures(solver_points, solver_cells)
         if algorithm == SOURCE_IDENTITY_ALGORITHM
+        else _full_ogrid_logical_signatures(solver_points, solver_cells)
+        if algorithm == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
         else [
             _cell_signature(solver_points, cell, projection=projection)
             for cell in solver_cells

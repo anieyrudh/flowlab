@@ -1731,6 +1731,92 @@ def _full_ogrid_pipe_project() -> dict:
     return project
 
 
+def _full_ogrid_multi_edge_project() -> dict:
+    edge_specs = [
+        ("inlet-pipe", "pipe", 0.06, 0.012, 0.012),
+        ("contraction", "contraction", 0.03, 0.012, 0.006),
+        ("throat", "pipe", 0.03, 0.006, 0.006),
+        ("expansion", "expansion", 0.06, 0.006, 0.012),
+        ("recovery", "pipe", 0.12, 0.012, 0.012),
+    ]
+    node_ids = ["source", "n1", "n2", "n3", "n4", "sink"]
+    nodes = {
+        node_id: {
+            "id": node_id,
+            "type": (
+                "source"
+                if node_id == "source"
+                else "sink"
+                if node_id == "sink"
+                else "junction"
+            ),
+            "position": {"x": 100.0 * index, "y": 0.0},
+            **({"pressure": 120000.0} if node_id == "source" else {}),
+            **(
+                {"pressure": 101325.0, "flowDemand": 5.0e-6}
+                if node_id == "sink"
+                else {}
+            ),
+        }
+        for index, node_id in enumerate(node_ids)
+    }
+    edges = {}
+    for index, (edge_id, edge_type, length, inlet, outlet) in enumerate(
+        edge_specs
+    ):
+        edges[edge_id] = {
+            "id": edge_id,
+            "type": edge_type,
+            "from": node_ids[index],
+            "to": node_ids[index + 1],
+            "fromPort": "outlet",
+            "toPort": "inlet",
+            "length": length,
+            "shape": {"kind": "circular", "diameter": inlet},
+            "outletDiameter": outlet,
+        }
+    return {
+        "version": 1,
+        "name": "Full O-grid composite qualification",
+        "fluid": {
+            "density": 1000.0,
+            "dynamicViscosity": 0.001,
+            "temperature": 293.15,
+        },
+        "nodes": nodes,
+        "edges": edges,
+        "solver": {
+            "tier": "openfoam",
+            "advancedMode": "incompressible-navier-stokes",
+            "meshMode": "full-ogrid",
+            "runMode": "steady",
+            "turbulence": "laminar",
+            "meshResolution": "coarse",
+            "meshControls": {
+                "fullOGridAxialCellsByEdge": {
+                    "inlet-pipe": 8,
+                    "contraction": 8,
+                    "throat": 8,
+                    "expansion": 12,
+                    "recovery": 16,
+                },
+                "fullOGridAnnularRadialCells": 2,
+                "fullOGridCircumferentialCells": 16,
+                "fullOGridCoreCellsPerSide": 4,
+            },
+            "fullOGridQualification": {
+                "contractId": (
+                    "full-ogrid-generated-geometry-experimental-qualification-v3"
+                ),
+                "contractSha256": "a" * 64,
+                "caseId": "contraction-throat-recovery",
+                "qoiHistoryWriteIntervalIterations": 1,
+                "volumetricFlowRateM3PerS": 5.0e-6,
+            },
+        },
+    }
+
+
 def test_openfoam_full_ogrid_mode_emits_full_volume_five_block_pipe(monkeypatch) -> None:
     monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
     monkeypatch.setattr(adapters, "_docker_available", lambda: False)
@@ -1774,6 +1860,70 @@ def test_openfoam_full_ogrid_mode_emits_full_volume_five_block_pipe(monkeypatch)
     assert "fullOGridXYZProbes" in case.files["system/functions"]
     assert "frontAndBack" not in case.files["0/U"]
     assert "frontAndBack" not in case.files["0/p"]
+    assert validate_solver_case(case) == []
+
+
+def test_openfoam_full_ogrid_qualification_emits_explicit_multi_edge_volume(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+    project = _full_ogrid_multi_edge_project()
+    request = CaseRequest.model_construct(
+        project=project,
+        solver="openfoam",
+        advancedMode="incompressible-navier-stokes",
+    )
+
+    case = adapters.generate_case(request)
+    repeated = adapters.generate_case(request)
+
+    assert case.files == repeated.files
+    profile = json.loads(
+        case.files["constant/flowlab_full_ogrid_profile.json"]
+    )
+    assert profile["schema"] == "flowlab.full-ogrid-path-profile.v1"
+    assert (
+        profile["effectiveMeshMode"]
+        == "full-revolution-multi-segment-five-block-ogrid"
+    )
+    assert profile["pathEdgeIds"] == [
+        "inlet-pipe",
+        "contraction",
+        "throat",
+        "expansion",
+        "recovery",
+    ]
+    assert profile["topology"]["blockCount"] == 25
+    assert profile["topology"]["connectorCellCount"] == 0
+    assert profile["topology"]["resolution"]["cellCount"] == 2496
+    assert case.files["system/blockMeshDict"].count("    hex (") == 25
+    assert "fullOGridParabolicInlet" in case.files["0/U"]
+    assert case.files["system/functions"].count("writeControl    timeStep;") >= 4
+
+    preview = json.loads(case.files["mesh/flowlab_mesh.json"])
+    assert preview["spatialDimension"] == 3
+    assert preview["boundsSpanM"] == [0.3, 0.012, 0.012]
+    assert len(preview["cells"]) == 2496
+    assert [region["edgeId"] for region in preview["regions"]] == profile[
+        "pathEdgeIds"
+    ]
+    identity = json.loads(
+        case.files["constant/flowlab_result_identity_contract.json"]
+    )
+    assert (
+        identity["algorithm"]
+        == "full-ogrid-normalized-logical-vertex-signature-v3"
+    )
+    assert identity["sourceCellCount"] == 2496
+    assert identity["unownedRanges"] == []
+    assert case.resultComponentMap is not None
+    binding = case.resultComponentMap.artifactBindings[0]
+    assert binding.sourceCellCount == 2496
+    assert [cell_range.edgeId for cell_range in binding.cellRanges] == profile[
+        "pathEdgeIds"
+    ]
+    assert sum(cell_range.cellCount for cell_range in binding.cellRanges) == 2496
     assert validate_solver_case(case) == []
 
 
