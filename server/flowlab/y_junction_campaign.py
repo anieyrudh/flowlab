@@ -565,8 +565,11 @@ def evaluate_case(
     solver_path = _solver_log(case_dir)
     solver_text = solver_path.read_text(encoding="utf-8", errors="replace")
     fatal_solver_output = (
-        "floating point exception" in solver_text.lower()
-        or "foam fatal" in solver_text.lower()
+        re.search(
+            r"(?im)^\s*(?:floating point exception(?:\s|\(|$)|-->\s*FOAM FATAL(?: IO)? ERROR:)",
+            solver_text,
+        )
+        is not None
         or re.search(
             r"(?i)(?:^|[^A-Za-z])(?:nan|inf)(?:[^A-Za-z]|$)",
             solver_text,

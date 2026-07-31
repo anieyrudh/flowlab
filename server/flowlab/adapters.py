@@ -2806,8 +2806,8 @@ def _openfoam_y_junction_function_object_entries(profile: dict[str, Any]) -> str
         type            surfaceFieldValue;
         libs            ("libfieldFunctionObjects.so");
         writeControl    timeStep;
-        writeInterval   1;
-        log             true;
+        writeInterval   25;
+        log             false;
         writeFields     false;
         regionType      patch;
         name            {patch};
@@ -2822,7 +2822,7 @@ def _openfoam_y_junction_function_object_entries(profile: dict[str, Any]) -> str
         type            residuals;
         libs            ("libutilityFunctionObjects.so");
         writeControl    timeStep;
-        writeInterval   1;
+        writeInterval   25;
         fields          (U p);
     }}
 
@@ -2831,7 +2831,7 @@ def _openfoam_y_junction_function_object_entries(profile: dict[str, Any]) -> str
         type            probes;
         libs            ("libsampling.so");
         writeControl    timeStep;
-        writeInterval   1;
+        writeInterval   25;
         fields          (p U);
         probeLocations
         (
@@ -2856,8 +2856,7 @@ def _openfoam_y_junction_function_object_entries(profile: dict[str, Any]) -> str
     {{
         type            patchFlowRate;
         libs            ("libfieldFunctionObjects.so");
-        writeControl    timeStep;
-        writeInterval   1;
+        writeControl    writeTime;
         patches         (inlet outletUpper outletLower);
         phi             phi;
     }}
@@ -2866,9 +2865,8 @@ def _openfoam_y_junction_function_object_entries(profile: dict[str, Any]) -> str
     {{
         type            surfaceFieldValue;
         libs            ("libfieldFunctionObjects.so");
-        writeControl    timeStep;
-        writeInterval   1;
-        log             true;
+        writeControl    writeTime;
+        log             false;
         writeFields     false;
         regionType      patch;
         name            (inlet outletUpper outletLower);

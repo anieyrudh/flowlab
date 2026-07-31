@@ -57,7 +57,12 @@ def _synthetic_completed_case(tmp_path: Path, *, asymmetric: bool = False) -> Pa
         "Mesh OK.\n"
     )
     (case_dir / "log.checkMesh").write_text(check_mesh, encoding="utf-8")
-    (case_dir / "log.foamRun").write_text("Time = 2500\nEnd\n", encoding="utf-8")
+    (case_dir / "log.foamRun").write_text(
+        "sigFpe : Enabling floating point exception trapping (FOAM_SIGFPE).\n"
+        "Time = 2500\n"
+        "End\n",
+        encoding="utf-8",
+    )
     _write_surface(case_dir, "inletFlow", -1.0)
     _write_surface(case_dir, "upperFlow", 0.4 if asymmetric else 0.5)
     _write_surface(case_dir, "lowerFlow", 0.6 if asymmetric else 0.5)
@@ -103,6 +108,29 @@ def test_synthetic_equal_pressure_and_asymmetric_control_evaluators(tmp_path: Pa
     assert equal["qoi"]["mirroredVelocityRelativeError"] == pytest.approx(0.0)
     assert control["allPerCaseGatesPassed"] is True
     assert control["physics"]["gates"]["lowerPressureOutletHasGreaterOutflow"] is True
+
+
+def test_solver_header_is_not_a_crash_but_real_floating_point_signal_is(tmp_path: Path) -> None:
+    case_dir = _synthetic_completed_case(tmp_path)
+    accepted = evaluate_case(
+        case_dir,
+        label="fine",
+        asymmetric=False,
+        solver_exit_code=0,
+    )
+    assert accepted["solver"]["normalTermination"] is True
+
+    (case_dir / "log.foamRun").write_text(
+        "Time = 2500\nEnd\nFloating point exception (core dumped)\n",
+        encoding="utf-8",
+    )
+    rejected = evaluate_case(
+        case_dir,
+        label="fine",
+        asymmetric=False,
+        solver_exit_code=0,
+    )
+    assert rejected["solver"]["normalTermination"] is False
 
 
 def test_three_grid_order_and_gci_fail_closed() -> None:
