@@ -29,9 +29,11 @@ build instructions.
 The full O-grid straight-pipe campaign passed its prospective three-level
 numerical-verification gates. It remains a verification candidate awaiting
 controlled independent review, not a general CFD validation or promotion.
-The canonical curved-elbow path is governed by its own prospective
-coarse/medium/fine contract and does not inherit the straight-pipe or
-axisymmetric validation state.
+The canonical curved-elbow V2 campaign passed its own prospective
+coarse/medium/fine numerical-qualification gates through an immutable,
+content-addressed recovery assessment. It remains a bounded candidate awaiting
+independent review, with validation and promotion explicitly false; it does not
+inherit the straight-pipe or axisymmetric validation state.
 Ordinary generated CFD cases remain experimental. See
 [benchmarks and verification status](docs/BENCHMARKS.md) for the measured
 results and exact claim boundary.
@@ -73,6 +75,7 @@ dependencies, data locations, and troubleshooting are covered in the
 - [Electron distribution status](docs/desktop-electron-distribution-status-2026-07-24.md)
 - [Full O-grid contract and review packet](docs/validation/full-ogrid-straight-pipe/REVIEW_HANDOFF_V2_2026-07-24.md)
 - [Canonical curved-elbow qualification contract](docs/validation/curved-elbow-re100/QUALIFICATION_CONTRACT_V2.json)
+- [Canonical curved-elbow V2 R2 assessment](docs/validation/curved-elbow-re100/QUALIFICATION_ASSESSMENT_V2_R2.md)
 - [Evidence retention and Git boundaries](docs/evidence-retention-and-git-boundary.md)
 
 ## Verify a checkout
