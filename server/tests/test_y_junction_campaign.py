@@ -16,11 +16,16 @@ from server.flowlab.y_junction_campaign import (
     materialize_campaign,
 )
 
+ROOT = Path(__file__).resolve().parents[2]
+
 
 def _write_surface(case_dir: Path, name: str, value: float) -> None:
     path = case_dir / "postProcessing" / name / "0" / "surfaceFieldValue.dat"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"# Time value\n2500 {value:.17g}\n", encoding="utf-8")
+    rows = "\n".join(
+        f"{iteration} {value:.17g}" for iteration in range(2300, 2501, 25)
+    )
+    path.write_text(f"# Time value\n{rows}\n", encoding="utf-8")
 
 
 def _write_probes(case_dir: Path) -> None:
@@ -83,26 +88,55 @@ def test_materialization_freezes_duplicate_hashes_and_unowned_junction(tmp_path:
         record["determinism"]["duplicateGeneratedFileHashesMatch"]
         for record in manifest["cases"]
     )
+    assert manifest["fixedMasterHierarchy"]["passed"] is True
+    assert manifest["fixedMasterHierarchy"]["masterGeometrySha256"]
     fine = next(record for record in manifest["cases"] if record["label"] == "fine")
+    assert fine["cellCount"] == 340992
+    assert fine["parentProvenance"]["minimumChildrenPerMasterCell"] == 64
+    assert fine["parentProvenance"]["maximumChildrenPerMasterCell"] == 64
     assert fine["resultBinding"]["unownedCellRanges"][0]["artifactId"] == (
         "generated:y-junction:junction-core:v1"
     )
 
 
-def test_v4_contract_freezes_fine_nested_grids_and_fixed_cell_point_probe_sampling() -> None:
+def test_v5_contract_freezes_fixed_master_subdivision_and_probe_sampling() -> None:
     contract = load_contract()
     case = build_case(_level_rows(contract)[-1], contract)
     profile = json.loads(case.files["constant/flowlab_y_junction_profile.json"])
 
-    assert contract["contractId"] == "bounded-symmetric-y-junction-v4"
+    assert contract["contractId"] == "bounded-symmetric-y-junction-v5"
     assert [row["cellSizeM"] for row in _level_rows(contract)] == [
         0.00075,
         0.000375,
         0.0001875,
     ]
+    assert [row["refinementFactor"] for row in _level_rows(contract)] == [1, 2, 4]
+    assert profile["mesh"]["refinement"]["factor"] == 4
+    assert profile["mesh"]["refinement"]["regionOwnershipReclassifiedFromGeometry"] is False
+    assert profile["mesh"]["geometryInvariants"]["masterCellCount"] == 5328
     assert profile["probeSampling"] == contract["probeSampling"]
     assert "fixedLocations  true;" in case.files["system/functions"]
     assert "interpolationScheme cellPoint;" in case.files["system/functions"]
+
+
+def test_v5_preserves_every_v4_scientific_threshold() -> None:
+    v4 = json.loads(
+        (
+            ROOT
+            / "docs"
+            / "validation"
+            / "y-junction"
+            / "QUALIFICATION_CONTRACT_V4.json"
+        ).read_text(encoding="utf-8")
+    )
+    v5 = load_contract()
+
+    for gate in ("equalPressurePerLevel", "sequence", "negativeControl"):
+        assert v5["gates"][gate] == v4["gates"][gate]
+    for key in ("exitCode", "normalTerminationRequired", "finitePressureAndVelocityRequired"):
+        assert v5["gates"]["solverPerCase"][key] == v4["gates"]["solverPerCase"][key]
+    assert v5["gates"]["meshPerCase"] == v4["gates"]["meshPerCase"]
+    assert v5["gates"]["ownership"] == v4["gates"]["ownership"]
 
 
 def test_synthetic_equal_pressure_and_asymmetric_control_evaluators(tmp_path: Path) -> None:
@@ -123,8 +157,43 @@ def test_synthetic_equal_pressure_and_asymmetric_control_evaluators(tmp_path: Pa
     assert equal["qoi"]["upperOutletFlowFraction"] == pytest.approx(0.5)
     assert equal["qoi"]["mirroredPressureRelativeError"] == pytest.approx(0.0)
     assert equal["qoi"]["mirroredVelocityRelativeError"] == pytest.approx(0.0)
+    assert equal["solver"]["iterativeStability"]["commonPressureSampleCount"] == 9
+    assert equal["solver"]["iterativeStability"]["primaryQoiRelativeRange"] == pytest.approx(0.0)
     assert control["allPerCaseGatesPassed"] is True
     assert control["physics"]["gates"]["lowerPressureOutletHasGreaterOutflow"] is True
+
+
+def test_iterative_stability_fails_closed_on_a_drifting_final_window(
+    tmp_path: Path,
+) -> None:
+    case_dir = _synthetic_completed_case(tmp_path)
+    inlet_path = (
+        case_dir
+        / "postProcessing"
+        / "inletPressure"
+        / "0"
+        / "surfaceFieldValue.dat"
+    )
+    inlet_path.write_text(
+        "# Time value\n"
+        + "\n".join(
+            f"{iteration} {0.001 + index * 0.00001:.17g}"
+            for index, iteration in enumerate(range(2300, 2501, 25))
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evaluation = evaluate_case(
+        case_dir,
+        label="fine",
+        asymmetric=False,
+        solver_exit_code=0,
+    )
+
+    assert evaluation["solver"]["iterativeStability"]["passed"] is False
+    assert evaluation["solver"]["gates"]["iterativeStability"] is False
+    assert evaluation["allPerCaseGatesPassed"] is False
 
 
 def test_solver_header_is_not_a_crash_but_real_floating_point_signal_is(tmp_path: Path) -> None:

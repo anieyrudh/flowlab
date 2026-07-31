@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import hashlib
 import json
 
@@ -11,6 +12,7 @@ from server.flowlab.schemas import CaseRequest
 from server.flowlab.y_junction import (
     JUNCTION_ARTIFACT_ID,
     YJunctionSpec,
+    generate_fixed_master_mesh,
     generate_mesh,
     mesh_to_openfoam_polymesh,
     public_mesh,
@@ -203,6 +205,66 @@ def test_y_junction_polymesh_declares_edge_zones_and_generated_unowned_junction(
     assert edge_stop <= junction["cellStart"]
 
 
+def test_fixed_master_subdivision_inherits_geometry_regions_and_patches() -> None:
+    spec = YJunctionSpec(0.027, 0.027, 0.006, 0.00075)
+    meshes = [
+        generate_fixed_master_mesh(
+            spec,
+            refinement_factor=factor,
+            inlet_edge_id="inlet-pipe",
+            upper_edge_id="upper-branch",
+            lower_edge_id="lower-branch",
+        )
+        for factor in (1, 2, 4)
+    ]
+
+    assert [len(mesh["cells"]) for mesh in meshes] == [5328, 42624, 340992]
+    assert len(
+        {
+            mesh["geometryInvariants"]["masterGeometrySha256"]
+            for mesh in meshes
+        }
+    ) == 1
+    assert len(
+        {
+            mesh["geometryInvariants"]["totalCellVolumeM3"]
+            for mesh in meshes
+        }
+    ) == 1
+    assert all(
+        mesh["geometryInvariants"]["patchAreasM2"]
+        == meshes[0]["geometryInvariants"]["patchAreasM2"]
+        for mesh in meshes
+    )
+    master_region_counts = [1560, 1522, 1522, 724]
+    for factor, mesh in zip((1, 2, 4), meshes, strict=True):
+        assert [region["cellCount"] for region in mesh["regions"]] == [
+            count * factor**3 for count in master_region_counts
+        ]
+        assert len(mesh["parentCellIndices"]) == len(mesh["cells"])
+        parent_counts = Counter(mesh["parentCellIndices"])
+        assert len(parent_counts) == 5328
+        assert set(parent_counts.values()) == {factor**3}
+        assert mesh["refinement"]["regionOwnershipReclassifiedFromGeometry"] is False
+        assert mesh["refinement"]["boundaryPatchesReclassifiedFromGeometry"] is False
+        assert mesh["regions"][-1]["artifactIdentity"]["schematicOwner"] is None
+
+
+def test_fixed_master_generation_is_deterministic() -> None:
+    spec = YJunctionSpec(0.027, 0.027, 0.006, 0.00075)
+    arguments = {
+        "refinement_factor": 2,
+        "inlet_edge_id": "inlet-pipe",
+        "upper_edge_id": "upper-branch",
+        "lower_edge_id": "lower-branch",
+    }
+    first = generate_fixed_master_mesh(spec, **arguments)
+    second = generate_fixed_master_mesh(spec, **arguments)
+
+    assert first["generationSha256"] == second["generationSha256"]
+    assert public_mesh(first) == public_mesh(second)
+
+
 def test_openfoam_y_junction_case_binds_only_explicit_edge_ranges(monkeypatch) -> None:
     monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
     monkeypatch.setattr(adapters, "_docker_available", lambda: False)
@@ -236,6 +298,33 @@ def test_openfoam_y_junction_case_binds_only_explicit_edge_ranges(monkeypatch) -
     assert not case.files["system/functions"].lstrip().startswith("functions")
     assert "yJunctionMirroredProbes" in case.files["system/functions"]
     assert validate_solver_case(case) == []
+
+
+def test_openfoam_fixed_master_case_preserves_parent_ownership(monkeypatch) -> None:
+    monkeypatch.setattr(adapters, "_command_exists", lambda _command: False)
+    monkeypatch.setattr(adapters, "_docker_available", lambda: False)
+    project = y_junction_project(cell_size_m=0.000375)
+    project["solver"]["meshControls"].update(
+        {
+            "yJunctionMasterCellSizeM": 0.00075,
+            "yJunctionRefinementFactor": 2,
+        }
+    )
+
+    case = _case(project)
+    preview = json.loads(case.files["mesh/flowlab_mesh.json"])
+    profile = json.loads(case.files["constant/flowlab_y_junction_profile.json"])
+    binding = case.resultComponentMap.artifactBindings[0].model_dump()
+
+    assert preview["refinement"]["factor"] == 2
+    assert preview["refinement"]["parentProvenanceComplete"] is True
+    assert len(preview["parentCellIndices"]) == 42624
+    assert profile["mesh"]["geometryInvariants"]["masterCellCount"] == 5328
+    assert binding["unownedCellRanges"][0]["cellCount"] == 724 * 8
+
+    project["solver"]["meshControls"].pop("yJunctionRefinementFactor")
+    with pytest.raises(ValueError, match="requires both master cell size"):
+        _case(project)
 
 
 def test_y_junction_asymmetric_control_is_encoded_without_changing_geometry(monkeypatch) -> None:

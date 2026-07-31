@@ -346,6 +346,37 @@ describe("project network validation", () => {
     });
   });
 
+  it("accepts only a complete, internally consistent fixed-master Y-junction request", () => {
+    const project = boundedYJunctionProject();
+    project.solver.meshControls = {
+      yJunctionCellSizeM: 0.000375,
+      yJunctionMasterCellSizeM: 0.00075,
+      yJunctionRefinementFactor: 2
+    };
+    expect(parseProject(project).ok).toBe(true);
+
+    const incomplete = boundedYJunctionProject();
+    incomplete.solver.meshControls = {
+      yJunctionCellSizeM: 0.000375,
+      yJunctionMasterCellSizeM: 0.00075
+    };
+    expect(parseProject(incomplete)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("requires both master cell size and refinement factor")
+    });
+
+    const inconsistent = boundedYJunctionProject();
+    inconsistent.solver.meshControls = {
+      yJunctionCellSizeM: 0.0001875,
+      yJunctionMasterCellSizeM: 0.00075,
+      yJunctionRefinementFactor: 2
+    };
+    expect(parseProject(inconsistent)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("must equal master cell size divided by refinement factor")
+    });
+  });
+
   it("rejects ambiguous imported networks without source and sink boundaries", () => {
     const project = structuredClone(venturiPreset);
     project.nodes.source.type = "junction";

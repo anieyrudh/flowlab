@@ -29,6 +29,14 @@ Y_JUNCTION_REPRESENTATION = "generated-cartesian-all-hex-y-junction"
 Y_JUNCTION_ARTIFACT_SCHEMA = "flowlab.generated-region-artifact.v1"
 JUNCTION_ARTIFACT_ID = "generated:y-junction:junction-core:v1"
 PATCH_ORDER = ("inlet", "outletUpper", "outletLower", "walls")
+FACE_DIRECTIONS = (
+    ((-1, 0, 0), (0, 4, 7, 3)),
+    ((1, 0, 0), (1, 2, 6, 5)),
+    ((0, -1, 0), (0, 1, 5, 4)),
+    ((0, 1, 0), (3, 7, 6, 2)),
+    ((0, 0, -1), (0, 3, 2, 1)),
+    ((0, 0, 1), (4, 5, 6, 7)),
+)
 
 
 def _positive(value: float, label: str) -> float:
@@ -399,19 +407,11 @@ def generate_mesh(
     ]
 
     cell_index_by_key = {key: index for index, key in enumerate(cell_grid_keys)}
-    face_directions = (
-        ((-1, 0, 0), (0, 4, 7, 3)),
-        ((1, 0, 0), (1, 2, 6, 5)),
-        ((0, -1, 0), (0, 1, 5, 4)),
-        ((0, 1, 0), (3, 7, 6, 2)),
-        ((0, 0, -1), (0, 3, 2, 1)),
-        ((0, 0, 1), (4, 5, 6, 7)),
-    )
     patch_faces: dict[str, list[dict[str, Any]]] = {name: [] for name in PATCH_ORDER}
     internal_face_count = 0
     for cell_index, ((i, j, k), cell) in enumerate(zip(cell_grid_keys, cells, strict=True)):
         group = raw[(i, j, k)]["group"]
-        for direction, local_vertices in face_directions:
+        for direction, local_vertices in FACE_DIRECTIONS:
             neighbour_key = (i + direction[0], j + direction[1], k + direction[2])
             neighbour_index = cell_index_by_key.get(neighbour_key)
             if neighbour_index is not None:
@@ -491,6 +491,292 @@ def generate_mesh(
     return preview
 
 
+def _master_boundary_identity(
+    master: dict[str, Any],
+) -> dict[tuple[tuple[int, int, int], tuple[int, int, int]], str]:
+    """Resolve the master's explicit patch records to grid-key face identities."""
+
+    grid_keys = [tuple(int(value) for value in key) for key in master["cellGridKeys"]]
+    cells = master["cells"]
+    patch_by_owner_vertices: dict[tuple[int, tuple[int, ...]], str] = {}
+    for patch_name in PATCH_ORDER:
+        for record in master["_openfoamPatchFaces"][patch_name]:
+            identity = (int(record["owner"]), tuple(sorted(int(value) for value in record["vertices"])))
+            if identity in patch_by_owner_vertices:
+                raise ValueError("Fixed-master Y-junction patch provenance overlaps.")
+            patch_by_owner_vertices[identity] = patch_name
+
+    boundary: dict[tuple[tuple[int, int, int], tuple[int, int, int]], str] = {}
+    key_set = set(grid_keys)
+    for owner, (key, cell) in enumerate(zip(grid_keys, cells, strict=True)):
+        for direction, local_vertices in FACE_DIRECTIONS:
+            neighbour = tuple(key[index] + direction[index] for index in range(3))
+            if neighbour in key_set:
+                continue
+            vertices = tuple(sorted(int(cell[index]) for index in local_vertices))
+            patch = patch_by_owner_vertices.get((owner, vertices))
+            if patch is None:
+                raise ValueError("Fixed-master Y-junction boundary provenance is incomplete.")
+            boundary[(key, direction)] = patch
+    if len(boundary) != sum(len(master["_openfoamPatchFaces"][name]) for name in PATCH_ORDER):
+        raise ValueError("Fixed-master Y-junction boundary provenance is not one-to-one.")
+    return boundary
+
+
+def generate_fixed_master_mesh(
+    master_spec: YJunctionSpec,
+    *,
+    refinement_factor: int,
+    inlet_edge_id: str,
+    upper_edge_id: str,
+    lower_edge_id: str,
+) -> dict[str, Any]:
+    """Uniformly subdivide one frozen master mask without reclassifying geometry.
+
+    Every child inherits its parent region and every exterior child face
+    inherits its parent's explicit patch identity. Coordinates are used only
+    to realize the already-declared subdivision, never to infer ownership.
+    """
+
+    if isinstance(refinement_factor, bool) or not isinstance(refinement_factor, int):
+        raise ValueError("Fixed-master Y-junction refinement factor must be an integer.")
+    if refinement_factor not in {1, 2, 4}:
+        raise ValueError("Fixed-master Y-junction refinement factor must be one of 1, 2, or 4.")
+
+    master = generate_mesh(
+        master_spec,
+        inlet_edge_id=inlet_edge_id,
+        upper_edge_id=upper_edge_id,
+        lower_edge_id=lower_edge_id,
+    )
+    master_keys = [tuple(int(value) for value in key) for key in master["cellGridKeys"]]
+    master_boundary = _master_boundary_identity(master)
+    region_by_parent: dict[int, dict[str, Any]] = {}
+    for region in master["regions"]:
+        start = int(region["cellStart"])
+        stop = start + int(region["cellCount"])
+        for parent_index in range(start, stop):
+            if parent_index in region_by_parent:
+                raise ValueError("Fixed-master Y-junction parent ownership overlaps.")
+            region_by_parent[parent_index] = region
+    if len(region_by_parent) != len(master_keys):
+        raise ValueError("Fixed-master Y-junction parent ownership is incomplete.")
+
+    master_identity = {
+        "schema": "flowlab.y-junction-fixed-master-identity.v1",
+        "masterGenerationSha256": master["generationSha256"],
+        "masterCellSizeM": master_spec.cell_size_m,
+        "cellGridKeys": master["cellGridKeys"],
+        "regions": master["regions"],
+        "boundaryFaces": [
+            {
+                "cellGridKey": list(key),
+                "direction": list(direction),
+                "patch": patch,
+            }
+            for (key, direction), patch in sorted(master_boundary.items())
+        ],
+    }
+    master_geometry_sha256 = hashlib.sha256(
+        json.dumps(master_identity, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+    factor = refinement_factor
+    h = master_spec.cell_size_m / factor
+    child_records: list[tuple[tuple[int, int, int], int, dict[str, Any]]] = []
+    child_regions: list[dict[str, Any]] = []
+    cursor = 0
+    for region in master["regions"]:
+        start = int(region["cellStart"])
+        stop = start + int(region["cellCount"])
+        region_start = cursor
+        for parent_index in range(start, stop):
+            parent_key = master_keys[parent_index]
+            for di in range(factor):
+                for dj in range(factor):
+                    for dk in range(factor):
+                        child_key = (
+                            parent_key[0] * factor + di,
+                            parent_key[1] * factor + dj,
+                            parent_key[2] * factor + dk,
+                        )
+                        child_records.append((child_key, parent_index, region))
+                        cursor += 1
+        inherited = dict(region)
+        inherited["cellStart"] = region_start
+        inherited["cellCount"] = cursor - region_start
+        inherited["masterCellStart"] = start
+        inherited["masterCellCount"] = stop - start
+        inherited["refinementOwnershipSource"] = "fixed-master-parent-region-inheritance"
+        child_regions.append(inherited)
+
+    child_keys = [record[0] for record in child_records]
+    if len(set(child_keys)) != len(child_keys):
+        raise ValueError("Fixed-master Y-junction subdivision produced duplicate child cells.")
+    child_key_set = set(child_keys)
+    if not _connected(child_key_set):
+        raise ValueError("Fixed-master Y-junction children are not one face-connected region.")
+
+    point_ids: dict[tuple[int, int, int], int] = {}
+    points: list[list[float]] = []
+
+    def point_id(key: tuple[int, int, int]) -> int:
+        if key not in point_ids:
+            point_ids[key] = len(points)
+            points.append([round(coordinate * h, 15) for coordinate in key])
+        return point_ids[key]
+
+    cells: list[list[int]] = []
+    for i, j, k in child_keys:
+        cells.append(
+            [
+                point_id((i, j, k)),
+                point_id((i + 1, j, k)),
+                point_id((i + 1, j + 1, k)),
+                point_id((i, j + 1, k)),
+                point_id((i, j, k + 1)),
+                point_id((i + 1, j, k + 1)),
+                point_id((i + 1, j + 1, k + 1)),
+                point_id((i, j + 1, k + 1)),
+            ]
+        )
+
+    child_index_by_key = {key: index for index, key in enumerate(child_keys)}
+    patch_faces: dict[str, list[dict[str, Any]]] = {name: [] for name in PATCH_ORDER}
+    internal_face_count = 0
+    for owner, ((key, _parent_index, _region), cell) in enumerate(
+        zip(child_records, cells, strict=True)
+    ):
+        parent_key = tuple(value // factor for value in key)
+        for direction, local_vertices in FACE_DIRECTIONS:
+            neighbour_key = tuple(key[index] + direction[index] for index in range(3))
+            neighbour = child_index_by_key.get(neighbour_key)
+            if neighbour is not None:
+                if owner < neighbour:
+                    internal_face_count += 1
+                continue
+            patch = master_boundary.get((parent_key, direction))
+            if patch is None:
+                raise ValueError(
+                    "Fixed-master Y-junction child boundary lacks inherited patch identity."
+                )
+            vertices = [cell[index] for index in local_vertices]
+            face_center = [
+                round(
+                    sum(points[vertex][axis] for vertex in vertices) / 4.0,
+                    15,
+                )
+                for axis in range(3)
+            ]
+            patch_faces[patch].append(
+                {"owner": owner, "vertices": vertices, "center": face_center}
+            )
+
+    expected_children = len(master_keys) * factor**3
+    if len(cells) != expected_children:
+        raise ValueError("Fixed-master Y-junction child count is incomplete.")
+    if any(
+        len(patch_faces[name]) != int(master["patches"][name]["faceCount"]) * factor**2
+        for name in PATCH_ORDER
+    ):
+        raise ValueError("Fixed-master Y-junction patch subdivision is incomplete.")
+
+    geometry = dict(master["geometry"])
+    geometry.update(
+        {
+            "cellSizeM": h,
+            "masterCellSizeM": master_spec.cell_size_m,
+            "wallRealization": (
+                "One frozen Cartesian staircase master mask; solution cells are uniform "
+                "subdivisions that preserve the master volume and boundary exactly."
+            ),
+        }
+    )
+    spans = [
+        max(point[axis] for point in points) - min(point[axis] for point in points)
+        for axis in range(3)
+    ]
+    patch_areas = {
+        name: int(master["patches"][name]["faceCount"]) * master_spec.cell_size_m**2
+        for name in PATCH_ORDER
+    }
+    total_volume = len(master_keys) * master_spec.cell_size_m**3
+    preview: dict[str, Any] = {
+        "format": Y_JUNCTION_PREVIEW_FORMAT,
+        "coordinateSystem": "physical-x-y-z-si",
+        "spatialDimension": 3,
+        "representation": Y_JUNCTION_REPRESENTATION,
+        "runtimeSolverMesh": True,
+        "proxyGeometry": False,
+        "geometry": geometry,
+        "geometryInvariants": {
+            "schema": "flowlab.y-junction-fixed-master-invariants.v1",
+            "masterGeometrySha256": master_geometry_sha256,
+            "masterGenerationSha256": master["generationSha256"],
+            "masterCellCount": len(master_keys),
+            "totalCellVolumeM3": total_volume,
+            "patchAreasM2": patch_areas,
+        },
+        "refinement": {
+            "scheme": "fixed-master-uniform-hexahedral-subdivision",
+            "factor": factor,
+            "childrenPerMasterCell": factor**3,
+            "masterCellSizeM": master_spec.cell_size_m,
+            "effectiveCellSizeM": h,
+            "parentProvenanceComplete": True,
+            "regionOwnershipReclassifiedFromGeometry": False,
+            "boundaryPatchesReclassifiedFromGeometry": False,
+        },
+        "boundsSpanM": [round(value, 15) for value in spans],
+        "points": points,
+        "cells": cells,
+        "cellTypes": [VTK_HEXAHEDRON for _ in cells],
+        "cellGridKeys": [list(key) for key in child_keys],
+        "parentCellIndices": [record[1] for record in child_records],
+        "regions": child_regions,
+        "patches": {
+            name: {
+                "type": "wall" if name == "walls" else "patch",
+                "faceCount": len(patch_faces[name]),
+            }
+            for name in PATCH_ORDER
+        },
+        "topology": {
+            "connectedFluidRegions": 1,
+            "portPatchCount": 3,
+            "portPatches": ["inlet", "outletUpper", "outletLower"],
+            "wallPatch": "walls",
+            "cellTypes": ["hex"],
+            "cellCount": len(cells),
+            "masterCellCount": len(master_keys),
+            "initialCellCount": len(cells),
+            "prunedUnderconnectedCellCount": 0,
+            "masterInitialCellCount": master["topology"]["initialCellCount"],
+            "masterPrunedUnderconnectedCellCount": master["topology"][
+                "prunedUnderconnectedCellCount"
+            ],
+            "minimumFaceNeighbourCount": min(
+                _face_neighbour_count(key, child_key_set) for key in child_keys
+            ),
+            "internalFaceCount": internal_face_count,
+            "boundaryFaceCount": sum(len(faces) for faces in patch_faces.values()),
+        },
+        "volumeQuality": {
+            "positiveVolume": True,
+            "zeroVolumeCellCount": 0,
+            "minimumCellVolumeM3": h**3,
+            "maximumCellVolumeM3": h**3,
+            "totalCellVolumeM3": len(cells) * h**3,
+        },
+        "_openfoamPatchFaces": patch_faces,
+    }
+    digest_view = {key: value for key, value in preview.items() if not key.startswith("_")}
+    preview["generationSha256"] = hashlib.sha256(
+        json.dumps(digest_view, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return preview
+
+
 def public_mesh(mesh: dict[str, Any]) -> dict[str, Any]:
     """Remove internal exporter details from the retained preview artifact."""
 
@@ -530,14 +816,6 @@ def mesh_to_openfoam_polymesh(
     cells = mesh["cells"]
     grid_keys = [tuple(int(value) for value in key) for key in mesh["cellGridKeys"]]
     cell_index_by_key = {key: index for index, key in enumerate(grid_keys)}
-    face_directions = (
-        ((-1, 0, 0), (0, 4, 7, 3)),
-        ((1, 0, 0), (1, 2, 6, 5)),
-        ((0, -1, 0), (0, 1, 5, 4)),
-        ((0, 1, 0), (3, 7, 6, 2)),
-        ((0, 0, -1), (0, 3, 2, 1)),
-        ((0, 0, 1), (4, 5, 6, 7)),
-    )
     internal_faces: list[tuple[int, int, list[int]]] = []
     boundary_faces: dict[str, list[tuple[int, list[int]]]] = {name: [] for name in PATCH_ORDER}
     patch_lookup: dict[tuple[int, tuple[int, ...]], str] = {}
@@ -546,7 +824,7 @@ def mesh_to_openfoam_polymesh(
             patch_lookup[(int(record["owner"]), tuple(sorted(record["vertices"])))] = patch_name
 
     for owner, (key, cell) in enumerate(zip(grid_keys, cells, strict=True)):
-        for direction, local_vertices in face_directions:
+        for direction, local_vertices in FACE_DIRECTIONS:
             neighbour_key = (
                 key[0] + direction[0],
                 key[1] + direction[1],

@@ -30,9 +30,9 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "y-junction"
-    / "QUALIFICATION_CONTRACT_V4.json"
+    / "QUALIFICATION_CONTRACT_V5.json"
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V4.md")
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V5.md")
 FROZEN_SOURCE_PATHS = (
     "server/flowlab/adapters.py",
     "server/flowlab/execution.py",
@@ -57,6 +57,8 @@ FROZEN_SOURCE_PATHS = (
     "docs/validation/y-junction/RUNBOOK_V3.md",
     "docs/validation/y-junction/QUALIFICATION_CONTRACT_V4.json",
     "docs/validation/y-junction/RUNBOOK_V4.md",
+    "docs/validation/y-junction/QUALIFICATION_CONTRACT_V5.json",
+    "docs/validation/y-junction/RUNBOOK_V5.md",
 )
 
 
@@ -116,6 +118,26 @@ def load_contract() -> dict[str, Any]:
     ):
         raise YJunctionCampaignError(
             f"Y-junction frozen cell sizes are not uniform r={ratio:g}"
+        )
+    master_size = float(contract["fixedMaster"]["cellSizeM"])
+    factors = [int(row["refinementFactor"]) for row in levels]
+    if factors != [1, 2, 4] or any(
+        not math.isclose(
+            float(row["masterCellSizeM"]),
+            master_size,
+            rel_tol=1.0e-12,
+            abs_tol=1.0e-15,
+        )
+        or not math.isclose(
+            float(row["cellSizeM"]),
+            master_size / int(row["refinementFactor"]),
+            rel_tol=1.0e-12,
+            abs_tol=1.0e-15,
+        )
+        for row in levels
+    ):
+        raise YJunctionCampaignError(
+            "Y-junction fixed-master levels must use factors 1, 2, and 4"
         )
     return contract
 
@@ -215,7 +237,11 @@ def _project(
             "meshResolution": str(level["id"]),
             "runMode": "steady",
             "meshMode": "y-junction",
-            "meshControls": {"yJunctionCellSizeM": float(level["cellSizeM"])},
+            "meshControls": {
+                "yJunctionCellSizeM": float(level["cellSizeM"]),
+                "yJunctionMasterCellSizeM": float(level["masterCellSizeM"]),
+                "yJunctionRefinementFactor": int(level["refinementFactor"]),
+            },
             "maxIterations": int(contract["productRequest"]["maxIterations"]),
             "tolerance": float(contract["productRequest"]["residualControl"]["p"]),
             "yJunctionProbeSampling": dict(contract["probeSampling"]),
@@ -258,6 +284,13 @@ def build_case(
             rel_tol=1.0e-12,
         )
         or not math.isclose(
+            float(profile["geometry"]["masterCellSizeM"]),
+            float(level["masterCellSizeM"]),
+            rel_tol=1.0e-12,
+        )
+        or int(profile["mesh"]["refinement"]["factor"])
+        != int(level["refinementFactor"])
+        or not math.isclose(
             float(profile["flow"]["nominalReynoldsNumber"]),
             float(selected["physicalCase"]["nominalReynoldsNumber"]),
             rel_tol=1.0e-12,
@@ -279,6 +312,134 @@ def _case_rows(contract: dict[str, Any]) -> list[tuple[str, dict[str, Any], bool
     return rows
 
 
+def _parent_provenance(preview: dict[str, Any]) -> dict[str, Any]:
+    refinement = preview.get("refinement")
+    invariants = preview.get("geometryInvariants")
+    parents = preview.get("parentCellIndices")
+    if (
+        not isinstance(refinement, dict)
+        or not isinstance(invariants, dict)
+        or not isinstance(parents, list)
+    ):
+        raise YJunctionCampaignError("fixed-master mesh provenance is missing")
+    factor = int(refinement["factor"])
+    master_count = int(invariants["masterCellCount"])
+    counts = {index: 0 for index in range(master_count)}
+    valid = len(parents) == len(preview["cells"])
+    for value in parents:
+        if isinstance(value, bool) or not isinstance(value, int) or value not in counts:
+            valid = False
+            continue
+        counts[value] += 1
+    child_counts = list(counts.values())
+    expected_master_regions = {
+        str(region["id"]): int(region["masterCellCount"])
+        for region in preview["regions"]
+    }
+    realized_regions = {
+        str(region["id"]): int(region["cellCount"])
+        for region in preview["regions"]
+    }
+    region_scaling = all(
+        realized_regions[region_id] == master_count_for_region * factor**3
+        for region_id, master_count_for_region in expected_master_regions.items()
+    )
+    return {
+        "parentCellIndexCount": len(parents),
+        "uniqueMasterParentCount": sum(count > 0 for count in child_counts),
+        "masterCellCount": master_count,
+        "allParentIndicesValid": valid,
+        "minimumChildrenPerMasterCell": min(child_counts) if child_counts else 0,
+        "maximumChildrenPerMasterCell": max(child_counts) if child_counts else 0,
+        "expectedChildrenPerMasterCell": factor**3,
+        "regionCellCounts": realized_regions,
+        "masterRegionCellCounts": expected_master_regions,
+        "regionCountsScaleByFactorCubed": region_scaling,
+        "regionOwnershipReclassifiedFromGeometry": bool(
+            refinement.get("regionOwnershipReclassifiedFromGeometry", True)
+        ),
+        "boundaryPatchesReclassifiedFromGeometry": bool(
+            refinement.get("boundaryPatchesReclassifiedFromGeometry", True)
+        ),
+    }
+
+
+def _fixed_master_hierarchy(
+    records: list[dict[str, Any]],
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    equal_records = [record for record in records if not record["asymmetric"]]
+    expected_levels = _level_rows(contract)
+    if [record["level"] for record in equal_records] != [
+        level["id"] for level in expected_levels
+    ]:
+        raise YJunctionCampaignError("fixed-master hierarchy is missing an equal-pressure level")
+    master_hashes = {
+        str(record["geometryInvariants"]["masterGeometrySha256"])
+        for record in records
+    }
+    volumes = [float(record["geometryInvariants"]["totalCellVolumeM3"]) for record in equal_records]
+    patch_areas = [record["geometryInvariants"]["patchAreasM2"] for record in equal_records]
+    master_counts = [
+        int(record["geometryInvariants"]["masterCellCount"]) for record in equal_records
+    ]
+    expected_master_count = int(contract["gates"]["fixedMasterHierarchy"]["masterCellCount"])
+    per_level: dict[str, dict[str, bool]] = {}
+    for record, level in zip(equal_records, expected_levels, strict=True):
+        factor = int(level["refinementFactor"])
+        provenance = record["parentProvenance"]
+        expected_cell_count = int(level["expectedCellCount"])
+        expected_patch_faces = {
+            name: int(equal_records[0]["patches"][name]["faceCount"]) * factor**2
+            for name in equal_records[0]["patches"]
+        }
+        gates = {
+            "expectedCellCount": int(record["cellCount"]) == expected_cell_count,
+            "parentProvenanceComplete": (
+                provenance["allParentIndicesValid"]
+                and provenance["parentCellIndexCount"] == expected_cell_count
+                and provenance["uniqueMasterParentCount"] == expected_master_count
+            ),
+            "childrenPerMasterCell": (
+                provenance["minimumChildrenPerMasterCell"] == factor**3
+                and provenance["maximumChildrenPerMasterCell"] == factor**3
+            ),
+            "regionCountsScale": provenance["regionCountsScaleByFactorCubed"],
+            "patchFaceCountsScale": {
+                name: int(record["patches"][name]["faceCount"])
+                for name in record["patches"]
+            }
+            == expected_patch_faces,
+            "noGeometryReclassification": (
+                not provenance["regionOwnershipReclassifiedFromGeometry"]
+                and not provenance["boundaryPatchesReclassifiedFromGeometry"]
+            ),
+        }
+        per_level[str(level["id"])] = gates
+    gates = {
+        "masterGeometrySha256Identical": len(master_hashes) == 1,
+        "masterCellCount": all(value == expected_master_count for value in master_counts),
+        "totalVolumeIdentical": all(value == volumes[0] for value in volumes[1:]),
+        "patchAreasIdentical": all(value == patch_areas[0] for value in patch_areas[1:]),
+        "allLevelHierarchyGates": all(
+            all(level_gates.values()) for level_gates in per_level.values()
+        ),
+        "negativeControlMatchesFineGeometry": (
+            records[-1]["generationSha256"] == equal_records[-1]["generationSha256"]
+            and records[-1]["geometryInvariants"] == equal_records[-1]["geometryInvariants"]
+            and records[-1]["parentProvenance"] == equal_records[-1]["parentProvenance"]
+        ),
+    }
+    return {
+        "masterGeometrySha256": next(iter(master_hashes)) if len(master_hashes) == 1 else None,
+        "totalCellVolumeM3": volumes,
+        "patchAreasM2": patch_areas,
+        "perLevel": per_level,
+        "gates": gates,
+        "passed": all(gates.values()),
+    }
+
+
 def materialize_campaign(output_dir: Path) -> dict[str, Any]:
     contract = load_contract()
     output_dir = output_dir.resolve()
@@ -291,11 +452,19 @@ def materialize_campaign(output_dir: Path) -> dict[str, Any]:
         second = build_case(level, contract, asymmetric=asymmetric)
         first_hashes = _case_file_hashes(first)
         second_hashes = _case_file_hashes(second)
+        first_preview = json.loads(first.files["mesh/flowlab_mesh.json"])
+        second_profile = json.loads(
+            second.files["constant/flowlab_y_junction_profile.json"]
+        )
         if first_hashes != second_hashes:
             raise YJunctionCampaignError(f"{label} duplicate generated-file hashes do not match")
+        if first_preview.get("generationSha256") != second_profile["mesh"].get(
+            "generationSha256"
+        ):
+            raise YJunctionCampaignError(f"{label} duplicate mesh generation hashes do not match")
         case_dir = output_dir / "cases" / label
         materialize_case_files(first, case_dir)
-        preview = json.loads(first.files["mesh/flowlab_mesh.json"])
+        preview = first_preview
         binding = first.resultComponentMap.artifactBindings[0].model_dump() if first.resultComponentMap else {}
         record = {
             "label": label,
@@ -306,9 +475,13 @@ def materialize_campaign(output_dir: Path) -> dict[str, Any]:
             "cellCount": len(preview["cells"]),
             "patches": preview["patches"],
             "generationSha256": preview["generationSha256"],
+            "geometryInvariants": preview["geometryInvariants"],
+            "refinement": preview["refinement"],
+            "parentProvenance": _parent_provenance(preview),
             "resultBinding": binding,
             "determinism": {
                 "duplicateGeneratedFileHashesMatch": True,
+                "duplicateGenerationHashesMatch": True,
                 "generatedFileCount": len(first_hashes),
                 "generatedFileTreeSha256": hashlib.sha256(
                     "".join(
@@ -319,6 +492,9 @@ def materialize_campaign(output_dir: Path) -> dict[str, Any]:
         }
         records.append(record)
         _write_json(case_dir / "qualification-case.json", record)
+    hierarchy = _fixed_master_hierarchy(records, contract)
+    if not hierarchy["passed"]:
+        raise YJunctionCampaignError("fixed-master hierarchy failed before OpenFOAM execution")
     manifest = {
         "schema": CAMPAIGN_SCHEMA,
         "contractId": contract["contractId"],
@@ -330,6 +506,7 @@ def materialize_campaign(output_dir: Path) -> dict[str, Any]:
         "contractSha256": _sha256_file(CONTRACT_PATH),
         "runbookSha256": _sha256_file(RUNBOOK_PATH),
         "cases": records,
+        "fixedMasterHierarchy": hierarchy,
         "gates": contract["gates"],
     }
     _write_json(output_dir / "campaign-manifest.json", manifest)
@@ -415,7 +592,7 @@ def _latest_data_file(case_dir: Path, object_name: str, field_hint: str) -> Path
     return sorted(candidates, key=lambda path: (path.stat().st_mtime_ns, str(path)))[-1]
 
 
-def _last_numeric_row(path: Path) -> list[float]:
+def _numeric_rows(path: Path) -> list[list[float]]:
     rows: list[list[float]] = []
     pattern = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -426,7 +603,11 @@ def _last_numeric_row(path: Path) -> list[float]:
             rows.append(values)
     if not rows:
         raise YJunctionCampaignError(f"no finite numeric row in retained output: {path}")
-    return rows[-1]
+    return rows
+
+
+def _last_numeric_row(path: Path) -> list[float]:
+    return _numeric_rows(path)[-1]
 
 
 def _surface_value(case_dir: Path, object_name: str, field_hint: str) -> tuple[float, Path]:
@@ -438,6 +619,65 @@ def _probe_values(case_dir: Path, field: str) -> tuple[list[float], Path]:
     path = _latest_data_file(case_dir, "yJunctionMirroredProbes", field)
     row = _last_numeric_row(path)
     return row[1:], path
+
+
+def _surface_series(
+    case_dir: Path,
+    object_name: str,
+    field_hint: str,
+) -> tuple[dict[float, float], Path]:
+    path = _latest_data_file(case_dir, object_name, field_hint)
+    series = {row[0]: row[-1] for row in _numeric_rows(path)}
+    return series, path
+
+
+def _iterative_stability(
+    case_dir: Path,
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    inlet, inlet_path = _surface_series(case_dir, "inletPressure", "p")
+    upper, upper_path = _surface_series(case_dir, "upperPressure", "p")
+    lower, lower_path = _surface_series(case_dir, "lowerPressure", "p")
+    common_times = sorted(set(inlet) & set(upper) & set(lower))
+    limits = contract["gates"]["solverPerCase"]["iterativeStability"]
+    final_window = float(limits["finalWindowIterations"])
+    final_time = common_times[-1] if common_times else float("nan")
+    window_times = [
+        value for value in common_times if value >= final_time - final_window
+    ]
+    density = float(contract["physicalCase"]["densityKgPerM3"])
+    qoi_values = [
+        (inlet[value] - 0.5 * (upper[value] + lower[value])) * density
+        for value in window_times
+    ]
+    finite = all(math.isfinite(value) for value in (*window_times, *qoi_values))
+    relative_range = (
+        (max(qoi_values) - min(qoi_values))
+        / max(abs(qoi_values[-1]), 1.0e-12)
+        if qoi_values and finite
+        else float("inf")
+    )
+    gates = {
+        "minimumCommonPressureSamples": len(qoi_values)
+        >= int(limits["minimumCommonPressureSamples"]),
+        "finitePrimaryQoiHistory": finite,
+        "primaryQoiRelativeRange": relative_range
+        <= float(limits["maximumPrimaryQoiRelativeRange"]),
+    }
+    return {
+        "finalWindowIterations": final_window,
+        "finalCommonSampleTime": final_time if math.isfinite(final_time) else None,
+        "commonPressureSampleCount": len(qoi_values),
+        "sampleTimes": window_times,
+        "primaryPressureDropPa": qoi_values,
+        "primaryQoiRelativeRange": relative_range if math.isfinite(relative_range) else None,
+        "sourceArtifacts": [
+            {"path": str(path.relative_to(case_dir)), "sha256": _sha256_file(path)}
+            for path in (inlet_path, upper_path, lower_path)
+        ],
+        "gates": gates,
+        "passed": all(gates.values()),
+    }
 
 
 def _check_mesh_log(case_dir: Path) -> Path:
@@ -634,11 +874,13 @@ def evaluate_case(
     primary_qoi_pa = (
         inlet_pressure - 0.5 * (upper_pressure + lower_pressure)
     ) * float(selected["physicalCase"]["densityKgPerM3"])
+    iterative_stability = _iterative_stability(case_dir, selected)
     equal_limits = selected["gates"]["equalPressurePerLevel"]
     solver_gates = {
         "exitCode": solver_exit_code == int(selected["gates"]["solverPerCase"]["exitCode"]),
         "normalTermination": normal,
         "finitePressureAndVelocity": finite,
+        "iterativeStability": iterative_stability["passed"],
     }
     if asymmetric:
         physics_gates = {
@@ -686,6 +928,7 @@ def evaluate_case(
             "finitePressureAndVelocity": finite,
             "solverLog": str(solver_path),
             "solverLogSha256": _sha256_file(solver_path),
+            "iterativeStability": iterative_stability,
             "gates": solver_gates,
             "passed": all(solver_gates.values()),
         },
@@ -791,6 +1034,7 @@ def execute_campaign(
         "promotionAuthorized": False,
         "startedAt": datetime.now(timezone.utc).isoformat(),
         "campaignManifestSha256": _sha256_file(output_dir / "campaign-manifest.json"),
+        "fixedMasterHierarchy": manifest["fixedMasterHierarchy"],
         "sourceControl": source,
         "runtimeEnvironment": runtime,
         "cases": [],
@@ -894,7 +1138,7 @@ def execute_campaign(
             ),
             "limitations": [
                 "No independent empirical validation was performed.",
-                "The Cartesian staircase wall refines with the solution and is not CAD-exact.",
+                "The fixed Cartesian staircase master is not CAD-exact.",
                 "The qualification claim is bounded to this symmetric +/-30-degree Re=100 steady laminar Y-junction.",
                 "No product promotion, arbitrary-network, turbulence, transient, or release claim is authorized.",
             ],

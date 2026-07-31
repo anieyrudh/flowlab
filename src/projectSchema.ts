@@ -391,6 +391,8 @@ const projectSchema = z.object({
         fullOGridCircumferentialCells: z.number().int().min(16).max(4096).optional(),
         fullOGridCoreCellsPerSide: z.number().int().min(4).max(1024).optional(),
         yJunctionCellSizeM: z.number().positive().optional(),
+        yJunctionMasterCellSizeM: z.number().positive().optional(),
+        yJunctionRefinementFactor: z.union([z.literal(1), z.literal(2), z.literal(4)]).optional(),
         transverseDistribution: z.enum(["boundary-layer", "uniform"]).optional(),
         targetYPlus: z.number().positive().optional(),
         refinementRegions: z
@@ -748,12 +750,37 @@ function validateYJunction(project: FluidProject): string | null {
     return "Y-junction editor layout must identify one upper and one lower branch.";
   }
   const cellSize = project.solver.meshControls?.yJunctionCellSizeM;
+  const masterCellSize = project.solver.meshControls?.yJunctionMasterCellSizeM;
+  const refinementFactor = project.solver.meshControls?.yJunctionRefinementFactor;
+  if ((masterCellSize === undefined) !== (refinementFactor === undefined)) {
+    return "Fixed-master Y-junction mode requires both master cell size and refinement factor.";
+  }
+  if (
+    masterCellSize !== undefined
+    && refinementFactor !== undefined
+    && cellSize !== undefined
+    && Math.abs(cellSize - masterCellSize / refinementFactor)
+      > Math.max(1e-15, cellSize * 1e-12)
+  ) {
+    return "Y-junction cell size must equal master cell size divided by refinement factor.";
+  }
   if (cellSize !== undefined) {
     if (diameter / cellSize < 4) return "Y-junction requires at least four cells across the diameter.";
     for (const [length, label] of [[inlet[0].length, "inlet"], [branches[0].length, "branch"]] as const) {
       const ratio = length / cellSize;
       if (Math.abs(ratio - Math.round(ratio)) > 1e-9) {
         return `Y-junction ${label} length must be an integer multiple of cell size.`;
+      }
+    }
+  }
+  if (masterCellSize !== undefined) {
+    if (diameter / masterCellSize < 4) {
+      return "Y-junction fixed master requires at least four cells across the diameter.";
+    }
+    for (const [length, label] of [[inlet[0].length, "inlet"], [branches[0].length, "branch"]] as const) {
+      const ratio = length / masterCellSize;
+      if (Math.abs(ratio - Math.round(ratio)) > 1e-9) {
+        return `Y-junction ${label} length must be an integer multiple of master cell size.`;
       }
     }
   }

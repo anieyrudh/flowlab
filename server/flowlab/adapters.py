@@ -37,6 +37,7 @@ from .y_junction import (
     Y_JUNCTION_PROFILE_SCHEMA,
     Y_JUNCTION_REPRESENTATION,
     YJunctionSpec,
+    generate_fixed_master_mesh as generate_fixed_master_y_junction_mesh,
     generate_mesh as generate_y_junction_mesh,
     mesh_to_openfoam_polymesh as y_junction_to_openfoam_polymesh,
     public_mesh as public_y_junction_mesh,
@@ -1521,7 +1522,38 @@ def _openfoam_y_junction_profile(
 
     controls = solver.get("meshControls") if isinstance(solver.get("meshControls"), dict) else {}
     raw_cell_size = controls.get("yJunctionCellSizeM")
-    if raw_cell_size is None:
+    raw_master_cell_size = controls.get("yJunctionMasterCellSizeM")
+    raw_refinement_factor = controls.get("yJunctionRefinementFactor")
+    fixed_master_requested = raw_master_cell_size is not None or raw_refinement_factor is not None
+    if fixed_master_requested and (
+        raw_master_cell_size is None or raw_refinement_factor is None
+    ):
+        raise ValueError(
+            "Fixed-master Y-junction mode requires both master cell size and refinement factor."
+        )
+    if fixed_master_requested:
+        master_cell_size = _full_ogrid_positive_number(
+            raw_master_cell_size,
+            "Y-junction master cell size",
+        )
+        if (
+            isinstance(raw_refinement_factor, bool)
+            or not isinstance(raw_refinement_factor, int)
+            or raw_refinement_factor not in {1, 2, 4}
+        ):
+            raise ValueError("Y-junction refinement factor must be one of 1, 2, or 4.")
+        refinement_factor = int(raw_refinement_factor)
+        cell_size = master_cell_size / refinement_factor
+        if raw_cell_size is not None and not math.isclose(
+            _full_ogrid_positive_number(raw_cell_size, "Y-junction cell size"),
+            cell_size,
+            rel_tol=1.0e-12,
+            abs_tol=1.0e-15,
+        ):
+            raise ValueError(
+                "Y-junction cell size must equal master cell size divided by refinement factor."
+            )
+    elif raw_cell_size is None:
         cells_across = {"coarse": 6.0, "medium": 8.0, "fine": 12.0}.get(
             str(solver.get("meshResolution", "coarse")).strip().lower()
         )
@@ -1536,12 +1568,27 @@ def _openfoam_y_junction_profile(
         diameter_m=diameter,
         cell_size_m=cell_size,
     )
-    mesh = generate_y_junction_mesh(
-        spec,
-        inlet_edge_id=str(inlet_edges[0]["id"]),
-        upper_edge_id=str(upper_edge["id"]),
-        lower_edge_id=str(lower_edge["id"]),
-    )
+    if fixed_master_requested:
+        master_spec = YJunctionSpec(
+            inlet_length_m=inlet_length,
+            branch_length_m=branch_lengths[0],
+            diameter_m=diameter,
+            cell_size_m=master_cell_size,
+        )
+        mesh = generate_fixed_master_y_junction_mesh(
+            master_spec,
+            refinement_factor=refinement_factor,
+            inlet_edge_id=str(inlet_edges[0]["id"]),
+            upper_edge_id=str(upper_edge["id"]),
+            lower_edge_id=str(lower_edge["id"]),
+        )
+    else:
+        mesh = generate_y_junction_mesh(
+            spec,
+            inlet_edge_id=str(inlet_edges[0]["id"]),
+            upper_edge_id=str(upper_edge["id"]),
+            lower_edge_id=str(lower_edge["id"]),
+        )
     fluid = project.get("fluid") if isinstance(project.get("fluid"), dict) else {}
     density = _safe_positive(fluid.get("density"), 998.2)
     viscosity = _safe_positive(fluid.get("dynamicViscosity"), 0.001002)
@@ -1623,12 +1670,20 @@ def _openfoam_y_junction_profile(
             "upperBranch": str(upper_edge["id"]),
             "lowerBranch": str(lower_edge["id"]),
         },
-        "geometry": spec.manifest(),
+        "geometry": mesh["geometry"],
         "mesh": {
             "generationSha256": mesh["generationSha256"],
             "cellCount": len(mesh["cells"]),
             "patches": mesh["patches"],
             "regions": mesh["regions"],
+            **(
+                {
+                    "geometryInvariants": mesh["geometryInvariants"],
+                    "refinement": mesh["refinement"],
+                }
+                if "geometryInvariants" in mesh
+                else {}
+            ),
         },
         "flow": {
             "densityKgPerM3": density,

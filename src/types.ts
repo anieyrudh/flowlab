@@ -212,6 +212,8 @@ export type SolverSettings = {
     fullOGridCircumferentialCells?: number;
     fullOGridCoreCellsPerSide?: number;
     yJunctionCellSizeM?: number;
+    yJunctionMasterCellSizeM?: number;
+    yJunctionRefinementFactor?: 1 | 2 | 4;
     // Transverse (across-gap) cell distribution. "boundary-layer" (default)
     // clusters cells at the walls for near-wall/turbulent resolution; "uniform"
     // spaces them evenly, which resolves a laminar parabolic core far better and
