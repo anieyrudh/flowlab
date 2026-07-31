@@ -772,11 +772,11 @@ describe("FlowLab result visualization", () => {
     fireEvent.change(screen.getByLabelText("Mesh mode"), { target: { value: "y-junction" } });
 
     expect(screen.getByLabelText("Run mode")).toHaveValue("steady");
-    expect(screen.getByLabelText("Y-junction cell size")).toHaveValue(0.0015);
+    expect(screen.getByLabelText("Y-junction cell size")).toHaveValue(0.00075);
     expect(screen.getByText(/junction cells retain a generated artifact identity/i)).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Mesh resolution"), { target: { value: "medium" } });
-    expect(screen.getByLabelText("Y-junction cell size")).toHaveValue(0.00075);
+    expect(screen.getByLabelText("Y-junction cell size")).toHaveValue(0.000375);
 
     await waitFor(() => {
       const saved = JSON.parse(window.localStorage.getItem("flowlab.project.v1") ?? "{}");
@@ -786,7 +786,7 @@ describe("FlowLab result visualization", () => {
         turbulence: "laminar",
         meshResolution: "medium",
         meshControls: {
-          yJunctionCellSizeM: 0.00075
+          yJunctionCellSizeM: 0.000375
         }
       });
     });

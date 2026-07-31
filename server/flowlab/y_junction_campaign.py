@@ -30,9 +30,9 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "y-junction"
-    / "QUALIFICATION_CONTRACT_V3.json"
+    / "QUALIFICATION_CONTRACT_V4.json"
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V3.md")
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V4.md")
 FROZEN_SOURCE_PATHS = (
     "server/flowlab/adapters.py",
     "server/flowlab/execution.py",
@@ -55,6 +55,8 @@ FROZEN_SOURCE_PATHS = (
     "docs/validation/y-junction/RUNBOOK_V2.md",
     "docs/validation/y-junction/QUALIFICATION_CONTRACT_V3.json",
     "docs/validation/y-junction/RUNBOOK_V3.md",
+    "docs/validation/y-junction/QUALIFICATION_CONTRACT_V4.json",
+    "docs/validation/y-junction/RUNBOOK_V4.md",
 )
 
 
