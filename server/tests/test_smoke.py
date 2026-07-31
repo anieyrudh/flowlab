@@ -71,6 +71,22 @@ LOOKUP_TABLE default
 """,
             encoding="utf-8",
         )
+        time_dir = case_dir / "0.001"
+        time_dir.mkdir(parents=True, exist_ok=True)
+        (time_dir / "U").write_text(
+            """FoamFile { class volVectorField; object U; }
+internalField   uniform (1 0 0);
+boundaryField {}
+""",
+            encoding="utf-8",
+        )
+        (time_dir / "p").write_text(
+            """FoamFile { class volScalarField; object p; }
+internalField   uniform 1;
+boundaryField {}
+""",
+            encoding="utf-8",
+        )
         (case_dir / "postProcessing" / "residuals" / "0").mkdir(parents=True, exist_ok=True)
         (case_dir / "postProcessing" / "residuals" / "0" / "residuals.dat").write_text(
             "Time Ux p\n0.001 7.5e-06 9e-05\n",
@@ -291,7 +307,11 @@ def test_openfoam_smoke_reports_success_with_mocked_solver(tmp_path: Path, monke
     assert report["status"] == "complete"
     assert report["execution"] == "native"
     assert report["exitCode"] == 0
-    assert report["resultFiles"][0]["path"] == "postProcessing/VTK/field_0001.vtk"
+    assert (
+        report["resultFiles"][0]["path"]
+        == "postProcessing/flowlabNative/time_0_001.vtk"
+    )
+    assert report["resultFiles"][0]["sourceCellIdentity"]["verified"] is True
     assert report["caseValidation"]["manifest"]["files"]["Allrun"]["sha256"]
     assert report["caseValidation"]["openfoamMeshReview"]["meshGenerated"] is True
     residual_summary = next(item for item in report["diagnosticSummary"] if item["path"] == "postProcessing/residuals/0/residuals.dat")

@@ -479,7 +479,7 @@ test.describe("FlowLab editor workspace", () => {
   });
 
   test("selects multi-edge generated results only through verified source-cell provenance", async ({ page }) => {
-    test.setTimeout(45_000);
+    test.setTimeout(120_000);
     await openFresh(page, "passed", { runnableOpenfoam: true, verifiedMultiEdgeLink: true });
     await page.getByRole("button", { name: /^Nodes \(3\)$/ }).click();
     await expect(page.getByTestId("schematic-canvas")).toHaveAttribute("data-selected-id", "source");

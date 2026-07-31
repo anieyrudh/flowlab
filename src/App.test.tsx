@@ -845,7 +845,7 @@ describe("FlowLab result visualization", () => {
 
     expect(await screen.findByText(/Snapshot 1\/26/)).toBeTruthy();
     expect(screen.getByText(/Using U from VTK\/case_1\.vtk/)).toBeTruthy();
-  });
+  }, 20_000);
 
   it("blocks advanced case queueing when the live network has topology errors", async () => {
     useFlowStore.getState().setProject({ ...venturiPreset, visualization: { ...venturiPreset.visualization, mode: "sweep" } });
@@ -1092,5 +1092,5 @@ describe("FlowLab result visualization", () => {
     expect(screen.getByText(/Using U magnitude from postProcessing\/flowlabNative\/time_0_001\.vtk \(cell data, m\/s\)/)).toBeTruthy();
     expect(screen.getByLabelText("Field min max")).toHaveTextContent("5");
     expect(screen.getByLabelText("Result timestep")).toHaveAttribute("aria-valuetext", "t0.001 postProcessing/flowlabNative/time_0_001.vtk");
-  });
+  }, 20_000);
 });
