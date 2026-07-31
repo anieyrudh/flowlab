@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 SolverTier = Literal["instant-1d", "openfoam", "su2", "code-saturne", "mujoco"]
 JobStatus = Literal["generated", "queued", "running", "complete", "failed", "blocked", "cancelled"]
@@ -107,6 +107,34 @@ class ResultComponentMap(BaseModel):
     version: Literal[1, 2]
     projectSha256: str
     artifactBindings: list[ResultComponentBinding | ResultComponentCellBinding] = Field(default_factory=list)
+
+
+class StreamlineSeedPlane(BaseModel):
+    origin: tuple[float, float, float]
+    axisU: tuple[float, float, float]
+    axisV: tuple[float, float, float]
+    countU: int = Field(ge=1, le=256)
+    countV: int = Field(ge=1, le=256)
+
+
+class StreamlineDerivationRequest(BaseModel):
+    artifactPath: str = Field(min_length=1)
+    sourceRepresentation: Literal["full", "preview"] = "full"
+    seedMode: Literal["user-plane", "inlet-manifest"] = "user-plane"
+    seedPlane: StreamlineSeedPlane | None = None
+    seeds: list[tuple[float, float, float]] = Field(default_factory=list, max_length=256)
+    seedCount: int = Field(default=64, ge=1, le=256)
+    seedAxis: Literal[0, 1, 2] = 0
+    seedPosition: float = Field(default=0.02, ge=0, le=1)
+    stepSize: float | None = Field(default=None, gt=0)
+    maxVerticesPerLine: int = Field(default=1024, ge=1, le=1024)
+    maxTotalVertices: int = Field(default=65536, ge=1, le=65536)
+
+    @model_validator(mode="after")
+    def validate_seed_contract(self) -> "StreamlineDerivationRequest":
+        if self.seedPlane is not None and self.seedPlane.countU * self.seedPlane.countV > 256:
+            raise ValueError("Seed count exceeds 256.")
+        return self
 
 
 class SolverCase(BaseModel):

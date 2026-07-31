@@ -6029,6 +6029,9 @@ class OpenFOAMAdapter(SolverAdapter):
                 if source_path in mesh_files:
                     mesh_files[retained_path] = mesh_files[source_path]
             mesh_files["mesh/flowlab_mesh.json"] = json.dumps(full_preview, indent=2, sort_keys=True) + "\n"
+            mesh_files["mesh/flowlab_boundary_faces.json"] = (
+                json.dumps(full_preview["boundaryFaceManifest"], indent=2, sort_keys=True) + "\n"
+            )
             mesh_files["mesh/flowlab_mesh.vtk"] = mesh_to_legacy_vtk(
                 full_preview,
                 "FlowLab full-revolution five-block O-grid preview",

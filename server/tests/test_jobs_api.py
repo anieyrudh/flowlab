@@ -136,6 +136,14 @@ def test_case_api_generates_full_ogrid_preview_and_fails_closed_for_unsupported_
     assert profile["topology"]["resolution"]["cellCount"] == 3072
     assert preview["boundsSpanM"] == [0.024, 0.006, 0.006]
     assert preview["volumeQuality"]["positiveVolume"] is True
+    boundary_manifest = json.loads(files["mesh/flowlab_boundary_faces.json"])
+    assert boundary_manifest["authorship"] == "generator"
+    assert {patch["role"] for patch in boundary_manifest["patches"]} == {"inlet", "outlet"}
+    assert all(
+        "sourceCellId" in face and len(face["center"]) == 3
+        for patch in boundary_manifest["patches"]
+        for face in patch["faces"]
+    )
 
     project["edges"]["pipe"]["type"] = "elbow"
     rejected = client.post(

@@ -20,7 +20,8 @@ from .flowlab.execution import (
     runtime_diagnostics,
 )
 from .flowlab.reference_cases import build_reference_case_import_plan, list_reference_cases
-from .flowlab.schemas import CaseRequest, JobRecord, SolverCase, SolverRuntimeStatus
+from .flowlab.schemas import CaseRequest, JobRecord, SolverCase, SolverRuntimeStatus, StreamlineDerivationRequest
+from .flowlab.streamlines import derive_streamlines_from_artifact
 from .flowlab.validated_benchmark import promotion_error, validated_benchmark_registry
 from .flowlab.validated_preset import OPEN_BOUNDARY_BENCHMARK_ID, build_validated_open_boundary_case
 
@@ -234,6 +235,26 @@ def get_job_artifact_preview(
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/artifact/streamlines")
+def derive_job_artifact_streamlines(job_id: str, request: StreamlineDerivationRequest):
+    """Derive steady streamlines from the complete on-disk result artifact."""
+    job = JOB_MANAGER.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.caseDir:
+        raise HTTPException(status_code=404, detail="Job case directory is unavailable")
+    try:
+        return derive_streamlines_from_artifact(
+            Path(job.caseDir),
+            JOB_MANAGER.get_case_for_job(job_id),
+            request,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

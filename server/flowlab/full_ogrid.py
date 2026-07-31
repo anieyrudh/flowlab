@@ -439,6 +439,27 @@ def preview_mesh(spec: FullOGridSpec, profile: dict[str, Any] | None = None) -> 
     ]
     if len(cells) != spec.cell_count or any(volume <= 0.0 for volume in volumes):
         raise ValueError("full O-grid preview failed its positive-volume contract.")
+    cross_cell_count = len(cross_cells)
+
+    def boundary_face(source_cell_id: int, point_ids: list[int]) -> dict[str, Any]:
+        return {
+            "sourceCellId": source_cell_id,
+            "pointIds": point_ids,
+            "center": [
+                sum(points[point_id][axis] for point_id in point_ids) / len(point_ids)
+                for axis in range(3)
+            ],
+        }
+
+    inlet_faces = [
+        boundary_face(source_cell_id, cells[source_cell_id][:4])
+        for source_cell_id in range(cross_cell_count)
+    ]
+    outlet_start = (spec.axial_cells - 1) * cross_cell_count
+    outlet_faces = [
+        boundary_face(source_cell_id, cells[source_cell_id][4:])
+        for source_cell_id in range(outlet_start, outlet_start + cross_cell_count)
+    ]
     return {
         "format": FULL_OGRID_PREVIEW_FORMAT,
         "coordinateSystem": "physical-x-y-z-si",
@@ -452,6 +473,15 @@ def preview_mesh(spec: FullOGridSpec, profile: dict[str, Any] | None = None) -> 
         "cells": cells,
         "cellTypes": [VTK_HEXAHEDRON for _ in cells],
         "topology": spec.topology_manifest(),
+        "boundaryFaceManifest": {
+            "schema": "flowlab.boundary_faces.v1",
+            "authorship": "generator",
+            "cellIdentity": "flowlab_mesh_order",
+            "patches": [
+                {"name": "inlet", "role": "inlet", "faces": inlet_faces},
+                {"name": "outlet", "role": "outlet", "faces": outlet_faces},
+            ],
+        },
         "volumeQuality": {
             "positiveVolume": True,
             "zeroVolumeCellCount": 0,

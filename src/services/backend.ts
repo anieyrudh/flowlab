@@ -17,6 +17,7 @@ import type {
   SolverRuntimeStatus,
   SolverTier
 } from "../types";
+import type { StreamlineResult, StreamlineSeedPlane, StreamlineVec3 } from "../streamlines/types";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -117,6 +118,28 @@ export function fetchJobArtifactChunk(jobId: string, path: string, offset = 0, l
 export function fetchJobArtifactPreview(jobId: string, path: string, pointLimit = 500, cellLimit = 500): Promise<JobArtifactPreview> {
   const params = new URLSearchParams({ path, pointLimit: String(pointLimit), cellLimit: String(cellLimit) });
   return request<JobArtifactPreview>(`/api/jobs/${jobId}/artifact/preview?${params.toString()}`);
+}
+
+export function deriveJobArtifactStreamlines(
+  jobId: string,
+  requestPayload: {
+    artifactPath: string;
+    sourceRepresentation?: "full" | "preview";
+    seedMode?: "user-plane" | "inlet-manifest";
+    seedPlane?: StreamlineSeedPlane;
+    seeds?: StreamlineVec3[];
+    seedCount?: number;
+    seedAxis?: 0 | 1 | 2;
+    seedPosition?: number;
+    stepSize?: number;
+    maxVerticesPerLine?: number;
+    maxTotalVertices?: number;
+  }
+): Promise<StreamlineResult> {
+  return request<StreamlineResult>(`/api/jobs/${jobId}/artifact/streamlines`, {
+    method: "POST",
+    body: JSON.stringify(requestPayload)
+  });
 }
 
 export function cancelJob(jobId: string): Promise<JobRecord> {
