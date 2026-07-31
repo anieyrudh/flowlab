@@ -49,8 +49,8 @@ describe("VTK result parsing", () => {
     expect(parsed.sourceName).toBe("fixture.vtk");
     expect(parsed.points).toHaveLength(4);
     expect(parsed.cells).toEqual([[0, 1, 2, 3]]);
-    expect(parsed.sourceCellIndices).toEqual([0]);
-    expect(parsed.sourceCellCount).toBe(1);
+    expect(parsed.sourceCellIndices).toBeUndefined();
+    expect(parsed.sourceCellCount).toBeUndefined();
     expect(parsed.pointData.scalars.pressure).toEqual([1, 2, 3, 4]);
     expect(parsed.pointData.vectors.velocity[2]).toEqual([3, 0, 0]);
   });
@@ -64,6 +64,14 @@ describe("VTK result parsing", () => {
       sourceCellCount: 8,
       pointIndices: [0, 1, 2, 3],
       cellIndices: [6],
+      sourceCellIdentity: {
+        schema: "flowlab.openfoam-source-cell-identity.v1",
+        field: "flowlabSourceCellId",
+        sourceCellCount: 8,
+        unique: true,
+        complete: true,
+        verified: true
+      },
       points: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]],
       cells: [[0, 1, 2, 3]],
       cellTypes: [9],
@@ -75,6 +83,38 @@ describe("VTK result parsing", () => {
 
     expect(parsed.sourceCellIndices).toEqual([6]);
     expect(parsed.sourceCellCount).toBe(8);
+  });
+
+  it("loads explicit source cell identity from a generated VTK field", () => {
+    const parsed = parseLegacyVtkResult(`# vtk DataFile Version 3.0
+explicit identity
+ASCII
+DATASET UNSTRUCTURED_GRID
+POINTS 8 float
+0 0 0
+1 0 0
+1 1 0
+0 1 0
+2 0 0
+2 1 0
+3 0 0
+3 1 0
+CELLS 2 10
+4 0 1 2 3
+4 4 5 7 6
+CELL_TYPES 2
+9
+9
+CELL_DATA 2
+SCALARS flowlabSourceCellId float 1
+LOOKUP_TABLE default
+1
+0
+`);
+
+    expect(parsed.sourceCellIndices).toEqual([1, 0]);
+    expect(parsed.sourceCellIdentity?.verified).toBe(true);
+    expect(parsed.fields).not.toContain("flowlabSourceCellId");
   });
 
   it("fails closed for unsupported legacy cell types", () => {

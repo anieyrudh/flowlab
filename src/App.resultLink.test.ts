@@ -7,6 +7,7 @@ const project = structuredClone(venturiPreset);
 const edgeId = Object.keys(project.edges)[0];
 const projectText = JSON.stringify(project);
 const projectSha256 = "a".repeat(64);
+const identityContractSha256 = "c".repeat(64);
 
 function solverCase(overrides: Partial<SolverCase> = {}): SolverCase {
   return {
@@ -17,7 +18,13 @@ function solverCase(overrides: Partial<SolverCase> = {}): SolverCase {
     status: "complete",
     files: {
       "flowlab_project.json": projectText,
-      "flowlab_case_manifest.json": JSON.stringify({ files: { "flowlab_project.json": { sha256: projectSha256 } } })
+      "constant/flowlab_result_identity_contract.json": "{}",
+      "flowlab_case_manifest.json": JSON.stringify({
+        files: {
+          "flowlab_project.json": { sha256: projectSha256 },
+          "constant/flowlab_result_identity_contract.json": { sha256: identityContractSha256 }
+        }
+      })
     },
     runCommand: [],
     provenance: [],
@@ -53,7 +60,15 @@ function cellSnapshot(
       cellData: { scalars: {}, vectors: {} },
       fields: [],
       sourceCellIndices,
-      sourceCellCount
+      sourceCellCount,
+      sourceCellIdentity: {
+        schema: "flowlab.openfoam-source-cell-identity.v1",
+        field: "flowlabSourceCellId",
+        sourceCellCount,
+        unique: true,
+        complete: true,
+        verified: true
+      }
     },
     provenance: { kind: "case-artifact", caseId: "case-verified", jobId: "job-verified", artifactName }
   };
@@ -69,6 +84,9 @@ function multiEdgeSolverCase(overrides: Partial<SolverCase> = {}): SolverCase {
           artifactName: "postProcessing/flowlabNative/*.vtk",
           scope: "cell-ranges",
           sourceCellCount: 3,
+          identitySchema: "flowlab.openfoam-source-cell-identity.v1",
+          identityField: "flowlabSourceCellId",
+          identityContractSha256,
           cellRanges: [
             { edgeId: "inlet", cellStart: 0, cellCount: 1 },
             { edgeId: "outlet", cellStart: 2, cellCount: 1 }

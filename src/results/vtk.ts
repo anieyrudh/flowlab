@@ -2,6 +2,7 @@ import type { JobArtifactPreview, VtkResultDataset } from "../types";
 
 const VTK_POLYGON = 7;
 const supportedCellTypes = new Set([5, VTK_POLYGON, 9, 10, 12, 13, 14]);
+const SOURCE_CELL_ID_FIELD = "flowlabSourceCellId";
 
 export type ResultFieldLocation = "point" | "cell";
 export type ResultFieldKind = "scalar" | "vector";
@@ -114,20 +115,48 @@ export function parseVtkResult(text: string, sourceName?: string): VtkResultData
   return parseLegacyVtkResult(text, sourceName);
 }
 
+function explicitSourceCellIdentity(cellScalars: Record<string, number[]>, cellCount: number) {
+  const raw = cellScalars[SOURCE_CELL_ID_FIELD];
+  if (!raw) return null;
+  delete cellScalars[SOURCE_CELL_ID_FIELD];
+  if (
+    raw.length !== cellCount
+    || raw.some((value) => !Number.isFinite(value) || !Number.isInteger(value) || value < 0)
+    || new Set(raw).size !== cellCount
+    || [...raw].sort((left, right) => left - right).some((value, index) => value !== index)
+  ) {
+    throw new Error(`${SOURCE_CELL_ID_FIELD} must be a unique complete source-cell permutation.`);
+  }
+  return {
+    sourceCellIndices: raw,
+    sourceCellCount: cellCount,
+    sourceCellIdentity: {
+      schema: "flowlab.openfoam-source-cell-identity.v1" as const,
+      field: SOURCE_CELL_ID_FIELD as "flowlabSourceCellId",
+      sourceCellCount: cellCount,
+      unique: true as const,
+      complete: true as const,
+      verified: true as const
+    }
+  };
+}
+
 export function datasetFromPreview(preview: JobArtifactPreview, sourceName = preview.path): VtkResultDataset {
   if (preview.skipped) throw new Error(`Preview skipped: ${preview.skipped}`);
   if (preview.schema !== "flowlab.result_preview.v1") throw new Error("Unsupported result preview schema.");
   if (!preview.points || !preview.cells || !preview.cellTypes || !preview.fieldSamples) {
     throw new Error("Result preview is missing geometry or field samples.");
   }
+  const hasExplicitIdentity = preview.sourceCellIdentity?.verified === true;
   if (
-    !preview.cellIndices
-    || preview.cellIndices.length !== preview.cells.length
-    || !Number.isInteger(preview.sourceCellCount)
-    || (preview.sourceCellCount ?? 0) < preview.cells.length
-  ) {
-    throw new Error("Result preview is missing deterministic source-cell provenance.");
-  }
+    hasExplicitIdentity
+    && (
+      !preview.cellIndices
+      || preview.cellIndices.length !== preview.cells.length
+      || !Number.isInteger(preview.sourceCellCount)
+      || (preview.sourceCellCount ?? 0) < preview.cells.length
+    )
+  ) throw new Error("Result preview has an incomplete explicit source-cell identity.");
   const pointScalars: Record<string, number[]> = {};
   const pointVectors: Record<string, [number, number, number][]> = {};
   const cellScalars: Record<string, number[]> = {};
@@ -156,8 +185,13 @@ export function datasetFromPreview(preview: JobArtifactPreview, sourceName = pre
     pointData: { scalars: pointScalars, vectors: pointVectors },
     cellData: { scalars: cellScalars, vectors: cellVectors },
     fields: Array.from(new Set([...Object.keys(pointScalars), ...Object.keys(pointVectors), ...Object.keys(cellScalars), ...Object.keys(cellVectors)])).sort(),
-    sourceCellIndices: [...preview.cellIndices],
-    sourceCellCount: preview.sourceCellCount,
+    ...(hasExplicitIdentity
+      ? {
+          sourceCellIndices: [...(preview.cellIndices ?? [])],
+          sourceCellCount: preview.sourceCellCount,
+          sourceCellIdentity: preview.sourceCellIdentity ?? undefined
+        }
+      : {}),
     sourceName,
     sourceText: undefined
   };
@@ -238,6 +272,7 @@ export function parseLegacyVtkResult(text: string, sourceName?: string): VtkResu
       throw new Error(`Unsupported VTK data section: ${section}`);
     }
   }
+  const sourceIdentity = explicitSourceCellIdentity(cellScalars, cellCount);
 
   return {
     format: datasetType === "POLYDATA" ? "legacy-vtk-polydata-ascii-v1" : "legacy-vtk-ascii-v1",
@@ -247,8 +282,7 @@ export function parseLegacyVtkResult(text: string, sourceName?: string): VtkResu
     pointData: { scalars, vectors },
     cellData: { scalars: cellScalars, vectors: cellVectors },
     fields: Array.from(new Set([...Object.keys(scalars), ...Object.keys(vectors), ...Object.keys(cellScalars), ...Object.keys(cellVectors)])).sort(),
-    sourceCellIndices: cells.map((_cell, index) => index),
-    sourceCellCount: cells.length,
+    ...(sourceIdentity ?? {}),
     sourceName,
     sourceText: text
   };
@@ -353,6 +387,7 @@ export function parseAsciiVtuResult(text: string, sourceName?: string): VtkResul
       }
     }
   }
+  const sourceIdentity = explicitSourceCellIdentity(cellScalars, declaredCells);
 
   return {
     format: "vtu-ascii-v1",
@@ -362,8 +397,7 @@ export function parseAsciiVtuResult(text: string, sourceName?: string): VtkResul
     pointData: { scalars, vectors },
     cellData: { scalars: cellScalars, vectors: cellVectors },
     fields: Array.from(new Set([...Object.keys(scalars), ...Object.keys(vectors), ...Object.keys(cellScalars), ...Object.keys(cellVectors)])).sort(),
-    sourceCellIndices: cells.map((_cell, index) => index),
-    sourceCellCount: cells.length,
+    ...(sourceIdentity ?? {}),
     sourceName,
     sourceText: text
   };

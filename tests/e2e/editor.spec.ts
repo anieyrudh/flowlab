@@ -49,6 +49,11 @@ LOOKUP_TABLE default
 103000
 102000
 101000
+SCALARS flowlabSourceCellId float 1
+LOOKUP_TABLE default
+0
+1
+2
 VECTORS U float
 1 0 0
 1.5 0 0
@@ -225,6 +230,12 @@ async function openFresh(
     const payload = route.request().postDataJSON() as { project?: unknown };
     generatedProjectText = JSON.stringify(payload.project ?? {}, null, 2);
     generatedProjectSha256 = createHash("sha256").update(generatedProjectText).digest("hex");
+    const identityContractText = JSON.stringify({
+      schema: "flowlab.source-cell-identity-contract.v1",
+      orderingAssumptionAllowed: false,
+      sourceCellCount: 3
+    });
+    const identityContractSha256 = createHash("sha256").update(identityContractText).digest("hex");
     const resultComponentMap = verifiedMultiEdgeLink
       ? {
           version: 2,
@@ -234,6 +245,9 @@ async function openFresh(
               artifactName: "postProcessing/flowlabNative/*.vtk",
               scope: "cell-ranges",
               sourceCellCount: 3,
+              identitySchema: "flowlab.openfoam-source-cell-identity.v1",
+              identityField: "flowlabSourceCellId",
+              identityContractSha256,
               cellRanges: [
                 { edgeId: "inlet", cellStart: 0, cellCount: 1 },
                 { edgeId: "outlet", cellStart: 2, cellCount: 1 }
@@ -252,8 +266,12 @@ async function openFresh(
         files: verifiedMultiEdgeLink
           ? {
               "flowlab_project.json": generatedProjectText,
+              "constant/flowlab_result_identity_contract.json": identityContractText,
               "flowlab_case_manifest.json": JSON.stringify({
-                files: { "flowlab_project.json": { sha256: generatedProjectSha256 } },
+                files: {
+                  "flowlab_project.json": { sha256: generatedProjectSha256 },
+                  "constant/flowlab_result_identity_contract.json": { sha256: identityContractSha256 }
+                },
                 resultComponentMap
               })
             }

@@ -18,6 +18,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from . import adapters
+from .result_identity import (
+    SOURCE_CELL_ID_FIELD,
+    ResultIdentityError,
+    reorder_solver_values_to_source,
+    resolve_openfoam_source_cell_identity,
+)
 from .results import parse_vtk_result, preview_vtk_result_text, summarize_vtk_result_text
 from .schemas import JobRecord, SolverCase, SolverRuntimeStatus
 from .validated_preset import (
@@ -1042,6 +1048,16 @@ def _collect_openfoam_native_time_results(case_dir: Path, limit: int) -> list[di
         geometry = parse_vtk_result(mesh_path.read_text(encoding="utf-8"))
     except Exception as exc:
         return [{"path": "openfoam-native-results", "size": 0, "skipped": f"cannot parse mesh/flowlab_mesh.vtk: {exc}"}]
+    try:
+        result_identity = resolve_openfoam_source_cell_identity(case_dir, geometry)
+    except ResultIdentityError as exc:
+        return [
+            {
+                "path": "openfoam-native-results",
+                "size": 0,
+                "skipped": f"cannot verify OpenFOAM source-cell identity: {exc}",
+            }
+        ]
 
     converted: list[dict[str, Any]] = []
     skipped: list[str] = []
@@ -1049,8 +1065,13 @@ def _collect_openfoam_native_time_results(case_dir: Path, limit: int) -> list[di
         if len(converted) >= limit:
             break
         try:
-            vtk_text, field_names = _openfoam_time_directory_to_vtk(time_dir, geometry, time_value)
-        except ValueError as exc:
+            vtk_text, field_names = _openfoam_time_directory_to_vtk(
+                time_dir,
+                geometry,
+                time_value,
+                result_identity=result_identity,
+            )
+        except (ValueError, ResultIdentityError) as exc:
             skipped.append(f"{time_dir.name}: {exc}")
             continue
         relative_path = f"postProcessing/flowlabNative/{_safe_time_file_stem(time_dir.name)}.vtk"
@@ -1066,6 +1087,16 @@ def _collect_openfoam_native_time_results(case_dir: Path, limit: int) -> list[di
         payload["timeText"] = time_dir.name
         payload["timeSource"] = "openfoam-time-directory"
         payload["sourceFields"] = field_names
+        if result_identity is not None:
+            payload["sourceCellIdentity"] = {
+                "schema": result_identity["schema"],
+                "contractSha256": result_identity["contractSha256"],
+                "solverToSourceCellSha256": result_identity[
+                    "solverToSourceCellSha256"
+                ],
+                "sourceCellCount": result_identity["sourceCellCount"],
+                "verified": True,
+            }
         converted.append(payload)
     if converted:
         return converted
@@ -1101,7 +1132,13 @@ def _safe_time_file_stem(name: str) -> str:
     return "time_" + re.sub(r"[^A-Za-z0-9_.-]+", "_", name).replace(".", "_")
 
 
-def _openfoam_time_directory_to_vtk(time_dir: Path, geometry: dict[str, Any], time_value: float) -> tuple[str, list[str]]:
+def _openfoam_time_directory_to_vtk(
+    time_dir: Path,
+    geometry: dict[str, Any],
+    time_value: float,
+    *,
+    result_identity: dict[str, Any] | None = None,
+) -> tuple[str, list[str]]:
     points = geometry.get("points") if isinstance(geometry.get("points"), list) else []
     cells = geometry.get("cells") if isinstance(geometry.get("cells"), list) else []
     cell_types = geometry.get("cellTypes") if isinstance(geometry.get("cellTypes"), list) else []
@@ -1128,6 +1165,11 @@ def _openfoam_time_directory_to_vtk(time_dir: Path, geometry: dict[str, Any], ti
             if len(scalar_values) == 1 and len(cells) != 1:
                 scalar_values = scalar_values * len(cells)
             if len(scalar_values) == len(cells):
+                if result_identity is not None:
+                    scalar_values = reorder_solver_values_to_source(
+                        scalar_values,
+                        result_identity,
+                    )
                 cell_scalars[field_name] = scalar_values
             elif len(scalar_values) == len(points):
                 point_scalars[field_name] = scalar_values
@@ -1139,6 +1181,11 @@ def _openfoam_time_directory_to_vtk(time_dir: Path, geometry: dict[str, Any], ti
             if len(vector_values) == 1 and len(cells) != 1:
                 vector_values = vector_values * len(cells)
             if len(vector_values) == len(cells):
+                if result_identity is not None:
+                    vector_values = reorder_solver_values_to_source(
+                        vector_values,
+                        result_identity,
+                    )
                 cell_vectors[field_name] = vector_values
             elif len(vector_values) == len(points):
                 point_vectors[field_name] = vector_values
@@ -1150,6 +1197,15 @@ def _openfoam_time_directory_to_vtk(time_dir: Path, geometry: dict[str, Any], ti
     if not parsed_fields:
         detail = "; ".join(field_errors[:5]) if field_errors else "no supported fields found"
         raise ValueError(detail)
+    if result_identity is not None:
+        source_count = int(result_identity["sourceCellCount"])
+        if source_count != len(cells):
+            raise ResultIdentityError(
+                "verified source-cell count does not match generated result geometry"
+            )
+        cell_scalars[SOURCE_CELL_ID_FIELD] = [
+            float(source_index) for source_index in range(source_count)
+        ]
     return _legacy_vtk_unstructured_result(
         points,
         cells,

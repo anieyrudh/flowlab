@@ -193,6 +193,12 @@ export type SolverSettings = {
     lengthM: number;
     volumetricFlowRateM3PerS: number;
   };
+  axisymmetricQualification?: {
+    contractId: "axisymmetric-generated-geometry-experimental-qualification-v1";
+    contractSha256: string;
+    caseId: string;
+    qoiHistoryWriteIntervalIterations: 1;
+  };
   fullOGridVerification?: {
     contractId: "straight-circular-pipe-hagen-poiseuille-v1";
     boundaryCondition: "fully-developed-parabolic-inlet-pressure-outlet";
@@ -206,6 +212,7 @@ export type SolverSettings = {
     boundaryLayerGrowthRate?: number;
     axisymmetricAxialCells?: number;
     axisymmetricRadialCells?: number;
+    axisymmetricAxialCellsByEdge?: Record<EdgeId, number>;
     fullOGridAxialCells?: number;
     fullOGridAnnularRadialCells?: number;
     fullOGridCircumferentialCells?: number;
@@ -366,6 +373,9 @@ export type ResultComponentMap = {
         artifactName: string;
         scope: "cell-ranges";
         sourceCellCount: number;
+        identitySchema: "flowlab.openfoam-source-cell-identity.v1";
+        identityField: "flowlabSourceCellId";
+        identityContractSha256: string;
         cellRanges: Array<{
           edgeId: EdgeId;
           cellStart: number;
@@ -774,6 +784,7 @@ export type JobArtifactPreview = {
   truncated?: boolean;
   pointIndices?: number[];
   cellIndices?: number[];
+  sourceCellIdentity?: SourceCellIdentity | null;
   points?: [number, number, number][];
   cells?: number[][];
   cellTypes?: number[];
@@ -818,6 +829,17 @@ export type VtkResultDataset = {
   sourceCellIndices?: number[];
   /** Cell count of the unsampled source artifact used to validate a case-local provenance map. */
   sourceCellCount?: number;
+  /** Explicit identity emitted only after generated mesh and solver polyMesh topology agree. */
+  sourceCellIdentity?: SourceCellIdentity;
   sourceName?: string;
   sourceText?: string;
+};
+
+export type SourceCellIdentity = {
+  schema: "flowlab.openfoam-source-cell-identity.v1";
+  field: "flowlabSourceCellId";
+  sourceCellCount: number;
+  unique: true;
+  complete: true;
+  verified: true;
 };

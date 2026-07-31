@@ -90,13 +90,20 @@ def test_multi_edge_openfoam_case_records_deterministic_source_cell_ranges() -> 
     bindings = [binding.model_dump() for binding in case.resultComponentMap.artifactBindings]
     assert {binding["artifactName"] for binding in bindings} == {
         "postProcessing/flowlabNative/*.vtk",
-        "VTK/*.vtk",
     }
     for binding in bindings:
         assert binding["scope"] == "cell-ranges"
         assert binding["sourceCellCount"] == len(mesh["cells"])
+        assert binding["identitySchema"] == "flowlab.openfoam-source-cell-identity.v1"
+        assert binding["identityField"] == "flowlabSourceCellId"
+        assert len(binding["identityContractSha256"]) == 64
         assert {cell_range["edgeId"] for cell_range in binding["cellRanges"]} == {"pipe", "outlet"}
         assert all(cell_range["cellCount"] > 0 for cell_range in binding["cellRanges"])
+    identity_contract = json.loads(
+        case.files["constant/flowlab_result_identity_contract.json"]
+    )
+    assert identity_contract["orderingAssumptionAllowed"] is False
+    assert identity_contract["sourceCellCount"] == len(mesh["cells"])
     connector_regions = [region for region in mesh["regions"] if region.get("edgeType") == "connector"]
     assert connector_regions
     connector_cells = {
@@ -119,6 +126,23 @@ def test_unsupported_multi_edge_solver_omits_result_component_map() -> None:
     project["edges"]["bypass"] = {**project["edges"]["pipe"], "id": "bypass"}
 
     assert adapters._result_component_map(project, solver="su2", mesh_snapshot="{}") is None
+
+
+@pytest.mark.parametrize("mesh_mode", ["axisymmetric", "full-ogrid"])
+def test_su2_fails_closed_for_unsupported_three_dimensional_mesh_modes(
+    mesh_mode: str,
+) -> None:
+    project = _parameterized_project()
+    project["solver"]["meshMode"] = mesh_mode
+
+    with pytest.raises(ValueError, match="SU2 does not support"):
+        adapters.generate_case(
+            CaseRequest.model_construct(
+                project=project,
+                solver="su2",
+                advancedMode="incompressible-navier-stokes",
+            )
+        )
 
 
 def test_browser_estimates_do_not_declare_cfd_result_component_maps() -> None:

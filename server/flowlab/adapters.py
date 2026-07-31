@@ -7,6 +7,7 @@ import importlib.util
 import hashlib
 import math
 import os
+import re
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -31,6 +32,13 @@ from .mesh import (
     su2_marker_tags,
 )
 from .schemas import CaseRequest, ResultComponentMap, SolverCapability, SolverCase
+from .result_identity import (
+    SOURCE_CELL_ID_FIELD,
+    SOURCE_IDENTITY_CONTRACT_PATH,
+    SOURCE_IDENTITY_REPORT_SCHEMA,
+    ResultIdentityError,
+    source_cell_identity_contract,
+)
 from .validated_benchmark import experimental_capability
 
 CASE_MANIFEST_PATH = "flowlab_case_manifest.json"
@@ -292,6 +300,7 @@ def _result_component_map(
     *,
     solver: str | None = None,
     mesh_snapshot: str | None = None,
+    identity_contract_snapshot: str | None = None,
 ) -> ResultComponentMap | None:
     """Declare whole-artifact or source-cell result ownership.
 
@@ -326,21 +335,35 @@ def _result_component_map(
     if range_map is None:
         return None
     source_cell_count, cell_ranges = range_map
-    artifact_patterns = (
-        "postProcessing/flowlabNative/*.vtk",
-        "VTK/*.vtk",
-    )
+    if not isinstance(identity_contract_snapshot, str):
+        return None
+    try:
+        identity_contract = json.loads(identity_contract_snapshot)
+    except json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(identity_contract, dict)
+        or identity_contract.get("sourceCellCount") != source_cell_count
+        or identity_contract.get("identityField") != SOURCE_CELL_ID_FIELD
+        or identity_contract.get("orderingAssumptionAllowed") is not False
+    ):
+        return None
+    identity_contract_sha256 = hashlib.sha256(
+        identity_contract_snapshot.encode("utf-8")
+    ).hexdigest()
     return ResultComponentMap(
         version=2,
         projectSha256=project_sha256,
         artifactBindings=[
             {
-                "artifactName": artifact_pattern,
+                "artifactName": "postProcessing/flowlabNative/*.vtk",
                 "scope": "cell-ranges",
                 "sourceCellCount": source_cell_count,
+                "identitySchema": SOURCE_IDENTITY_REPORT_SCHEMA,
+                "identityField": SOURCE_CELL_ID_FIELD,
+                "identityContractSha256": identity_contract_sha256,
                 "cellRanges": cell_ranges,
             }
-            for artifact_pattern in artifact_patterns
         ],
     )
 
@@ -609,6 +632,12 @@ boundaryField
 AXISYMMETRIC_WEDGE_HALF_ANGLE_DEG = 2.5
 AXISYMMETRIC_PROFILE_SCHEMA = "flowlab.axisymmetric-profile.v1"
 AXISYMMETRIC_BENCHMARK_SCHEMA = "flowlab.axisymmetric-straight-pipe-contract.v1"
+AXISYMMETRIC_QUALIFICATION_SCHEMA = (
+    "flowlab.axisymmetric-geometry-experimental-qualification-request.v1"
+)
+AXISYMMETRIC_QUALIFICATION_CONTRACT_ID = (
+    "axisymmetric-generated-geometry-experimental-qualification-v1"
+)
 AXISYMMETRIC_ALLOWED_EDGE_TYPES = {"pipe", "venturi", "expansion", "contraction", "nozzle"}
 
 
@@ -645,6 +674,13 @@ def _axisymmetric_exact_cell_controls(
     controls = solver.get("meshControls") if isinstance(solver.get("meshControls"), dict) else {}
     axial_raw = controls.get("axisymmetricAxialCells")
     radial_raw = controls.get("axisymmetricRadialCells")
+    axial_by_edge_raw = controls.get("axisymmetricAxialCellsByEdge")
+    if axial_by_edge_raw is not None:
+        if axial_raw is not None:
+            raise ValueError(
+                "Use either axisymmetricAxialCells or axisymmetricAxialCellsByEdge, not both."
+            )
+        return None
     if axial_raw is None and radial_raw is None:
         return None
     if axial_raw is None or radial_raw is None:
@@ -664,6 +700,72 @@ def _axisymmetric_exact_cell_controls(
             "multi-edge paths use their per-edge mesh controls."
         )
     return axial_raw, radial_raw
+
+
+def _axisymmetric_exact_edge_cell_controls(
+    project: dict[str, Any],
+    ordered_edges: list[dict[str, Any]],
+) -> tuple[dict[str, int], int] | None:
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    controls = solver.get("meshControls") if isinstance(solver.get("meshControls"), dict) else {}
+    raw = controls.get("axisymmetricAxialCellsByEdge")
+    if raw is None:
+        return None
+    radial = controls.get("axisymmetricRadialCells")
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError("axisymmetricAxialCellsByEdge must be a non-empty edge-to-cell-count object.")
+    if not isinstance(radial, int) or isinstance(radial, bool) or radial < 2:
+        raise ValueError(
+            "Multi-edge exact axisymmetric controls require axisymmetricRadialCells >= 2."
+        )
+    edge_ids = [str(edge.get("id") or "") for edge in ordered_edges]
+    if set(raw) != set(edge_ids):
+        raise ValueError(
+            "axisymmetricAxialCellsByEdge must contain exactly every ordered path edge."
+        )
+    parsed: dict[str, int] = {}
+    for edge_id in edge_ids:
+        value = raw.get(edge_id)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 4:
+            raise ValueError(
+                f"Exact axisymmetric axial cells for `{edge_id}` must be an integer >= 4."
+            )
+        parsed[edge_id] = value
+    return parsed, radial
+
+
+def _axisymmetric_qualification_request(
+    project: dict[str, Any],
+    ordered_edges: list[dict[str, Any]],
+    exact_edge_cells: tuple[dict[str, int], int] | None,
+) -> dict[str, Any] | None:
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    raw = solver.get("axisymmetricQualification")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("axisymmetricQualification must be an object.")
+    if raw.get("contractId") != AXISYMMETRIC_QUALIFICATION_CONTRACT_ID:
+        raise ValueError("Axisymmetric qualification request has an unsupported contractId.")
+    contract_sha = raw.get("contractSha256")
+    if not isinstance(contract_sha, str) or re.fullmatch(r"[a-f0-9]{64}", contract_sha) is None:
+        raise ValueError("Axisymmetric qualification requires the frozen contract SHA-256.")
+    if raw.get("qoiHistoryWriteIntervalIterations") != 1:
+        raise ValueError("Axisymmetric qualification requires QoI history every SIMPLE iteration.")
+    if exact_edge_cells is None:
+        raise ValueError("Axisymmetric qualification requires exact per-edge and radial cell controls.")
+    if len(ordered_edges) < 3:
+        raise ValueError("Axisymmetric qualification runtime requests require at least three path edges.")
+    return {
+        "schema": AXISYMMETRIC_QUALIFICATION_SCHEMA,
+        "contractId": AXISYMMETRIC_QUALIFICATION_CONTRACT_ID,
+        "contractSha256": contract_sha,
+        "caseId": str(raw.get("caseId") or ""),
+        "status": "prospective-experimental-software-qualification",
+        "qoiHistoryWriteIntervalIterations": 1,
+        "validated": False,
+        "promotionAuthorized": False,
+    }
 
 
 def _axisymmetric_benchmark_request(
@@ -809,7 +911,13 @@ def _openfoam_axisymmetric_profile(
 
     ordered_edges, nodes_by_id = _axisymmetric_ordered_path(project)
     exact_cells = _axisymmetric_exact_cell_controls(project, len(ordered_edges))
+    exact_edge_cells = _axisymmetric_exact_edge_cell_controls(project, ordered_edges)
     benchmark_request = _axisymmetric_benchmark_request(project, ordered_edges, exact_cells)
+    qualification_request = _axisymmetric_qualification_request(
+        project,
+        ordered_edges,
+        exact_edge_cells,
+    )
     regions = mesh.get("regions") if isinstance(mesh.get("regions"), list) else []
     region_by_edge = {
         str(region.get("edgeId")): region
@@ -880,8 +988,20 @@ def _openfoam_axisymmetric_profile(
         if not isinstance(region, dict):
             raise ValueError(f"Axisymmetric mesh source is missing region metadata for edge `{edge_id}`.")
         try:
-            edge_axial_cells = exact_cells[0] if exact_cells is not None else int(region.get("segmentCount"))
-            edge_radial_cells = exact_cells[1] if exact_cells is not None else int(region.get("transverseDivisions"))
+            edge_axial_cells = (
+                exact_cells[0]
+                if exact_cells is not None
+                else exact_edge_cells[0][edge_id]
+                if exact_edge_cells is not None
+                else int(region.get("segmentCount"))
+            )
+            edge_radial_cells = (
+                exact_cells[1]
+                if exact_cells is not None
+                else exact_edge_cells[1]
+                if exact_edge_cells is not None
+                else int(region.get("transverseDivisions"))
+            )
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Axisymmetric mesh source has invalid cell controls for edge `{edge_id}`.") from exc
         if edge_axial_cells < 1 or edge_radial_cells < 1:
@@ -1011,6 +1131,8 @@ def _openfoam_axisymmetric_profile(
                 "massFlowRate": "signed full-circle volumetric flow rate times densityKgPerM3",
             },
         }
+    if qualification_request is not None:
+        profile["experimentalQualificationContract"] = qualification_request
     return profile
 
 
@@ -2239,6 +2361,12 @@ def _openfoam_function_object_entries(
         full_ogrid_profile.get("verificationContract")
         if isinstance(full_ogrid_profile, dict)
         and isinstance(full_ogrid_profile.get("verificationContract"), dict)
+        else axisymmetric_profile.get("experimentalQualificationContract")
+        if isinstance(axisymmetric_profile, dict)
+        and isinstance(
+            axisymmetric_profile.get("experimentalQualificationContract"),
+            dict,
+        )
         else {}
     )
     qoi_history_interval = verification.get("qoiHistoryWriteIntervalIterations")
@@ -6039,6 +6167,19 @@ class OpenFOAMAdapter(SolverAdapter):
                 "Full O-grid inspection VTK/VTU is a true three-dimensional, full-volume, blockMesh-equivalent all-hex mesh.",
                 "The original editor strip is retained separately as flowlab_source_strip and is not solver-result geometry.",
             ]
+        identity_contract_files: dict[str, str] = {}
+        if len(_project_edges(request.project)) > 1:
+            try:
+                identity_contract = source_cell_identity_contract(
+                    mesh_files["mesh/flowlab_mesh.json"]
+                )
+            except (KeyError, ResultIdentityError) as exc:
+                raise ValueError(
+                    "Multi-edge OpenFOAM generation requires a deterministic source-cell identity contract."
+                ) from exc
+            identity_contract_files[SOURCE_IDENTITY_CONTRACT_PATH] = (
+                json.dumps(identity_contract, indent=2, sort_keys=True) + "\n"
+            )
         far_patches = _WEDGE_FAR_FIELD_PATCHES if axisymmetric else "" if full_ogrid else None
         mode_files, mode_provenance = _openfoam_mode_files(request.advancedMode, conditions, request.project)
         pressure_dimensions = (
@@ -6215,6 +6356,7 @@ class OpenFOAMAdapter(SolverAdapter):
             **openfoam_mesh_files,
             **cht_region_mesh_files,
             **mesh_files,
+            **identity_contract_files,
         }
         boundary_condition_provenance = _apply_reviewed_surface_boundary_conditions(
             files,
@@ -6305,6 +6447,17 @@ class SU2Adapter(SolverAdapter):
         )
 
     def generate_case(self, request: CaseRequest) -> SolverCase:
+        solver_settings = (
+            request.project.get("solver")
+            if isinstance(request.project.get("solver"), dict)
+            else {}
+        )
+        mesh_mode = str(solver_settings.get("meshMode", "planar-2d")).strip().lower()
+        if mesh_mode != "planar-2d":
+            raise ValueError(
+                f"SU2 does not support FlowLab `{mesh_mode}` mesh mode; "
+                "axisymmetric wedge and full O-grid requests fail closed."
+            )
         conditions = _case_conditions(request.project)
         try:
             mesh_bundle = generate_mesh_bundle(request.project)
@@ -6634,6 +6787,7 @@ def generate_case(request: CaseRequest) -> SolverCase:
         case.files.get("flowlab_project.json"),
         solver=case.solver,
         mesh_snapshot=case.files.get("mesh/flowlab_mesh.json"),
+        identity_contract_snapshot=case.files.get(SOURCE_IDENTITY_CONTRACT_PATH),
     )
     if case.resultComponentMap:
         if case.resultComponentMap.version == 1:
