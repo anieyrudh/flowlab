@@ -1,0 +1,31 @@
+{
+  "schema": "flowlab.full-ogrid-geometry-experimental-qualification-contract-revision.v1",
+  "revisionId": "full-ogrid-generated-geometry-experimental-qualification-v4",
+  "frozenOn": "2026-07-31",
+  "status": "prospective-frozen-before-v4-retained-scientific-execution",
+  "baseContract": {
+    "path": "EXPERIMENTAL_QUALIFICATION_CONTRACT_V3.json",
+    "sha256": "f40c0dc582c58496209872c03808ee493c32535f3048af9e5ddbf78cbf98ba1f"
+  },
+  "v3Disposition": {
+    "campaignDirectory": "benchmarks/cases/full-ogrid-geometry/campaigns/2026-07-31-v3-r1",
+    "classification": "retained-pre-solver-native-mesh-command-routing-failure",
+    "solverExecuted": false,
+    "scientificGatesEvaluated": false,
+    "evidenceMayBeEditedOrReused": false
+  },
+  "rationale": "The first v3 retained attempt generated blockMesh successfully but the JobManager did not recognize the new multi-segment full-O-grid profile schema as direct blockMesh geometry and incorrectly invoked snappyHexMesh. V4 changes only fail-closed runtime command routing so the manifest-bound full-revolution path uses blockMesh plus checkMesh. It changes no geometry, physics, threshold, grid, identity algorithm, trend, product status, or promotion gate.",
+  "mergePatch": {
+    "schema": "flowlab.full-ogrid-geometry-experimental-qualification-contract.v4",
+    "status": "prospective-frozen-before-v4-retained-scientific-execution",
+    "prospectiveRevision": {
+      "revisionId": "full-ogrid-generated-geometry-experimental-qualification-v4",
+      "baseContractSha256": "f40c0dc582c58496209872c03808ee493c32535f3048af9e5ddbf78cbf98ba1f",
+      "runtimeCommandRoutingChange": "recognize flowlab.full-ogrid-path-profile.v1 as a direct blockMesh topology only when its manifest has positive segment count, exactly five blocks per segment, 3D all-hex cells, zero collapsed-axis cells, and no boundary interfaces",
+      "scientificGateChanges": false,
+      "geometryOrPhysicsChanges": false,
+      "identityAlgorithmChanges": false,
+      "validatedOrPromotedStatusChanges": false
+    }
+  }
+}

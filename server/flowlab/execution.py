@@ -5030,18 +5030,38 @@ def _openfoam_case_is_axisymmetric_wedge(case_dir: Path) -> bool:
 
 
 def _openfoam_case_is_full_ogrid(case_dir: Path) -> bool:
-    """Recognize only a manifest-bound canonical five-block full O-grid."""
+    """Recognize only a manifest-bound canonical direct-blockMesh full O-grid."""
 
     try:
         profile = json.loads((case_dir / "constant" / "flowlab_full_ogrid_profile.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     topology = profile.get("topology") if isinstance(profile, dict) and isinstance(profile.get("topology"), dict) else {}
+    schema = profile.get("schema")
+    if schema == "flowlab.full-ogrid-profile.v1":
+        representation_matches = (
+            profile.get("effectiveMeshMode")
+            == "full-revolution-five-block-ogrid"
+            and topology.get("blockCount") == 5
+        )
+    elif schema == "flowlab.full-ogrid-path-profile.v1":
+        segment_count = topology.get("geometrySegmentCount")
+        representation_matches = (
+            profile.get("effectiveMeshMode")
+            == "full-revolution-multi-segment-five-block-ogrid"
+            and isinstance(segment_count, int)
+            and not isinstance(segment_count, bool)
+            and segment_count > 0
+            and topology.get("blockCount") == 5 * segment_count
+        )
+    else:
+        representation_matches = False
     return (
-        profile.get("schema") == "flowlab.full-ogrid-profile.v1"
-        and profile.get("effectiveMeshMode") == "full-revolution-five-block-ogrid"
-        and topology.get("blockCount") == 5
+        representation_matches
+        and topology.get("spatialDimension") == 3
+        and topology.get("cellTypes") == ["hex"]
         and topology.get("collapsedAxisCells") == 0
+        and topology.get("interfaces", {}).get("boundaryPatchCount") == 0
     )
 
 

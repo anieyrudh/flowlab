@@ -59,22 +59,28 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "full-ogrid-geometry-experimental-qualification"
-    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V3.json"
+    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V4.json"
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V3.md")
+BASE_CONTRACT_PATH = CONTRACT_PATH.with_name(
+    "EXPERIMENTAL_QUALIFICATION_CONTRACT_V3.json"
+)
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V4.md")
+BASE_RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V3.md")
 CAMPAIGN_SCHEMA = (
-    "flowlab.full-ogrid-geometry-experimental-qualification-campaign.v3"
+    "flowlab.full-ogrid-geometry-experimental-qualification-campaign.v4"
 )
 LEVEL_SCHEMA = (
-    "flowlab.full-ogrid-geometry-experimental-qualification-level.v3"
+    "flowlab.full-ogrid-geometry-experimental-qualification-level.v4"
 )
 RESULT_PIPELINE_SCHEMA = (
-    "flowlab.full-ogrid-multi-edge-result-pipeline-proof.v3"
+    "flowlab.full-ogrid-multi-edge-result-pipeline-proof.v4"
 )
 EXPECTED_PATCHES = {"inlet": "patch", "outlet": "patch", "walls": "wall"}
 FROZEN_PATHS = [
     str(CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
+    str(BASE_CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
     str(RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
+    str(BASE_RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
     "server/flowlab/adapters.py",
     "server/flowlab/execution.py",
     "server/flowlab/full_ogrid.py",
@@ -99,19 +105,62 @@ FROZEN_PATHS = [
 def load_frozen_contract() -> tuple[dict[str, Any], str]:
     text = CONTRACT_PATH.read_text(encoding="utf-8")
     try:
-        contract = json.loads(text)
+        revision = json.loads(text)
     except json.JSONDecodeError as exc:
         raise FullOGridGeometryQualificationError(
             "full-O-grid experimental qualification contract is invalid JSON"
         ) from exc
     if (
-        not isinstance(contract, dict)
-        or contract.get("schema")
-        != "flowlab.full-ogrid-geometry-experimental-qualification-contract.v3"
+        not isinstance(revision, dict)
+        or revision.get("schema")
+        != (
+            "flowlab.full-ogrid-geometry-experimental-qualification-"
+            "contract-revision.v1"
+        )
+        or revision.get("revisionId")
+        != "full-ogrid-generated-geometry-experimental-qualification-v4"
+        or revision.get("status")
+        != "prospective-frozen-before-v4-retained-scientific-execution"
+    ):
+        raise FullOGridGeometryQualificationError(
+            "full-O-grid experimental qualification revision is unsupported "
+            "or not prospectively frozen"
+        )
+    base_reference = revision.get("baseContract")
+    if (
+        not isinstance(base_reference, dict)
+        or base_reference.get("path") != BASE_CONTRACT_PATH.name
+        or base_reference.get("sha256") != _sha256_file(BASE_CONTRACT_PATH)
+    ):
+        raise FullOGridGeometryQualificationError(
+            "full-O-grid qualification base contract digest does not match v4"
+        )
+    contract = json.loads(BASE_CONTRACT_PATH.read_text(encoding="utf-8"))
+
+    def merge_patch(
+        target: dict[str, Any], patch: dict[str, Any]
+    ) -> dict[str, Any]:
+        merged = dict(target)
+        for key, value in patch.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = merge_patch(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+
+    patch = revision.get("mergePatch")
+    if not isinstance(patch, dict):
+        raise FullOGridGeometryQualificationError(
+            "full-O-grid qualification revision lacks its merge patch"
+        )
+    contract = merge_patch(contract, patch)
+    if (
+        contract.get("schema")
+        != "flowlab.full-ogrid-geometry-experimental-qualification-contract.v4"
         or contract.get("contractId")
         != adapters.FULL_OGRID_QUALIFICATION_CONTRACT_ID
         or contract.get("status")
-        != "prospective-frozen-before-v3-retained-scientific-execution"
+        != "prospective-frozen-before-v4-retained-scientific-execution"
         or contract.get("identity", {}).get("algorithm")
         != SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
         or contract.get("promotionAuthorized") is not False
@@ -448,7 +497,7 @@ def materialize_preflight(
             )
     report = {
         "schema": (
-            "flowlab.full-ogrid-geometry-experimental-qualification-preflight.v3"
+            "flowlab.full-ogrid-geometry-experimental-qualification-preflight.v4"
         ),
         "contractSha256": contract_sha256,
         "generationOnly": generation,

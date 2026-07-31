@@ -7,7 +7,8 @@ import json
 import pytest
 
 from server.flowlab import full_ogrid_geometry_qualification as qualification
-from server.flowlab.execution import validate_solver_case
+from server.flowlab import execution
+from server.flowlab.execution import materialize_case_files, validate_solver_case
 
 
 AXISYMMETRIC_STRAIGHT_PIPE_SHA256 = (
@@ -123,3 +124,20 @@ def test_qualification_request_rejects_missing_contract_hash() -> None:
 
     with pytest.raises(ValueError, match="contract SHA-256"):
         qualification._build_case(project)
+
+
+def test_multi_segment_full_ogrid_routes_directly_to_block_mesh(tmp_path) -> None:
+    contract, digest = qualification.load_frozen_contract()
+    case = qualification._build_case(
+        qualification._runtime_project(
+            contract, digest, contract["levels"][0]
+        )
+    )
+    case_dir = tmp_path / "case"
+    materialize_case_files(case, case_dir)
+
+    assert execution._openfoam_case_is_full_ogrid(case_dir) is True
+    assert execution._openfoam_required_mesh_commands(case_dir) == [
+        "blockMesh",
+        "checkMesh",
+    ]
