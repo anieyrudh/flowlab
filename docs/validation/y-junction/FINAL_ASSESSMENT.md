@@ -64,6 +64,13 @@ The retained evidence identities are:
 Raw cases and the 680-file immutable package remain ignored local evidence.
 They are not admitted to Git.
 
+The retained V4 `campaign-run-state.json` is the last live journal snapshot
+and still says `running`, while the authoritative `campaign-assessment.json`
+has the terminal `qualification-gate-failed-retained` status. The retained
+package is not edited. The final branch fixes the runner to write terminal
+state to both files for future campaigns and adds regression coverage; this
+reporting fix does not change any V4 measurement or gate result.
+
 ## Deterministic generation and ownership
 
 Every case was materialized twice. The complete generated-file hash maps
@@ -156,4 +163,3 @@ visualization path. It does **not** establish:
 
 `promotionAuthorized` and `validated` remain `false`. No validated benchmark
 registry or promotion pointer is changed.
-

@@ -9,6 +9,7 @@ from server.flowlab.execution import materialize_case_files
 from server.flowlab.y_junction_campaign import (
     _level_rows,
     _sequence,
+    _write_terminal_state,
     build_case,
     evaluate_case,
     load_contract,
@@ -168,3 +169,19 @@ def test_three_grid_order_and_gci_fail_closed() -> None:
     rejected = _sequence(non_monotone, contract)
     assert rejected["qualified"] is False
     assert rejected["passed"] is False
+
+
+def test_terminal_state_updates_live_journal_and_assessment_together(
+    tmp_path: Path,
+) -> None:
+    state = {
+        "status": "qualification-gate-failed-retained",
+        "allQualificationGatesPassed": False,
+        "validated": False,
+        "promotionAuthorized": False,
+    }
+
+    _write_terminal_state(tmp_path, state)
+
+    assert json.loads((tmp_path / "campaign-run-state.json").read_text()) == state
+    assert json.loads((tmp_path / "campaign-assessment.json").read_text()) == state

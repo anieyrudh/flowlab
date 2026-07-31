@@ -79,6 +79,11 @@ def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _write_terminal_state(output_dir: Path, state: dict[str, Any]) -> None:
+    _write_json(output_dir / "campaign-run-state.json", state)
+    _write_json(output_dir / "campaign-assessment.json", state)
+
+
 def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -109,7 +114,9 @@ def load_contract() -> dict[str, Any]:
         math.isclose(sizes[0] / sizes[1], ratio, rel_tol=1.0e-12)
         and math.isclose(sizes[1] / sizes[2], ratio, rel_tol=1.0e-12)
     ):
-        raise YJunctionCampaignError("Y-junction frozen cell sizes are not uniform r=1.5")
+        raise YJunctionCampaignError(
+            f"Y-junction frozen cell sizes are not uniform r={ratio:g}"
+        )
     return contract
 
 
@@ -836,7 +843,7 @@ def execute_campaign(
                     "failedCase": label,
                 }
             )
-            _write_json(output_dir / "campaign-assessment.json", state)
+            _write_terminal_state(output_dir, state)
             return state
         evaluation = evaluate_case(
             case_dir,
@@ -861,7 +868,7 @@ def execute_campaign(
                     "allQualificationGatesPassed": False,
                 }
             )
-            _write_json(output_dir / "campaign-assessment.json", state)
+            _write_terminal_state(output_dir, state)
             return state
 
     sequence = _sequence(evaluations, contract)
@@ -888,12 +895,12 @@ def execute_campaign(
             "limitations": [
                 "No independent empirical validation was performed.",
                 "The Cartesian staircase wall refines with the solution and is not CAD-exact.",
-                "Only this symmetric +/-30-degree Re=100 steady laminar Y-junction is qualified.",
+                "The qualification claim is bounded to this symmetric +/-30-degree Re=100 steady laminar Y-junction.",
                 "No product promotion, arbitrary-network, turbulence, transient, or release claim is authorized.",
             ],
         }
     )
-    _write_json(output_dir / "campaign-assessment.json", state)
+    _write_terminal_state(output_dir, state)
     return state
 
 
