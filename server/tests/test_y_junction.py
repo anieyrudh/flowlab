@@ -141,12 +141,15 @@ def test_y_junction_generation_is_deterministic_connected_and_exactly_three_port
     assert first["topology"]["connectedFluidRegions"] == 1
     assert first["topology"]["portPatches"] == ["inlet", "outletUpper", "outletLower"]
     assert first["topology"]["cellTypes"] == ["hex"]
+    assert first["topology"]["initialCellCount"] == 1616
+    assert first["topology"]["prunedUnderconnectedCellCount"] == 12
+    assert first["topology"]["minimumFaceNeighbourCount"] == 3
     assert first["volumeQuality"]["minimumCellVolumeM3"] > 0.0
     assert set(first["cellTypes"]) == {12}
     assert first["patches"] == {
         "inlet": {"type": "patch", "faceCount": 72},
-        "outletUpper": {"type": "patch", "faceCount": 74},
-        "outletLower": {"type": "patch", "faceCount": 74},
+        "outletUpper": {"type": "patch", "faceCount": 62},
+        "outletLower": {"type": "patch", "faceCount": 62},
         "walls": {"type": "wall", "faceCount": 1612},
     }
     assert hashlib.sha256(

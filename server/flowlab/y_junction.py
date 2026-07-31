@@ -151,6 +151,52 @@ def _connected(cell_keys: set[tuple[int, int, int]]) -> bool:
     return len(visited) == len(cell_keys)
 
 
+def _face_neighbour_count(
+    key: tuple[int, int, int],
+    cell_keys: set[tuple[int, int, int]],
+) -> int:
+    i, j, k = key
+    return sum(
+        neighbour in cell_keys
+        for neighbour in (
+            (i - 1, j, k),
+            (i + 1, j, k),
+            (i, j - 1, k),
+            (i, j + 1, k),
+            (i, j, k - 1),
+            (i, j, k + 1),
+        )
+    )
+
+
+def _prune_underconnected_cells(
+    cell_keys: set[tuple[int, int, int]],
+) -> tuple[set[tuple[int, int, int]], set[tuple[int, int, int]]]:
+    """Remove staircase surface cells that cannot form a well-posed hex stencil.
+
+    OpenFOAM's cell-determinant check rejects a Cartesian cell with fewer than
+    three face neighbours, even when its geometric volume is positive.  The
+    pruning rule is construction-time topology, applied prospectively and
+    deterministically before regions or ownership ranges are assigned.
+    """
+
+    retained = set(cell_keys)
+    removed: set[tuple[int, int, int]] = set()
+    while True:
+        underconnected = {
+            key for key in retained if _face_neighbour_count(key, retained) < 3
+        }
+        if not underconnected:
+            break
+        retained.difference_update(underconnected)
+        removed.update(underconnected)
+        if not retained or not _connected(retained):
+            raise ValueError(
+                "Y-junction topology pruning could not preserve one face-connected region."
+            )
+    return retained, removed
+
+
 def _cell_group(
     memberships: dict[str, tuple[bool, float, float]],
     point: tuple[float, float, float],
@@ -260,6 +306,12 @@ def generate_mesh(
 
     if not _connected(set(raw)):
         raise ValueError("Generated Y-junction fluid cells are not one face-connected region.")
+    initial_cell_count = len(raw)
+    retained_keys, pruned_keys = _prune_underconnected_cells(set(raw))
+    raw = {key: raw[key] for key in retained_keys}
+    final_cell_keys = set(raw)
+    if not _connected(final_cell_keys):
+        raise ValueError("Pruned Y-junction fluid cells are not one face-connected region.")
 
     groups = ("inletEdge", "upperEdge", "lowerEdge", "junction")
     ordered_keys = [
@@ -415,6 +467,11 @@ def generate_mesh(
             "wallPatch": "walls",
             "cellTypes": ["hex"],
             "cellCount": len(cells),
+            "initialCellCount": initial_cell_count,
+            "prunedUnderconnectedCellCount": len(pruned_keys),
+            "minimumFaceNeighbourCount": min(
+                _face_neighbour_count(key, final_cell_keys) for key in raw
+            ),
             "internalFaceCount": internal_face_count,
             "boundaryFaceCount": sum(len(faces) for faces in patch_faces.values()),
         },
