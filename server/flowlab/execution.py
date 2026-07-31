@@ -800,6 +800,12 @@ def read_case_mesh_quality(case_dir: Path) -> dict[str, Any]:
 
 
 def collect_result_files(case_dir: Path) -> list[dict[str, Any]]:
+    identity_contract_required = (
+        case_dir / "constant" / "flowlab_result_identity_contract.json"
+    ).is_file()
+    if identity_contract_required:
+        return _collect_openfoam_native_time_results(case_dir, MAX_RESULT_FILES)
+
     results: list[dict[str, Any]] = []
     overflow_count = 0
     overflow_bytes = 0

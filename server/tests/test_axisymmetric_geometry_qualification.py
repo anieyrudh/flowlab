@@ -20,6 +20,15 @@ def test_contract_is_prospective_nonpromotional_and_keeps_straight_pipe_unchange
     contract, digest = qualification.load_frozen_contract()
 
     assert len(digest) == 64
+    assert (
+        contract["schema"]
+        == "flowlab.axisymmetric-geometry-experimental-qualification-contract.v2"
+    )
+    assert contract["prospectiveRevision"]["scientificGateChanges"] is False
+    assert (
+        contract["identity"]["algorithm"]
+        == "axisymmetric-logical-cell-vertex-signature-v2"
+    )
     assert contract["claim"]["qualificationClass"] == "experimental-software-geometry-only"
     assert contract["promotionAuthorized"] is False
     assert contract["review"]["validatedStatusChangeAuthorized"] is False
@@ -66,6 +75,13 @@ def test_preflight_materializes_generation_matrix_and_two_identical_builds(
             case.resultComponentMap.artifactBindings[0].artifactName
             == "postProcessing/flowlabNative/*.vtk"
         )
+        identity = json.loads(
+            case.files["constant/flowlab_result_identity_contract.json"]
+        )
+        assert (
+            identity["algorithm"]
+            == "axisymmetric-logical-cell-vertex-signature-v2"
+        )
         assert (
             tmp_path
             / "preflight"
@@ -107,3 +123,12 @@ def test_qualification_request_rejects_missing_contract_hash() -> None:
 
     with pytest.raises(ValueError, match="contract SHA-256"):
         qualification._build_case(project)
+
+
+def test_check_mesh_minimum_volume_parser_excludes_sentence_punctuation() -> None:
+    cells, minimum_volume = qualification._check_mesh_cell_count_and_minimum_volume(
+        "    cells: 1664\n    min volume = 1.119835e-10.  Max aspect ratio = 8.0\n"
+    )
+
+    assert cells == 1664
+    assert minimum_volume == pytest.approx(1.119835e-10)

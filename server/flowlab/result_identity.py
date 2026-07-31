@@ -10,7 +10,12 @@ from typing import Any
 
 SOURCE_IDENTITY_CONTRACT_SCHEMA = "flowlab.source-cell-identity-contract.v1"
 SOURCE_IDENTITY_REPORT_SCHEMA = "flowlab.openfoam-source-cell-identity.v1"
-SOURCE_IDENTITY_ALGORITHM = "polyMesh-cell-vertex-signature-v1"
+SOURCE_IDENTITY_ALGORITHM_V1 = "polyMesh-cell-vertex-signature-v1"
+SOURCE_IDENTITY_ALGORITHM = "axisymmetric-logical-cell-vertex-signature-v2"
+SUPPORTED_SOURCE_IDENTITY_ALGORITHMS = {
+    SOURCE_IDENTITY_ALGORITHM_V1,
+    SOURCE_IDENTITY_ALGORITHM,
+}
 SOURCE_CELL_ID_FIELD = "flowlabSourceCellId"
 SOURCE_IDENTITY_CONTRACT_PATH = "constant/flowlab_result_identity_contract.json"
 SOURCE_IDENTITY_REPORT_PATH = "postProcessing/flowlab_result_identity.json"
@@ -92,6 +97,110 @@ def _source_signatures(
     return signatures
 
 
+def _clustered_ranks(values: list[float]) -> tuple[list[int], int]:
+    if not values or any(not math.isfinite(value) for value in values):
+        raise ResultIdentityError("logical identity coordinates must be finite")
+    ordered = sorted(enumerate(values), key=lambda item: (item[1], item[0]))
+    scale = max(1.0, max(abs(value) for value in values))
+    tolerance = 1.0e-9 * scale
+    ranks = [0] * len(values)
+    representatives: list[float] = []
+    for original_index, value in ordered:
+        if not representatives or abs(value - representatives[-1]) > tolerance:
+            representatives.append(value)
+        ranks[original_index] = len(representatives) - 1
+    return ranks, len(representatives)
+
+
+def _axisymmetric_logical_signatures(
+    points: list[Any],
+    cells: list[Any],
+) -> list[str]:
+    parsed_points: list[tuple[float, float, float]] = []
+    for point in points:
+        if not isinstance(point, (list, tuple)) or len(point) != 3:
+            raise ResultIdentityError(
+                "axisymmetric logical identity points require three coordinates"
+            )
+        coordinate = tuple(float(value) for value in point)
+        if any(not math.isfinite(value) for value in coordinate):
+            raise ResultIdentityError(
+                "axisymmetric logical identity coordinates must be finite"
+            )
+        parsed_points.append(coordinate)
+    x_ranks, x_count = _clustered_ranks([point[0] for point in parsed_points])
+    if x_count < 2:
+        raise ResultIdentityError(
+            "axisymmetric logical identity requires multiple axial stations"
+        )
+
+    radii = [math.hypot(point[1], point[2]) for point in parsed_points]
+    radial_ranks = [0] * len(parsed_points)
+    for x_rank in range(x_count):
+        point_indices = [
+            index for index, candidate in enumerate(x_ranks) if candidate == x_rank
+        ]
+        station_ranks, radial_count = _clustered_ranks(
+            [radii[index] for index in point_indices]
+        )
+        if radial_count < 2:
+            raise ResultIdentityError(
+                "axisymmetric logical identity requires radial volume cells"
+            )
+        for index, radial_rank in zip(point_indices, station_ranks, strict=True):
+            radial_ranks[index] = radial_rank
+
+    logical_points: list[tuple[int, int, int]] = []
+    scale = max(1.0, max(radii, default=0.0))
+    axis_tolerance = 1.0e-12 * scale
+    for index, point in enumerate(parsed_points):
+        radius = radii[index]
+        if radius <= axis_tolerance:
+            wedge_side = 0
+        elif point[2] < -axis_tolerance:
+            wedge_side = -1
+        elif point[2] > axis_tolerance:
+            wedge_side = 1
+        else:
+            raise ResultIdentityError(
+                "a non-axis wedge point has no explicit front/back side"
+            )
+        logical_points.append(
+            (x_ranks[index], radial_ranks[index], wedge_side)
+        )
+
+    signatures: list[str] = []
+    for cell in cells:
+        if not isinstance(cell, list):
+            raise ResultIdentityError(
+                "axisymmetric logical identity contains a non-list cell"
+            )
+        labels: set[tuple[int, int, int]] = set()
+        for raw_index in cell:
+            if (
+                not isinstance(raw_index, int)
+                or isinstance(raw_index, bool)
+                or raw_index < 0
+                or raw_index >= len(logical_points)
+            ):
+                raise ResultIdentityError(
+                    "axisymmetric logical cell connectivity escapes the point array"
+                )
+            labels.add(logical_points[raw_index])
+        if len(labels) < 6:
+            raise ResultIdentityError(
+                "axisymmetric wedge cell identity requires at least six logical vertices"
+            )
+        signatures.append(
+            "|".join(",".join(str(value) for value in label) for label in sorted(labels))
+        )
+    if len(set(signatures)) != len(signatures):
+        raise ResultIdentityError(
+            "axisymmetric logical cell vertex signatures are not unique"
+        )
+    return signatures
+
+
 def source_cell_identity_contract(mesh_snapshot: str) -> dict[str, Any]:
     try:
         mesh = json.loads(mesh_snapshot)
@@ -128,10 +237,19 @@ def source_cell_identity_contract(mesh_snapshot: str) -> dict[str, Any]:
     )
     if not math.isfinite(coordinate_scale) or coordinate_scale <= 0.0:
         raise ResultIdentityError("generated mesh identity coordinate scale is invalid")
-    signatures = _source_signatures(
-        mesh,
-        projection=projection,
-        coordinate_scale=coordinate_scale,
+    algorithm = (
+        SOURCE_IDENTITY_ALGORITHM
+        if mesh.get("profileSchema") == "flowlab.axisymmetric-profile.v1"
+        else SOURCE_IDENTITY_ALGORITHM_V1
+    )
+    signatures = (
+        _axisymmetric_logical_signatures(points, mesh.get("cells", []))
+        if algorithm == SOURCE_IDENTITY_ALGORITHM
+        else _source_signatures(
+            mesh,
+            projection=projection,
+            coordinate_scale=coordinate_scale,
+        )
     )
     regions = mesh.get("regions") if isinstance(mesh.get("regions"), list) else []
     edge_ranges: list[dict[str, Any]] = []
@@ -164,7 +282,7 @@ def source_cell_identity_contract(mesh_snapshot: str) -> dict[str, Any]:
     signature_text = "\n".join(signatures) + "\n"
     return {
         "schema": SOURCE_IDENTITY_CONTRACT_SCHEMA,
-        "algorithm": SOURCE_IDENTITY_ALGORITHM,
+        "algorithm": algorithm,
         "identityField": SOURCE_CELL_ID_FIELD,
         "generatedMeshSha256": _sha256_text(mesh_snapshot),
         "sourceCellCount": len(signatures),
@@ -286,7 +404,7 @@ def resolve_openfoam_source_cell_identity(
     if (
         not isinstance(contract, dict)
         or contract.get("schema") != SOURCE_IDENTITY_CONTRACT_SCHEMA
-        or contract.get("algorithm") != SOURCE_IDENTITY_ALGORITHM
+        or contract.get("algorithm") not in SUPPORTED_SOURCE_IDENTITY_ALGORITHMS
         or contract.get("identityField") != SOURCE_CELL_ID_FIELD
         or contract.get("orderingAssumptionAllowed") is not False
     ):
@@ -305,10 +423,18 @@ def resolve_openfoam_source_cell_identity(
         or float(coordinate_scale) <= 0.0
     ):
         raise ResultIdentityError("source-cell identity coordinate scale is invalid")
-    source_signatures = _source_signatures(
-        generated_mesh,
-        projection=projection,
-        coordinate_scale=float(coordinate_scale),
+    algorithm = str(contract["algorithm"])
+    source_signatures = (
+        _axisymmetric_logical_signatures(
+            generated_mesh.get("points", []),
+            generated_mesh.get("cells", []),
+        )
+        if algorithm == SOURCE_IDENTITY_ALGORITHM
+        else _source_signatures(
+            generated_mesh,
+            projection=projection,
+            coordinate_scale=float(coordinate_scale),
+        )
     )
     if len(source_signatures) != contract.get("sourceCellCount"):
         raise ResultIdentityError("generated source-cell count does not match the identity contract")
@@ -318,10 +444,14 @@ def resolve_openfoam_source_cell_identity(
         raise ResultIdentityError("generated source-cell signatures do not match the identity contract")
 
     solver_points, solver_cells = _solver_cells(case_dir / "constant" / "polyMesh")
-    solver_signatures = [
-        _cell_signature(solver_points, cell, projection=projection)
-        for cell in solver_cells
-    ]
+    solver_signatures = (
+        _axisymmetric_logical_signatures(solver_points, solver_cells)
+        if algorithm == SOURCE_IDENTITY_ALGORITHM
+        else [
+            _cell_signature(solver_points, cell, projection=projection)
+            for cell in solver_cells
+        ]
+    )
     if len(solver_signatures) != len(source_signatures):
         raise ResultIdentityError(
             "OpenFOAM solver cell count does not match the generated source-cell count"
@@ -352,7 +482,7 @@ def resolve_openfoam_source_cell_identity(
         "schema": SOURCE_IDENTITY_REPORT_SCHEMA,
         "contractSchema": SOURCE_IDENTITY_CONTRACT_SCHEMA,
         "contractSha256": _sha256_text(contract_text),
-        "algorithm": SOURCE_IDENTITY_ALGORITHM,
+        "algorithm": algorithm,
         "solverCellVertexProjection": projection,
         "generatedToSolverCoordinateScale": coordinate_scale,
         "identityField": SOURCE_CELL_ID_FIELD,

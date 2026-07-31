@@ -6,10 +6,12 @@ import re
 
 import pytest
 
-from server.flowlab import adapters
+from server.flowlab import adapters, result_identity
 from server.flowlab.execution import materialize_case_files
 from server.flowlab.result_identity import (
     SOURCE_CELL_ID_FIELD,
+    SOURCE_IDENTITY_ALGORITHM,
+    SOURCE_IDENTITY_ALGORITHM_V1,
     SOURCE_IDENTITY_CONTRACT_PATH,
     ResultIdentityError,
     reorder_solver_values_to_source,
@@ -78,6 +80,14 @@ def _multi_edge_project() -> dict:
     }
 
 
+def _axisymmetric_multi_edge_project() -> dict:
+    project = _multi_edge_project()
+    project["edges"]["left"]["shape"] = {"kind": "circular", "diameter": 0.01}
+    project["edges"]["right"]["shape"] = {"kind": "circular", "diameter": 0.01}
+    project["solver"]["meshMode"] = "axisymmetric"
+    return project
+
+
 def test_generated_contract_resolves_actual_polymesh_without_order_assumption(
     tmp_path: Path,
 ) -> None:
@@ -103,8 +113,36 @@ def test_generated_contract_resolves_actual_polymesh_without_order_assumption(
     assert (case_dir / "postProcessing" / "flowlab_result_identity.json").is_file()
     contract = json.loads(case.files[SOURCE_IDENTITY_CONTRACT_PATH])
     assert contract["identityField"] == SOURCE_CELL_ID_FIELD
+    assert contract["algorithm"] == SOURCE_IDENTITY_ALGORITHM_V1
     assert contract["orderingAssumptionAllowed"] is False
     assert contract["unownedRanges"]
+
+
+def test_axisymmetric_logical_identity_is_invariant_to_prospective_grading() -> None:
+    case = adapters.generate_case(
+        CaseRequest.model_construct(
+            project=_axisymmetric_multi_edge_project(),
+            solver="openfoam",
+            advancedMode="incompressible-navier-stokes",
+        )
+    )
+    mesh = json.loads(case.files["mesh/flowlab_mesh.json"])
+    graded_points = [
+        [
+            float(point[0]) ** 2,
+            float(point[1]) * (1.0 + 0.1 * float(point[0])),
+            float(point[2]) * (1.0 + 0.1 * float(point[0])),
+        ]
+        for point in mesh["points"]
+    ]
+
+    assert result_identity._axisymmetric_logical_signatures(
+        mesh["points"],
+        mesh["cells"],
+    ) == result_identity._axisymmetric_logical_signatures(
+        graded_points,
+        mesh["cells"],
+    )
 
 
 def test_solver_values_are_reordered_only_through_verified_mapping() -> None:

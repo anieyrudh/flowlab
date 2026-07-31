@@ -30,6 +30,7 @@ from .execution import (
     validate_solver_case,
 )
 from .result_identity import (
+    SOURCE_IDENTITY_ALGORITHM,
     SOURCE_IDENTITY_CONTRACT_PATH,
     SOURCE_IDENTITY_REPORT_PATH,
     SOURCE_IDENTITY_REPORT_SCHEMA,
@@ -45,9 +46,12 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "axisymmetric-geometry-experimental-qualification"
-    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V1.json"
+    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V2.json"
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V1.md")
+BASE_CONTRACT_PATH = CONTRACT_PATH.with_name(
+    "EXPERIMENTAL_QUALIFICATION_CONTRACT_V1.json"
+)
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V2.md")
 CAMPAIGN_SCHEMA = "flowlab.axisymmetric-geometry-experimental-qualification-campaign.v1"
 LEVEL_SCHEMA = "flowlab.axisymmetric-geometry-experimental-qualification-level.v1"
 RESULT_PIPELINE_SCHEMA = "flowlab.axisymmetric-multi-edge-result-pipeline-proof.v1"
@@ -61,7 +65,9 @@ EXPECTED_PATCHES = {
 }
 FROZEN_PATHS = [
     str(CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
+    str(BASE_CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
     str(RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
+    str(RUNBOOK_PATH.with_name("RUNBOOK_V1.md").relative_to(REPOSITORY_ROOT)),
     "server/flowlab/adapters.py",
     "server/flowlab/axisymmetric_geometry_qualification.py",
     "server/flowlab/execution.py",
@@ -116,20 +122,59 @@ def _read_json(path: Path) -> dict[str, Any]:
 def load_frozen_contract() -> tuple[dict[str, Any], str]:
     text = CONTRACT_PATH.read_text(encoding="utf-8")
     try:
-        contract = json.loads(text)
+        revision = json.loads(text)
     except json.JSONDecodeError as exc:
         raise AxisymmetricGeometryQualificationError(
             "experimental qualification contract is invalid JSON"
         ) from exc
     if (
-        not isinstance(contract, dict)
-        or contract.get("schema")
-        != "flowlab.axisymmetric-geometry-experimental-qualification-contract.v1"
+        not isinstance(revision, dict)
+        or revision.get("schema")
+        != "flowlab.axisymmetric-geometry-experimental-qualification-contract-revision.v1"
+        or revision.get("revisionId")
+        != "axisymmetric-generated-geometry-experimental-qualification-v2"
+        or revision.get("status")
+        != "prospective-frozen-before-v2-retained-scientific-execution"
+    ):
+        raise AxisymmetricGeometryQualificationError(
+            "experimental qualification revision is unsupported or not prospectively frozen"
+        )
+    base_reference = revision.get("baseContract")
+    if (
+        not isinstance(base_reference, dict)
+        or base_reference.get("path") != BASE_CONTRACT_PATH.name
+        or base_reference.get("sha256") != _sha256_file(BASE_CONTRACT_PATH)
+    ):
+        raise AxisymmetricGeometryQualificationError(
+            "experimental qualification base contract digest does not match the v2 revision"
+        )
+    contract = _read_json(BASE_CONTRACT_PATH)
+
+    def merge_patch(target: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(target)
+        for key, value in patch.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = merge_patch(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+
+    patch = revision.get("mergePatch")
+    if not isinstance(patch, dict):
+        raise AxisymmetricGeometryQualificationError(
+            "experimental qualification revision lacks its merge patch"
+        )
+    contract = merge_patch(contract, patch)
+    if (
+        contract.get("schema")
+        != "flowlab.axisymmetric-geometry-experimental-qualification-contract.v2"
         or contract.get("contractId")
         != adapters.AXISYMMETRIC_QUALIFICATION_CONTRACT_ID
         or contract.get("status")
-        != "prospective-frozen-before-retained-scientific-execution"
+        != "prospective-frozen-before-v2-retained-scientific-execution"
         or contract.get("promotionAuthorized") is not False
+        or contract.get("identity", {}).get("algorithm")
+        != SOURCE_IDENTITY_ALGORITHM
     ):
         raise AxisymmetricGeometryQualificationError(
             "experimental qualification contract is unsupported or not prospectively frozen"
@@ -435,6 +480,8 @@ def materialize_preflight(
         if (
             identity_contract.get("orderingAssumptionAllowed") is not False
             or identity_contract.get("sourceCellCount", 0) <= 0
+            or identity_contract.get("algorithm")
+            != contract["identity"]["algorithm"]
         ):
             raise AxisymmetricGeometryQualificationError(
                 f"{level['id']} source-cell identity contract is not fail closed"
@@ -633,6 +680,21 @@ def _boundary_types(text: str) -> dict[str, str]:
     return result
 
 
+def _check_mesh_cell_count_and_minimum_volume(text: str) -> tuple[int, float]:
+    cell_match = re.search(r"^\s*cells:\s+(\d+)\s*$", text, re.MULTILINE)
+    float_token = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+    minimum_volume_match = re.search(
+        rf"min volume\s*=\s*({float_token})",
+        text,
+        re.IGNORECASE,
+    )
+    if cell_match is None or minimum_volume_match is None:
+        raise AxisymmetricGeometryQualificationError(
+            "checkMesh output is missing cell count or minimum volume"
+        )
+    return int(cell_match.group(1)), float(minimum_volume_match.group(1))
+
+
 def _edge_means(
     dataset: dict[str, Any],
     component_map: dict[str, Any],
@@ -730,22 +792,15 @@ def evaluate_level(
     boundary_types = _boundary_types(
         boundary_path.read_text(encoding="utf-8", errors="replace")
     )
-    cell_match = re.search(r"^\s*cells:\s+(\d+)\s*$", check_mesh, re.MULTILINE)
-    minimum_volume_match = re.search(
-        r"min volume\s*=\s*([-+0-9.eE]+)",
-        check_mesh,
-        re.IGNORECASE,
+    cell_count, minimum_cell_volume = _check_mesh_cell_count_and_minimum_volume(
+        check_mesh
     )
-    if cell_match is None or minimum_volume_match is None:
-        raise AxisymmetricGeometryQualificationError(
-            "checkMesh output is missing cell count or minimum volume"
-        )
     mesh_gate = {
         "checkMeshPassed": "Mesh OK." in check_mesh,
         "solutionDirections3": "Mesh has 3 solution (non-empty) directions" in check_mesh,
         "geometricDirections3": "Mesh has 3 geometric (non-empty) directions" in check_mesh,
-        "cellCount": int(cell_match.group(1)),
-        "minimumCellVolumeM3": float(minimum_volume_match.group(1)),
+        "cellCount": cell_count,
+        "minimumCellVolumeM3": minimum_cell_volume,
         "boundaryTypes": boundary_types,
         "exactPatches": boundary_types == EXPECTED_PATCHES,
     }
@@ -1034,7 +1089,18 @@ def execute_campaign(
                 f"{level_id} runtime evidence escaped the campaign directory"
             )
         case_dirs[level_id] = case_dir
-        evaluation = evaluate_level(case_dir, case, level, contract)
+        try:
+            evaluation = evaluate_level(case_dir, case, level, contract)
+        except Exception as exc:
+            record["caseDirectory"] = str(case_dir.relative_to(output_dir))
+            record["evaluatorFailure"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+            state["status"] = "evidence-evaluator-failed-retained"
+            state["finishedAt"] = datetime.now(timezone.utc).isoformat()
+            _write_json(output_dir / "campaign-state.json", state)
+            raise
         evaluation.update({"caseId": case.id, "jobId": terminal.id})
         evaluation_path = output_dir / "evaluations" / f"{level_id}.json"
         _write_json(evaluation_path, evaluation)
