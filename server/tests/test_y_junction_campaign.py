@@ -88,6 +88,17 @@ def test_materialization_freezes_duplicate_hashes_and_unowned_junction(tmp_path:
     )
 
 
+def test_v2_contract_freezes_fixed_cell_point_probe_sampling() -> None:
+    contract = load_contract()
+    case = build_case(_level_rows(contract)[-1], contract)
+    profile = json.loads(case.files["constant/flowlab_y_junction_profile.json"])
+
+    assert contract["contractId"] == "bounded-symmetric-y-junction-v2"
+    assert profile["probeSampling"] == contract["probeSampling"]
+    assert "fixedLocations  true;" in case.files["system/functions"]
+    assert "interpolationScheme cellPoint;" in case.files["system/functions"]
+
+
 def test_synthetic_equal_pressure_and_asymmetric_control_evaluators(tmp_path: Path) -> None:
     equal = evaluate_case(
         _synthetic_completed_case(tmp_path),

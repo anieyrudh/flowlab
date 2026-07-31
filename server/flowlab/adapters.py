@@ -1559,19 +1559,45 @@ def _openfoam_y_junction_profile(
             raise ValueError("Y-junction outlet pressures must be finite.")
         return (pressure_pa - 101325.0) / density
 
-    pair_stations = (0.010, 0.016, 0.022)
+    raw_probe_sampling = solver.get("yJunctionProbeSampling")
+    if raw_probe_sampling is not None and not isinstance(raw_probe_sampling, dict):
+        raise ValueError("Y-junction probe sampling must be an object.")
+    probe_sampling = raw_probe_sampling or {}
+    raw_pair_stations = probe_sampling.get("stationsM", [0.010, 0.016, 0.022])
+    if (
+        not isinstance(raw_pair_stations, list)
+        or len(raw_pair_stations) != 3
+        or any(
+            not isinstance(value, int | float)
+            or isinstance(value, bool)
+            or not math.isfinite(float(value))
+            or float(value) <= 0.0
+            or float(value) >= spec.branch_length_m
+            for value in raw_pair_stations
+        )
+    ):
+        raise ValueError("Y-junction probe stations must be three finite positions inside each branch.")
+    pair_stations = tuple(float(value) for value in raw_pair_stations)
+    if any(left >= right for left, right in zip(pair_stations, pair_stations[1:])):
+        raise ValueError("Y-junction probe stations must be strictly ordered.")
+    interpolation_scheme = str(probe_sampling.get("interpolationScheme", "cell")).strip()
+    if interpolation_scheme not in {"cell", "cellPoint"}:
+        raise ValueError("Y-junction probe interpolation must be `cell` or `cellPoint`.")
+    z_offset_fraction = float(probe_sampling.get("zOffsetCellFraction", 0.25))
+    if not math.isfinite(z_offset_fraction) or not 0.0 < z_offset_fraction < 0.5:
+        raise ValueError("Y-junction probe z offset must be between zero and half a cell.")
     probe_pairs = [
         {
             "stationM": station,
             "upper": [
                 station * spec.upper_direction[0],
                 station * spec.upper_direction[1],
-                0.25 * cell_size,
+                z_offset_fraction * cell_size,
             ],
             "lower": [
                 station * spec.lower_direction[0],
                 station * spec.lower_direction[1],
-                0.25 * cell_size,
+                z_offset_fraction * cell_size,
             ],
         }
         for station in pair_stations
@@ -1613,6 +1639,12 @@ def _openfoam_y_junction_profile(
             "outletLowerKinematicPressureM2PerS2": outlet_kinematic_pressure(lower_sink),
         },
         "probePairs": probe_pairs,
+        "probeSampling": {
+            "stationsM": list(pair_stations),
+            "interpolationScheme": interpolation_scheme,
+            "fixedLocations": True,
+            "zOffsetCellFraction": z_offset_fraction,
+        },
         "junctionArtifactIdentity": JUNCTION_ARTIFACT_ID,
         "ownership": {
             "source": "generated-region-artifact",
@@ -2830,6 +2862,8 @@ def _openfoam_y_junction_function_object_entries(profile: dict[str, Any]) -> str
     {{
         type            probes;
         libs            ("libsampling.so");
+        fixedLocations  true;
+        interpolationScheme {profile["probeSampling"]["interpolationScheme"]};
         writeControl    timeStep;
         writeInterval   25;
         fields          (p U);

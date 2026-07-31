@@ -30,9 +30,9 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "y-junction"
-    / "QUALIFICATION_CONTRACT_V1.json"
+    / "QUALIFICATION_CONTRACT_V2.json"
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK.md")
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V2.md")
 FROZEN_SOURCE_PATHS = (
     "server/flowlab/adapters.py",
     "server/flowlab/execution.py",
@@ -50,6 +50,8 @@ FROZEN_SOURCE_PATHS = (
     "server/tests/test_y_junction_campaign.py",
     "docs/validation/y-junction/QUALIFICATION_CONTRACT_V1.json",
     "docs/validation/y-junction/RUNBOOK.md",
+    "docs/validation/y-junction/QUALIFICATION_CONTRACT_V2.json",
+    "docs/validation/y-junction/RUNBOOK_V2.md",
 )
 
 
@@ -204,6 +206,7 @@ def _project(
             "meshControls": {"yJunctionCellSizeM": float(level["cellSizeM"])},
             "maxIterations": int(contract["productRequest"]["maxIterations"]),
             "tolerance": float(contract["productRequest"]["residualControl"]["p"]),
+            "yJunctionProbeSampling": dict(contract["probeSampling"]),
         },
         "visualization": {
             "mode": "simulate",
@@ -247,6 +250,7 @@ def build_case(
             float(selected["physicalCase"]["nominalReynoldsNumber"]),
             rel_tol=1.0e-12,
         )
+        or profile.get("probeSampling") != selected["probeSampling"]
     ):
         raise YJunctionCampaignError("generated Y-junction profile does not match the frozen contract")
     return case

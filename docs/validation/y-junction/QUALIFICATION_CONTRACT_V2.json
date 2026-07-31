@@ -1,0 +1,203 @@
+{
+  "schema": "flowlab.y-junction-qualification-contract.v1",
+  "contractId": "bounded-symmetric-y-junction-v2",
+  "frozenOn": "2026-07-31",
+  "status": "prospective-frozen-before-first-openfoam-execution",
+  "supersedesExperimentContract": "bounded-symmetric-y-junction-v1",
+  "changeFromV1": {
+    "reason": "V1 fine-grid probes lay exactly on Cartesian cell faces and the default containing-cell sampler selected non-mirrored adjacent cells. V2 freezes point interpolation at the same coordinates before any V2 execution.",
+    "changed": [
+      "probe interpolationScheme is explicitly cellPoint",
+      "probe locations are explicitly fixed"
+    ],
+    "unchanged": [
+      "geometry",
+      "mesh family",
+      "physics",
+      "solver settings",
+      "probe coordinates",
+      "all qualification thresholds",
+      "ownership contract",
+      "claim boundary"
+    ],
+    "v1EvidenceMutable": false
+  },
+  "claim": {
+    "candidate": "Software and numerical qualification of one FlowLab-generated true-3D symmetric Y-junction path under the exact declared geometry, mesh family, steady incompressible laminar conditions, and OpenFOAM runtime.",
+    "geometry": "one 27 mm circular inlet and two identical 27 mm circular branches at plus and minus 30 degrees, all 6 mm diameter",
+    "physics": "steady incompressible laminar, nominal inlet Reynolds number 100",
+    "solver": "OpenFOAM 11",
+    "excluded": [
+      "independent empirical validation",
+      "product or benchmark promotion",
+      "arbitrary networks",
+      "arbitrary branch angles or diameters",
+      "CAD-exact wall geometry",
+      "turbulence",
+      "transient flow",
+      "multiphase flow",
+      "compressible flow",
+      "hybrid meshes",
+      "external release"
+    ]
+  },
+  "physicalCase": {
+    "inletLengthM": 0.027,
+    "branchLengthM": 0.027,
+    "diameterM": 0.006,
+    "branchAnglesDegrees": [
+      30.0,
+      -30.0
+    ],
+    "densityKgPerM3": 1000.0,
+    "dynamicViscosityPaS": 0.001,
+    "inletMeanVelocityMPerS": 0.016666666666666666,
+    "nominalCircularInletFlowM3PerS": 4.7123889803846896e-07,
+    "nominalReynoldsNumber": 100.0,
+    "equalOutletKinematicPressureM2PerS2": 0.0,
+    "asymmetricUpperOutletKinematicPressureM2PerS2": 0.0,
+    "asymmetricLowerOutletKinematicPressureM2PerS2": -0.0002,
+    "asymmetricPressureDifferencePa": 0.2
+  },
+  "productRequest": {
+    "solver": "openfoam",
+    "advancedMode": "incompressible-navier-stokes",
+    "meshMode": "y-junction",
+    "runMode": "steady",
+    "turbulence": "laminar",
+    "maxIterations": 2500,
+    "residualControl": {
+      "p": 1e-08,
+      "U": 1e-08
+    }
+  },
+  "levels": [
+    {
+      "id": "coarse",
+      "cellSizeM": 0.001125,
+      "refinementRatioFromPrevious": null
+    },
+    {
+      "id": "medium",
+      "cellSizeM": 0.00075,
+      "refinementRatioFromPrevious": 1.5
+    },
+    {
+      "id": "fine",
+      "cellSizeM": 0.0005,
+      "refinementRatioFromPrevious": 1.5
+    }
+  ],
+  "probeSampling": {
+    "stationsM": [
+      0.01,
+      0.016,
+      0.022
+    ],
+    "interpolationScheme": "cellPoint",
+    "fixedLocations": true,
+    "zOffsetCellFraction": 0.25
+  },
+  "requiredCases": [
+    "coarse-equal-pressure",
+    "medium-equal-pressure",
+    "fine-equal-pressure",
+    "fine-asymmetric-pressure-negative-control"
+  ],
+  "refinementInterpretation": {
+    "spatialDimension": 3,
+    "uniformCharacteristicCellSizeRatio": 1.5,
+    "cellSizeOperator": "declared uniform Cartesian cube side length",
+    "geometryTreatment": "The circular wall is a Cartesian staircase realization that refines with the solution mesh. Order and GCI therefore combine geometry-realization and solution-discretization effects.",
+    "geometryErrorMayNotBeCancelled": true
+  },
+  "ownershipContract": {
+    "source": "construction-time generated region artifact only",
+    "requiredEdgeRegions": [
+      "inlet-pipe",
+      "upper-branch",
+      "lower-branch"
+    ],
+    "junctionArtifactIdentity": "generated:y-junction:junction-core:v1",
+    "junctionSchematicOwner": null,
+    "viewerGeometryInferenceAllowed": false,
+    "overlappingOrMissingEdgeRangesAllowed": false,
+    "junctionCellsInsideEdgeRangesAllowed": false
+  },
+  "observationOperators": {
+    "generationDeterminism": "Materialize every case twice from the same frozen source and compare the complete generated-file SHA-256 map and canonical mesh generationSha256.",
+    "meshTopology": "Parse checkMesh -allGeometry -allTopology and constant/polyMesh/boundary; require one fluid region, positive minimum volume, all-hex cells, and exactly inlet, outletUpper, outletLower, and walls with the declared patch types.",
+    "flowRate": "Use surfaceFieldValue sum(phi) on inlet, outletUpper, and outletLower at the final retained time. Orient magnitudes using the inlet as inflow and outlets as outflow.",
+    "massImbalance": "abs(abs(Qin)-abs(Qupper)-abs(Qlower))/abs(Qin).",
+    "equalOutletSplit": "abs(Qupper)/(abs(Qupper)+abs(Qlower)).",
+    "mirroredVelocityError": "At the fixed prospectively paired upper/lower branch coordinates, sample U with OpenFOAM cellPoint interpolation, reflect the lower Uy component across y=0, compute vector difference magnitude, then divide RMS difference by RMS upper speed.",
+    "mirroredPressureError": "At the same fixed coordinates, sample p with OpenFOAM cellPoint interpolation, compute RMS pressure difference, and divide by max(abs(mean inlet-probe pressure minus mean outlet pressure), 1e-12 kinematic-pressure units).",
+    "branchPressureDropDifference": "abs(deltaPupper-deltaPlower)/max(abs(0.5*(deltaPupper+deltaPlower)), 1e-12), where each deltaP uses the same junction probe pressure and its outlet patch-average pressure.",
+    "finiteFields": "Require every retained p and U probe value to parse as finite and the solve log to contain no actual floating-point exception, fatal error, or non-finite marker.",
+    "normalTermination": "Require zero solver exit code and an End marker in the retained solver log.",
+    "primaryQoi": "Equal-pressure inlet patch-average p minus the arithmetic mean of outletUpper and outletLower patch-average p, multiplied by densityKgPerM3.",
+    "observedOrderAndGci": "Use the three equal-pressure primary-QoI values, uniform r=1.5, p=ln(abs((Qcoarse-Qmedium)/(Qmedium-Qfine)))/ln(r), and fine GCI=1.25*abs((Qfine-Qmedium)/Qfine)/(r^p-1)*100. A non-monotone, degenerate, non-finite, or out-of-range result fails."
+  },
+  "gates": {
+    "determinism": {
+      "duplicateGenerationHashesMatch": true
+    },
+    "ownership": {
+      "allThreeEdgeRangesPresentExactlyOnce": true,
+      "junctionCellsExplicitlyOutsideEveryEdgeRange": true,
+      "junctionGeneratedArtifactIdentityRequired": true,
+      "geometryDerivedOwnershipAllowed": false
+    },
+    "meshPerCase": {
+      "checkMeshExitCode": 0,
+      "meshOk": true,
+      "connectedFluidRegions": 1,
+      "allCellsHex": true,
+      "minimumCellVolumeM3ExclusiveLowerBound": 0.0,
+      "requiredPatches": {
+        "inlet": "patch",
+        "outletUpper": "patch",
+        "outletLower": "patch",
+        "walls": "wall"
+      },
+      "unexpectedBoundaryPatchesAllowed": false
+    },
+    "solverPerCase": {
+      "exitCode": 0,
+      "normalTerminationRequired": true,
+      "finitePressureAndVelocityRequired": true
+    },
+    "equalPressurePerLevel": {
+      "maximumRelativeMassImbalance": 0.001,
+      "outletUpperFlowFractionMinimum": 0.49,
+      "outletUpperFlowFractionMaximum": 0.51,
+      "maximumMirroredPressureError": 0.02,
+      "maximumMirroredVelocityError": 0.02,
+      "maximumBranchPressureDropDifference": 0.01
+    },
+    "sequence": {
+      "minimumObservedOrder": 0.5,
+      "maximumObservedOrder": 4.0,
+      "maximumFinePrimaryQoiGciPercent": 5.0,
+      "mathematicallyInvalidGciPasses": false
+    },
+    "negativeControl": {
+      "lowerPressureOutletMustHaveGreaterOutflow": true
+    }
+  },
+  "retention": {
+    "rawCampaignLocation": "ignored benchmarks/cases/y-junction/campaigns tree",
+    "overwriteAllowed": false,
+    "editRetainedEvidenceInPlaceAllowed": false,
+    "freezeImmutablePackageReadOnly": true,
+    "gitAdmission": "Only separately reviewed compact artifacts explicitly allowlisted in benchmarks/tracked-evidence.txt may be force-added."
+  },
+  "review": {
+    "controlledIndependentReviewRequiredForAnyPromotion": true,
+    "reviewMustBindExactPackageDigest": true,
+    "validationStateChangeAuthorized": false,
+    "productClaimChangeAuthorized": false,
+    "registryMutationAuthorized": false
+  },
+  "promotionAuthorized": false
+}
