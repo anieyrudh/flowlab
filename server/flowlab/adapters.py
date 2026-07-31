@@ -2782,7 +2782,7 @@ functions
 """
 
 
-def _openfoam_y_junction_function_objects(profile: dict[str, Any]) -> str:
+def _openfoam_y_junction_function_object_entries(profile: dict[str, Any]) -> str:
     locations: list[list[float]] = [[-0.002, 0.0, 0.25 * float(profile["geometry"]["cellSizeM"])]]
     for pair in profile["probePairs"]:
         locations.extend([pair["upper"], pair["lower"]])
@@ -2817,8 +2817,6 @@ def _openfoam_y_junction_function_objects(profile: dict[str, Any]) -> str:
 """
         )
     return f"""
-functions
-{{
     residuals
     {{
         type            residuals;
@@ -2886,8 +2884,15 @@ functions
         patches         (walls);
     }}
 {''.join(surface_objects)}
-}}
 """
+
+
+def _openfoam_y_junction_function_objects(profile: dict[str, Any]) -> str:
+    return (
+        "\nfunctions\n{\n"
+        + _openfoam_y_junction_function_object_entries(profile)
+        + "}\n"
+    )
 
 
 def _openfoam_y_junction_control_dict(
@@ -6683,7 +6688,7 @@ class OpenFOAMAdapter(SolverAdapter):
                 )
             ),
             "system/functions": (
-                _openfoam_y_junction_function_objects(y_junction_profile)
+                _openfoam_y_junction_function_object_entries(y_junction_profile)
                 if y_junction_profile is not None
                 else _openfoam_function_object_entries(
                     mesh,

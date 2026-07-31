@@ -233,6 +233,8 @@ def test_openfoam_y_junction_case_binds_only_explicit_edge_ranges(monkeypatch) -
     assert "outletUpper" in case.files["0/U"]
     assert "outletLower" in case.files["0/p"]
     assert "yJunctionMirroredProbes" in case.files["system/controlDict"]
+    assert not case.files["system/functions"].lstrip().startswith("functions")
+    assert "yJunctionMirroredProbes" in case.files["system/functions"]
     assert validate_solver_case(case) == []
 
 
