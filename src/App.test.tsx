@@ -765,6 +765,33 @@ describe("FlowLab result visualization", () => {
     });
   });
 
+  it("selects the bounded Y-junction mode with frozen three-grid cell sizes", async () => {
+    render(<App />);
+
+    await screen.findByLabelText("Solver runtime readiness");
+    fireEvent.change(screen.getByLabelText("Mesh mode"), { target: { value: "y-junction" } });
+
+    expect(screen.getByLabelText("Run mode")).toHaveValue("steady");
+    expect(screen.getByLabelText("Y-junction cell size")).toHaveValue(0.001125);
+    expect(screen.getByText(/junction cells retain a generated artifact identity/i)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Mesh resolution"), { target: { value: "medium" } });
+    expect(screen.getByLabelText("Y-junction cell size")).toHaveValue(0.00075);
+
+    await waitFor(() => {
+      const saved = JSON.parse(window.localStorage.getItem("flowlab.project.v1") ?? "{}");
+      expect(saved.solver).toMatchObject({
+        meshMode: "y-junction",
+        runMode: "steady",
+        turbulence: "laminar",
+        meshResolution: "medium",
+        meshControls: {
+          yJunctionCellSizeM: 0.00075
+        }
+      });
+    });
+  });
+
   it("shows parsed solver progress from a queued advanced job", async () => {
     render(<App />);
 

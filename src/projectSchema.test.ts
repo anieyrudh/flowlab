@@ -1,6 +1,77 @@
 import { describe, expect, it } from "vitest";
 import { mixerPreset, pipeLossPreset, venturiPreset } from "./data/presets";
 import { parseProject } from "./projectSchema";
+import type { FluidProject } from "./types";
+
+function boundedYJunctionProject(): FluidProject {
+  const project = structuredClone(pipeLossPreset);
+  const source = { ...project.nodes.source, position: { x: 100, y: 250 } };
+  const sinkTemplate = project.nodes.sink;
+  const pipe = project.edges.pipe;
+  project.name = "Bounded symmetric Y-junction";
+  project.nodes = {
+    source,
+    junction: {
+      id: "junction",
+      type: "junction",
+      label: "Generated junction",
+      position: { x: 300, y: 250 },
+      elevation: 0
+    },
+    upper: {
+      ...sinkTemplate,
+      id: "upper",
+      label: "Upper outlet",
+      position: { x: 500, y: 365.47 },
+      flowDemand: 2.3561944901923448e-7
+    },
+    lower: {
+      ...sinkTemplate,
+      id: "lower",
+      label: "Lower outlet",
+      position: { x: 500, y: 134.53 },
+      flowDemand: 2.3561944901923448e-7
+    }
+  };
+  const edgeBase = {
+    ...pipe,
+    length: 0.027,
+    shape: { kind: "circular" as const, diameter: 0.006 },
+    outletDiameter: undefined
+  };
+  project.edges = {
+    "inlet-pipe": {
+      ...edgeBase,
+      id: "inlet-pipe",
+      label: "Inlet pipe",
+      from: "source",
+      to: "junction"
+    },
+    "upper-branch": {
+      ...edgeBase,
+      id: "upper-branch",
+      label: "Upper branch",
+      from: "junction",
+      to: "upper"
+    },
+    "lower-branch": {
+      ...edgeBase,
+      id: "lower-branch",
+      label: "Lower branch",
+      from: "junction",
+      to: "lower"
+    }
+  };
+  project.solver = {
+    ...project.solver,
+    tier: "openfoam",
+    meshMode: "y-junction",
+    runMode: "steady",
+    turbulence: "laminar",
+    meshControls: { yJunctionCellSizeM: 0.001125 }
+  };
+  return project;
+}
 
 describe("project network validation", () => {
   it("accepts legacy projects with implicit multi-input junction ports", () => {
@@ -252,6 +323,27 @@ describe("project network validation", () => {
     const parsed = parseProject(project);
 
     expect(parsed.ok).toBe(true);
+  });
+
+  it("accepts only the bounded symmetric true-3D Y-junction topology", () => {
+    expect(parseProject(boundedYJunctionProject()).ok).toBe(true);
+
+    const asymmetric = boundedYJunctionProject();
+    asymmetric.edges["lower-branch"].shape = { kind: "circular", diameter: 0.005 };
+    expect(parseProject(asymmetric)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("identical constant diameter")
+    });
+  });
+
+  it("fails closed when Y-junction ownership would have ambiguous branch topology", () => {
+    const project = boundedYJunctionProject();
+    project.nodes.lower.position.y = project.nodes.upper.position.y;
+
+    expect(parseProject(project)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("one upper and one lower branch")
+    });
   });
 
   it("rejects ambiguous imported networks without source and sink boundaries", () => {

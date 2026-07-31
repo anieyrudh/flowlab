@@ -185,8 +185,9 @@ export type SolverSettings = {
   runMode?: "transient" | "steady";
   // OpenFOAM mesh topology. "planar-2d" (default) is a one-cell-thick channel
   // strip; "axisymmetric" compiles a circular profile into a 3D wedge; and
-  // "full-ogrid" is the bounded full-360, five-block straight-pipe volume.
-  meshMode?: "planar-2d" | "axisymmetric" | "full-ogrid";
+  // "full-ogrid" is the bounded full-360 straight pipe; "y-junction" is the
+  // single generated one-inlet/two-branch qualification path.
+  meshMode?: "planar-2d" | "axisymmetric" | "full-ogrid" | "y-junction";
   axisymmetricBenchmark?: {
     fixtureId: "straight-pipe";
     boundaryCondition: "periodic-pressure-gradient";
@@ -210,6 +211,7 @@ export type SolverSettings = {
     fullOGridAnnularRadialCells?: number;
     fullOGridCircumferentialCells?: number;
     fullOGridCoreCellsPerSide?: number;
+    yJunctionCellSizeM?: number;
     // Transverse (across-gap) cell distribution. "boundary-layer" (default)
     // clusters cells at the walls for near-wall/turbulent resolution; "uniform"
     // spaces them evenly, which resolves a laminar parabolic core far better and
@@ -370,6 +372,12 @@ export type ResultComponentMap = {
           edgeId: EdgeId;
           cellStart: number;
           cellCount: number;
+        }>;
+        unownedCellRanges?: Array<{
+          artifactId: string;
+          cellStart: number;
+          cellCount: number;
+          schematicOwner: null;
         }>;
       }
   >;

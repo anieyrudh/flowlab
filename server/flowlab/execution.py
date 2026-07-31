@@ -2605,6 +2605,21 @@ def _openfoam_metric_patch_expectations(
     files: dict[str, str],
     surface_geometry: dict[str, Any],
 ) -> tuple[dict[str, list[str]], bool]:
+    try:
+        y_junction_profile = json.loads(
+            files.get("constant/flowlab_y_junction_profile.json", "")
+        )
+    except json.JSONDecodeError:
+        y_junction_profile = {}
+    if (
+        isinstance(y_junction_profile, dict)
+        and y_junction_profile.get("schema") == "flowlab.y-junction-profile.v1"
+    ):
+        return {
+            "inlet": ["inlet"],
+            "outlet": ["outletUpper", "outletLower"],
+            "wall": ["walls"],
+        }, False
     _, _, reviewed_surfaces, _ = _reviewed_surface_status(surface_geometry)
     if reviewed_surfaces:
         inlet = [
@@ -3362,6 +3377,18 @@ def validate_solver_case(case: SolverCase) -> list[str]:
             isinstance(full_ogrid_profile, dict)
             and full_ogrid_profile.get("schema") == "flowlab.full-ogrid-profile.v1"
         )
+        try:
+            y_junction_profile = json.loads(
+                files.get("constant/flowlab_y_junction_profile.json", "")
+            )
+        except json.JSONDecodeError:
+            y_junction_profile = {}
+        is_y_junction = (
+            isinstance(y_junction_profile, dict)
+            and y_junction_profile.get("schema") == "flowlab.y-junction-profile.v1"
+            and y_junction_profile.get("effectiveMeshMode")
+            == "generated-cartesian-all-hex-y-junction"
+        )
         if is_axisymmetric_wedge:
             try:
                 axisymmetric_profile = json.loads(files.get("constant/flowlab_axisymmetric_profile.json", ""))
@@ -3494,11 +3521,102 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                     issues.append("OpenFOAM full O-grid verification requires a discrete-flux-normalized parabolic inlet and pressure-coupled outlet.")
                 if "residualControl" not in files.get("system/fvSolution", ""):
                     issues.append("OpenFOAM full O-grid verification requires direct steady SIMPLE residual controls.")
+        if is_y_junction:
+            try:
+                y_preview = json.loads(files.get("mesh/flowlab_mesh.json", ""))
+            except json.JSONDecodeError:
+                y_preview = {}
+            topology = y_preview.get("topology") if isinstance(y_preview.get("topology"), dict) else {}
+            volume_quality = (
+                y_preview.get("volumeQuality")
+                if isinstance(y_preview.get("volumeQuality"), dict)
+                else {}
+            )
+            regions = y_preview.get("regions") if isinstance(y_preview.get("regions"), list) else []
+            edge_regions = [
+                region
+                for region in regions
+                if isinstance(region, dict) and region.get("role") == "edge"
+            ]
+            junction_regions = [
+                region
+                for region in regions
+                if isinstance(region, dict) and region.get("role") == "junction"
+            ]
+            profile_edges = y_junction_profile.get("pathEdgeIds")
+            if (
+                y_preview.get("spatialDimension") != 3
+                or y_preview.get("representation")
+                != "generated-cartesian-all-hex-y-junction"
+                or y_preview.get("proxyGeometry") is not False
+                or topology.get("connectedFluidRegions") != 1
+                or topology.get("portPatchCount") != 3
+                or topology.get("portPatches")
+                != ["inlet", "outletUpper", "outletLower"]
+                or topology.get("cellTypes") != ["hex"]
+                or volume_quality.get("positiveVolume") is not True
+                or float(volume_quality.get("minimumCellVolumeM3", 0.0)) <= 0.0
+            ):
+                issues.append(
+                    "OpenFOAM Y-junction requires one positive-volume connected true-3D all-hex generated mesh."
+                )
+            if (
+                not isinstance(profile_edges, list)
+                or len(profile_edges) != 3
+                or {region.get("edgeId") for region in edge_regions} != set(profile_edges)
+                or len(edge_regions) != 3
+            ):
+                issues.append(
+                    "OpenFOAM Y-junction must declare exactly one generated source-cell range for each of its three edges."
+                )
+            if (
+                len(junction_regions) != 1
+                or junction_regions[0].get("artifactIdentity", {}).get("artifactId")
+                != "generated:y-junction:junction-core:v1"
+                or junction_regions[0].get("artifactIdentity", {}).get("schematicOwner")
+                is not None
+            ):
+                issues.append(
+                    "OpenFOAM Y-junction junction cells require the dedicated generated artifact identity and no schematic owner."
+                )
+            ranges = sorted(
+                (
+                    int(region.get("cellStart", -1)),
+                    int(region.get("cellCount", 0)),
+                    str(region.get("edgeId", "")),
+                )
+                for region in edge_regions
+            )
+            junction_start = (
+                int(junction_regions[0].get("cellStart", -1))
+                if junction_regions
+                else -1
+            )
+            if (
+                any(start < 0 or count <= 0 for start, count, _edge in ranges)
+                or any(
+                    ranges[index][0] + ranges[index][1] > ranges[index + 1][0]
+                    for index in range(len(ranges) - 1)
+                )
+                or (ranges and ranges[-1][0] + ranges[-1][1] > junction_start)
+            ):
+                issues.append(
+                    "OpenFOAM Y-junction edge source-cell ranges overlap or include generated junction cells."
+                )
+            for field in ("0/U", "0/p"):
+                field_text = files.get(field, "")
+                for patch in ("inlet", "outletUpper", "outletLower", "walls"):
+                    if not _field_defines_patch(field_text, patch):
+                        issues.append(
+                            f"OpenFOAM Y-junction field `{field}` is missing patch `{patch}`."
+                        )
         expected_block_patches = (
             ("inlet", "outlet", "walls", "front", "back")
             if is_axisymmetric_wedge
             else ("inlet", "outlet", "walls")
             if is_full_ogrid
+            else ("inlet", "outletUpper", "outletLower", "walls")
+            if is_y_junction
             else ("inlet", "outlet", "walls", "frontAndBack")
         )
         for patch in expected_block_patches:
@@ -3506,7 +3624,12 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                 issues.append(f"OpenFOAM `system/blockMeshDict` is missing `{patch}` boundary patch.")
         poly_boundary = files.get("constant/polyMesh/boundary")
         if poly_boundary:
-            for patch in ("inlet", "outlet", "walls", "frontAndBack"):
+            expected_poly_patches = (
+                ("inlet", "outletUpper", "outletLower", "walls")
+                if is_y_junction
+                else ("inlet", "outlet", "walls", "frontAndBack")
+            )
+            for patch in expected_poly_patches:
                 if patch not in poly_boundary:
                     issues.append(f"OpenFOAM `constant/polyMesh/boundary` is missing `{patch}` boundary patch.")
             for path in (
@@ -3601,6 +3724,8 @@ def validate_solver_case(case: SolverCase) -> list[str]:
             if is_full_ogrid
             else "axisymmetricProfileProbes"
             if is_axisymmetric_wedge
+            else "yJunctionMirroredProbes"
+            if is_y_junction
             else "centerlineProbes"
         )
         required_function_objects = ["residuals", profile_probe_name, "wallForces", "patchFlowRate", "patchAverage", "wallShearStress"]
@@ -4831,9 +4956,16 @@ def _apply_openfoam_runtime_style(case_dir: Path, style: str, lines: list[str]) 
 
 
 def _openfoam_required_mesh_commands(case_dir: Path, *, skip_snappy: bool = False) -> list[str]:
-    if _openfoam_case_is_axisymmetric_wedge(case_dir) or _openfoam_case_is_full_ogrid(case_dir):
+    if (
+        _openfoam_case_is_axisymmetric_wedge(case_dir)
+        or _openfoam_case_is_full_ogrid(case_dir)
+        or _openfoam_case_is_y_junction(case_dir)
+    ):
         commands = ["checkMesh"]
-        if not _openfoam_has_base_mesh(case_dir):
+        if (
+            not _openfoam_has_base_mesh(case_dir)
+            and not _openfoam_case_is_y_junction(case_dir)
+        ):
             commands.insert(0, "blockMesh")
         return commands
     commands = ["surfaceFeatureExtract", "snappyHexMesh", "checkMesh"]
@@ -4882,6 +5014,37 @@ def _openfoam_case_is_full_ogrid(case_dir: Path) -> bool:
         and profile.get("effectiveMeshMode") == "full-revolution-five-block-ogrid"
         and topology.get("blockCount") == 5
         and topology.get("collapsedAxisCells") == 0
+    )
+
+
+def _openfoam_case_is_y_junction(case_dir: Path) -> bool:
+    """Recognize only the manifest-bound generated direct-polyMesh path."""
+
+    try:
+        profile = json.loads(
+            (case_dir / "constant" / "flowlab_y_junction_profile.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, json.JSONDecodeError):
+        return False
+    required_mesh_files = (
+        "points",
+        "faces",
+        "owner",
+        "neighbour",
+        "boundary",
+        "cellZones",
+    )
+    return (
+        profile.get("schema") == "flowlab.y-junction-profile.v1"
+        and profile.get("effectiveMeshMode")
+        == "generated-cartesian-all-hex-y-junction"
+        and profile.get("ownership", {}).get("geometryInferenceAllowed") is False
+        and all(
+            (case_dir / "constant" / "polyMesh" / name).is_file()
+            for name in required_mesh_files
+        )
     )
 
 
@@ -5501,7 +5664,8 @@ class JobManager:
         cad_reviewed = starter_geometry.get("cadReviewed") is True
         is_axisymmetric_wedge = _openfoam_case_is_axisymmetric_wedge(case_dir)
         is_full_ogrid = _openfoam_case_is_full_ogrid(case_dir)
-        is_direct_block_mesh = is_axisymmetric_wedge or is_full_ogrid
+        is_y_junction = _openfoam_case_is_y_junction(case_dir)
+        is_direct_block_mesh = is_axisymmetric_wedge or is_full_ogrid or is_y_junction
         skip_snappy_for_starter = _openfoam_uses_starter_fitted_mesh(case_dir, handoff) or is_direct_block_mesh
         _, missing_boundary_tags, _ = _reviewed_boundary_tag_status(starter_geometry)
         _, missing_surface_roles, _, required_patch_names = _reviewed_surface_status(surface_geometry)
@@ -5511,6 +5675,9 @@ class JobManager:
             missing_boundary_tags = []
         elif is_full_ogrid:
             required_patch_names = ["inlet", "outlet", "walls"]
+            missing_boundary_tags = []
+        elif is_y_junction:
+            required_patch_names = ["inlet", "outletUpper", "outletLower", "walls"]
             missing_boundary_tags = []
 
         command_runs: list[dict[str, Any]] = []
@@ -5545,7 +5712,13 @@ class JobManager:
                 return "; ".join(str(item) for item in blockers) or "Missing OpenFOAM native mesh command."
 
         if is_direct_block_mesh:
-            geometry_label = "axisymmetric blockMesh wedge" if is_axisymmetric_wedge else "full-revolution blockMesh O-grid"
+            geometry_label = (
+                "axisymmetric blockMesh wedge"
+                if is_axisymmetric_wedge
+                else "full-revolution blockMesh O-grid"
+                if is_full_ogrid
+                else "generated direct-polyMesh Y-junction"
+            )
             command_runs.append(
                 {
                     "command": "surfaceFeatureExtract",
@@ -5554,7 +5727,7 @@ class JobManager:
                     "status": "skipped",
                     "exitCode": None,
                     "logPath": None,
-                    "reason": f"{geometry_label} is defined directly by blockMesh and has no triangulated surface feature stage.",
+                    "reason": f"{geometry_label} is defined directly by its generated solver mesh and has no triangulated surface feature stage.",
                 }
             )
             self._append_log(job_id, f"OpenFOAM native mesh: skipping surfaceFeatureExtract for {geometry_label}.")
@@ -5642,6 +5815,8 @@ class JobManager:
                 if is_axisymmetric_wedge
                 else "Full O-grid geometry is fully defined by blockMesh; surface extraction and snappyHexMesh are not applicable."
                 if is_full_ogrid
+                else "The generated Y-junction is fully defined by its manifest-bound constant/polyMesh; surface extraction and snappyHexMesh are not applicable."
+                if is_y_junction
                 else "Skipped for FlowLab-generated fitted starter polyMesh with empty front/back patches; production reviewed STL meshing still requires snappyHexMesh evidence."
             )
             command_runs.append(
@@ -5659,6 +5834,8 @@ class JobManager:
                 self._append_log(job_id, "OpenFOAM native mesh: skipping snappyHexMesh for axisymmetric blockMesh wedge.")
             elif is_full_ogrid:
                 self._append_log(job_id, "OpenFOAM native mesh: skipping snappyHexMesh for full-revolution blockMesh O-grid.")
+            elif is_y_junction:
+                self._append_log(job_id, "OpenFOAM native mesh: skipping snappyHexMesh for generated direct-polyMesh Y-junction.")
             else:
                 self._append_log(
                     job_id,

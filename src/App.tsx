@@ -826,8 +826,30 @@ export function verifiedResultComponentLink(
       && sourceCellIndex >= candidate.cellStart
       && sourceCellIndex < candidate.cellStart + candidate.cellCount
   );
+  const generatedUnowned = (binding.unownedCellRanges ?? []).filter(
+    (candidate) =>
+      typeof candidate.artifactId === "string"
+      && candidate.artifactId.length > 0
+      && candidate.schematicOwner === null
+      && Number.isInteger(candidate.cellStart)
+      && Number.isInteger(candidate.cellCount)
+      && candidate.cellStart >= 0
+      && candidate.cellCount > 0
+      && candidate.cellStart + candidate.cellCount <= binding.sourceCellCount
+      && sourceCellIndex >= candidate.cellStart
+      && sourceCellIndex < candidate.cellStart + candidate.cellCount
+  );
+  if (owners.length === 0 && generatedUnowned.length === 1) {
+    return {
+      state: "unlinked",
+      message: "Verified generated junction cell has no schematic edge owner — probe only."
+    };
+  }
   if (owners.length !== 1) {
     return { state: "unlinked", message: "Probed result cell has no unique verified schematic owner — probe only." };
+  }
+  if (generatedUnowned.length !== 0) {
+    return { state: "unlinked", message: "Result provenance overlaps owned and unowned generated ranges — probe only." };
   }
   const edge = currentProject.edges[owners[0].edgeId];
   return { state: "linked", edgeId: edge.id, message: `Verified cell link: ${edge.label}` };
@@ -3392,6 +3414,11 @@ function MeshControlsPanel({
     medium: { axial: 32, annular: 8, circumference: 64, core: 16 },
     fine: { axial: 64, annular: 16, circumference: 128, core: 32 }
   }[solver.meshResolution];
+  const yJunctionCellSizeDefaults = {
+    coarse: 0.001125,
+    medium: 0.00075,
+    fine: 0.0005
+  }[solver.meshResolution];
 
   function fullOGridControls(
     patch: Partial<{ axial: number; annular: number; circumference: number; core: number }> = {}
@@ -3454,7 +3481,20 @@ function MeshControlsPanel({
             }[meshResolution];
             onSolverChange({
               meshResolution,
-              ...(solver.meshMode === "full-ogrid" ? { meshControls: { ...controls, ...defaults } } : {})
+              ...(solver.meshMode === "full-ogrid"
+                ? { meshControls: { ...controls, ...defaults } }
+                : solver.meshMode === "y-junction"
+                  ? {
+                      meshControls: {
+                        ...controls,
+                        yJunctionCellSizeM: {
+                          coarse: 0.001125,
+                          medium: 0.00075,
+                          fine: 0.0005
+                        }[meshResolution]
+                      }
+                    }
+                  : {})
             });
           }}
         >
@@ -3492,6 +3532,16 @@ function MeshControlsPanel({
                       turbulence: "laminar",
                       meshControls: fullOGridControls()
                     }
+                  : meshMode === "y-junction"
+                    ? {
+                        meshMode,
+                        runMode: "steady",
+                        turbulence: "laminar",
+                        meshControls: {
+                          ...controls,
+                          yJunctionCellSizeM: yJunctionCellSizeDefaults
+                        }
+                      }
                   : { meshMode }
               );
             }}
@@ -3499,6 +3549,7 @@ function MeshControlsPanel({
             <option value="planar-2d">Planar 2D (default)</option>
             <option value="axisymmetric">Axisymmetric (3D pipe)</option>
             <option value="full-ogrid">Full 360 O-grid (straight pipe)</option>
+            <option value="y-junction">True 3D Y-junction (bounded ±30°)</option>
           </select>
         </label>
       )}
@@ -3551,6 +3602,24 @@ function MeshControlsPanel({
               onChange={(event) => onMeshControlsChange(fullOGridControls({ core: Number(event.target.value) }))}
             />
           </label>
+        </div>
+      ) : null}
+      {solver.meshMode === "y-junction" ? (
+        <div className="mesh-control-grid" aria-label="Y-junction exact mesh control">
+          <label>
+            Cell size (m)
+            <input
+              aria-label="Y-junction cell size"
+              type="number"
+              min={0.000001}
+              step={0.000001}
+              value={controls.yJunctionCellSizeM ?? yJunctionCellSizeDefaults}
+              onChange={(event) => onMeshControlsChange({ yJunctionCellSizeM: Number(event.target.value) })}
+            />
+          </label>
+          <p>
+            One inlet and two identical circular branches at ±30°. Junction cells retain a generated artifact identity and remain unowned by schematic edges.
+          </p>
         </div>
       ) : null}
       <label>

@@ -237,6 +237,14 @@ async function openFresh(
               cellRanges: [
                 { edgeId: "inlet", cellStart: 0, cellCount: 1 },
                 { edgeId: "outlet", cellStart: 2, cellCount: 1 }
+              ],
+              unownedCellRanges: [
+                {
+                  artifactId: "generated:y-junction:junction-core:v1",
+                  cellStart: 1,
+                  cellCount: 1,
+                  schematicOwner: null
+                }
               ]
             }
           ]
@@ -424,6 +432,42 @@ test.describe("FlowLab editor workspace", () => {
         fullOGridAnnularRadialCells: 8,
         fullOGridCircumferentialCells: 64,
         fullOGridCoreCellsPerSide: 16
+      }
+    });
+  });
+
+  test("wires the bounded true-3D Y-junction mode and explicit cell size into the request", async ({ page }) => {
+    await openFresh(page, "passed", { runnableOpenfoam: true });
+    await showStage(page, "CFD");
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByLabel("Mesh mode").selectOption("y-junction");
+
+    await expect(page.getByLabel("Run mode")).toHaveValue("steady");
+    await expect(page.getByLabel("Y-junction cell size")).toHaveValue("0.001125");
+    await expect(page.getByText(/junction cells retain a generated artifact identity/i)).toBeVisible();
+
+    await page.getByLabel("Mesh resolution").selectOption("fine");
+    await expect(page.getByLabel("Y-junction cell size")).toHaveValue("0.0005");
+
+    const generatedRequest = page.waitForRequest((request) => request.url().endsWith("/api/cases/generate"));
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    const request = await generatedRequest;
+    const payload = request.postDataJSON() as {
+      project: {
+        solver: {
+          meshMode?: string;
+          runMode?: string;
+          turbulence?: string;
+          meshControls?: Record<string, number>;
+        };
+      };
+    };
+    expect(payload.project.solver).toMatchObject({
+      meshMode: "y-junction",
+      runMode: "steady",
+      turbulence: "laminar",
+      meshControls: {
+        yJunctionCellSizeM: 0.0005
       }
     });
   });
