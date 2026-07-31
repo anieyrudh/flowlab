@@ -69,6 +69,10 @@ import {
   runValidatedPreset
 } from "./services/backend";
 import { parseProject } from "./projectSchema";
+import {
+  selectPreviewAuthority,
+  type LoadedResultProvenance
+} from "./previewAuthority";
 import { useFlowStore } from "./state/useFlowStore";
 import { defaultCinemaCamera as initialCinemaCamera, type CinemaCameraState } from "./components/viewportModel";
 import type {
@@ -117,10 +121,6 @@ export type ResultSnapshot = {
   preview?: boolean;
   provenance?: LoadedResultProvenance;
 };
-
-type LoadedResultProvenance =
-  | { kind: "imported" }
-  | { kind: "case-artifact"; caseId: string; jobId: string; artifactName: string };
 
 type ResultComponentLink =
   | { state: "linked"; edgeId?: string; message: string }
@@ -224,6 +224,21 @@ const defaultCinemaCamera: CinemaCameraState = {
   pitch: 24,
   zoom: 1
 };
+
+export function generatedCaseMeshPreview(solverCase: SolverCase | null): VtkResultDataset | null {
+  if (!solverCase) return null;
+  try {
+    const projectSnapshot = JSON.parse(solverCase.files["flowlab_project.json"] ?? "{}") as {
+      solver?: { meshMode?: string };
+    };
+    const meshMode = projectSnapshot.solver?.meshMode ?? "planar-2d";
+    if (meshMode === "planar-2d") return null;
+    const meshText = solverCase.files["mesh/flowlab_mesh.vtk"] ?? solverCase.files["mesh/flowlab_mesh.vtu"];
+    return meshText ? parseVtkResult(meshText, "generated-case mesh") : null;
+  } catch {
+    return null;
+  }
+}
 
 export function validatedRunStatusLabel(
   evidenceStatus: string,
@@ -759,6 +774,9 @@ export function verifiedResultComponentLink(
   ownerCellIndex?: number
 ): ResultComponentLink {
   const provenance = snapshot?.provenance;
+  if (provenance?.kind === "fixture") {
+    return { state: "unlinked", message: "Fixture result — developer example; probe only." };
+  }
   if (!provenance || provenance.kind !== "case-artifact") {
     return { state: "unlinked", message: "Imported result — no verified schematic link." };
   }
@@ -880,7 +898,7 @@ export default function App() {
   const [recentJobs, setRecentJobs] = useState<RecentJob[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(true);
   const [activeDockPanel, setActiveDockPanel] = useState<DockPanelId>("field");
-  const [isRunning, setIsRunning] = useState(true);
+  const [illustrativeEstimateAnimation, setIllustrativeEstimateAnimation] = useState(false);
   const [resultSnapshots, setResultSnapshots] = useState<ResultSnapshot[]>([]);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const [isPlayingResults, setIsPlayingResults] = useState(false);
@@ -890,6 +908,8 @@ export default function App() {
   const [activeVectorComponent, setActiveVectorComponent] = useState<ResultVectorComponent>("magnitude");
   const [resultColorMap, setResultColorMap] = useState<ResultColorMap>("turbo");
   const [cinemaCamera, setCinemaCamera] = useState<CinemaCameraState>(defaultCinemaCamera);
+  const [cinemaRenderBackend, setCinemaRenderBackend] = useState<"pending" | "webgl" | "2d">("pending");
+  const [use2dProjection, setUse2dProjection] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [resultFieldFilter, setResultFieldFilter] = useState("");
   const [probeTarget, setProbeTarget] = useState<ProbeTarget | null>(null);
@@ -906,6 +926,43 @@ export default function App() {
   const selectedNodeResult = selectedNode ? result.nodeResults[selectedNode.id] : null;
   const activeSnapshot = resultSnapshots[activeResultIndex] ?? null;
   const loadedResult = activeSnapshot?.dataset ?? null;
+  const generatedMeshPreview = useMemo(() => generatedCaseMeshPreview(caseRecord), [caseRecord]);
+  const activeCaseSnapshot = useMemo(
+    () =>
+      [...resultSnapshots].reverse().find(
+        (snapshot) =>
+          snapshot.provenance?.kind === "case-artifact"
+          && snapshot.provenance.caseId === caseRecord?.id
+          && snapshot.provenance.jobId === jobRecord?.id
+      ) ?? null,
+    [caseRecord?.id, jobRecord?.id, resultSnapshots]
+  );
+  const authoritySnapshot = project.visualization.mode === "sweep"
+    ? activeCaseSnapshot
+    : project.visualization.mode === "analyze"
+      ? activeSnapshot
+      : null;
+  const previewAuthority = selectPreviewAuthority({
+    stage: project.visualization.mode,
+    snapshot: authoritySnapshot,
+    hasGeneratedCaseMesh: Boolean(generatedMeshPreview)
+  });
+  const authoritativeDataset = project.visualization.mode === "sweep"
+    ? authoritySnapshot?.dataset ?? generatedMeshPreview
+    : project.visualization.mode === "analyze"
+      ? activeSnapshot?.dataset ?? null
+      : null;
+  const illustrativeAnimationActive = project.visualization.mode === "simulate" && illustrativeEstimateAnimation;
+  const visualProject = useMemo(
+    () => ({
+      ...project,
+      visualization: {
+        ...project.visualization,
+        particles: project.visualization.mode === "simulate" && illustrativeEstimateAnimation
+      }
+    }),
+    [illustrativeEstimateAnimation, project]
+  );
   const currentOpenBoundaryCampaign = validatedBenchmarks.find(
     (benchmark) => benchmark.id === "laminar-open-boundary-all-hex-v1"
   ) ?? null;
@@ -1177,11 +1234,6 @@ export default function App() {
       if (modifier && event.key === "4") {
         event.preventDefault();
         scrollToPanel("reference-cases-panel");
-        return;
-      }
-      if (event.key === " ") {
-        event.preventDefault();
-        setIsRunning((value) => !value);
         return;
       }
       if (event.key === "Delete" || event.key === "Backspace") {
@@ -1559,7 +1611,13 @@ export default function App() {
       const response = await fetch("/fixtures/venturi-result.vtk");
       if (!response.ok) throw new Error(`Fixture request failed: ${response.status}`);
       const text = await response.text();
-      addResultSnapshot(parseVtkResult(text, "venturi-result.vtk"), "venturi-result.vtk");
+      addResultSnapshot(
+        parseVtkResult(text, "venturi-result.vtk"),
+        "venturi-result.vtk",
+        undefined,
+        "fixture:venturi-result.vtk",
+        { kind: "fixture" }
+      );
       setResultError(null);
       setMode("analyze");
       setOverlay("pressure");
@@ -1596,10 +1654,6 @@ export default function App() {
         </div>
 
         <div className="toolbar-right">
-          <div className={`solver-chip ${result.stable ? "ok" : "bad"}`}>
-            <Activity size={16} />
-            Preview animation {isRunning ? "running" : "paused"}
-          </div>
           {jobRecord ? (
             <div className="viewing-run-chip" title={jobRecord.id}>
               Viewing: {solverLabels[jobRecord.solver]} · {jobRecord.status}
@@ -1610,10 +1664,6 @@ export default function App() {
             Inspector
           </button>
           <div className="toolbar-actions">
-            <button aria-pressed={isRunning} aria-keyshortcuts="Space" onClick={() => setIsRunning((value) => !value)} title={isRunning ? "Pause animation" : "Play animation"}>
-              {isRunning ? <Pause size={18} /> : <Play size={18} />}
-              <span>{isRunning ? "Pause animation" : "Play animation"}</span>
-            </button>
             <button type="button" aria-label="Undo" aria-keyshortcuts="Meta+Z Control+Z" disabled={!canUndo} onClick={undo} title="Undo model edit">
               <Undo2 size={17} />
             </button>
@@ -1739,10 +1789,6 @@ export default function App() {
                 <button aria-pressed={project.visualization.overlay !== "geometry"} onClick={() => chooseOverlay(project.visualization.overlay === "geometry" ? "velocity" : "geometry")}>
                   <span className="visibility-dot" style={{ background: "#19d4ff" }} />
                   Flow Field
-                </button>
-                <button aria-pressed={project.visualization.particles} onClick={() => updateVisualization({ particles: !project.visualization.particles })}>
-                  <span className="visibility-dot" style={{ background: "#62f3bd" }} />
-                  Particles
                 </button>
                 <button aria-pressed={project.visualization.mode === "analyze"} onClick={() => { setMode("analyze"); setProjectMessage("Probe mode enabled. Click the canvas to sample the active field."); }}>
                   <span className="visibility-dot" style={{ background: "#f7d84b" }} />
@@ -1881,8 +1927,9 @@ export default function App() {
                 {overlayOptions.map((overlay) => <option key={overlay.id} value={overlay.id}>{overlay.label}</option>)}
               </select>
             </label>
-            <span className={`workspace-link-state ${activeResultLink.state}`} aria-live="polite">
-              {loadedResult ? activeResultLink.message : "Select an object in either view to link it."}
+            <span className={`workspace-link-state ${authoritySnapshot ? activeResultLink.state : ""}`} aria-live="polite">
+              {previewAuthority.label}
+              {project.visualization.mode === "analyze" && authoritySnapshot ? ` · ${activeResultLink.message}` : ""}
             </span>
           </>
         }
@@ -1894,7 +1941,7 @@ export default function App() {
             </header>
             <div className="workspace-view-canvas">
               <SimulationCanvas
-                project={project}
+                project={visualProject}
                 result={result}
                 resultDataset={null}
                 canvasRenderMode="schematic"
@@ -1905,7 +1952,7 @@ export default function App() {
                 onRotateNode={rotateNode}
                 onConnectEdge={connectEdge}
                 onUpdateEdgeEndpoint={updateEdgeEndpoint}
-                previewPlaying={isRunning}
+                previewPlaying={illustrativeAnimationActive}
                 testId="schematic-canvas"
                 ariaLabel="FlowLab schematic editor"
                 statusId="schematic-canvas-status"
@@ -1934,28 +1981,38 @@ export default function App() {
         cinema={
           <>
             <header className="workspace-view-header">
-              <div><span>02</span><strong>3D view</strong></div>
-              <small>{loadedResult ? `${activeSnapshot?.label ?? "Result field"} · click to probe` : "Linked geometry preview"}</small>
+              <div><span>02</span><strong>{previewAuthority.label}</strong></div>
+              <small>{previewAuthority.description}</small>
               <div className="workspace-view-tools" aria-label="3D view controls">
                 <button type="button" aria-label="Reset 3D camera" title="Reset 3D camera" onClick={() => setCinemaCamera(defaultCinemaCamera)}><RotateCcw size={13} /></button>
                 <button type="button" onClick={() => setCinemaCamera({ yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } })}>Iso</button>
                 <button type="button" onClick={() => setCinemaCamera({ yaw: 0, pitch: 76, zoom: 1.05, pan: { x: 0, y: 0 } })}>Top</button>
+                <button
+                  type="button"
+                  aria-label="Use 2D projection fallback"
+                  aria-pressed={use2dProjection}
+                  onClick={() => setUse2dProjection((value) => !value)}
+                >
+                  2D
+                </button>
               </div>
             </header>
             <div className="workspace-view-canvas">
               <SimulationCanvas
-                project={project}
+                project={visualProject}
                 result={result}
-                resultDataset={loadedResult}
+                resultDataset={authoritativeDataset}
                 resultFieldSelection={activeResultField}
                 resultVectorComponent={activeVectorComponent}
                 resultColorMap={resultColorMap}
                 canvasRenderMode="cinema"
+                force2dProjection={use2dProjection}
                 cinemaCamera={cinemaCamera}
                 resultViewMode="3d"
                 resultCamera={cinemaCamera}
-                previewPlaying={isRunning}
+                previewPlaying={illustrativeAnimationActive}
                 onCinemaCameraChange={setCinemaCamera}
+                onRenderBackendChange={setCinemaRenderBackend}
                 selectedId={selectedId}
                 selectedKind={selectedKind}
                 onSelect={select}
@@ -1964,10 +2021,11 @@ export default function App() {
                 onConnectEdge={connectEdge}
                 onUpdateEdgeEndpoint={updateEdgeEndpoint}
                 onProbePoint={(point, size, surfaceProbe) => {
+                  if (project.visualization.mode !== "analyze") return;
                   setProbeTarget(surfaceProbe ? { kind: "surface", ...surfaceProbe } : surfaceProbe === null ? null : { kind: "canvas", point, size });
                   if (surfaceProbe) {
                     const probedLink = verifiedResultComponentLink(
-                      activeSnapshot,
+                      authoritySnapshot,
                       project,
                       caseRecord,
                       jobRecord,
@@ -1977,9 +2035,25 @@ export default function App() {
                   }
                 }}
                 testId="cinema-canvas"
-                ariaLabel="FlowLab linked 3D result view"
+                ariaLabel={`FlowLab ${previewAuthority.label}`}
                 statusId="cinema-canvas-status"
               />
+              {use2dProjection || cinemaRenderBackend === "2d" ? (
+                <div className="render-fallback-label" role="status">
+                  2D projection fallback — WebGL/accessibility/export
+                </div>
+              ) : null}
+              {previewAuthority.kind === "inspect-empty" ? (
+                <div className="result-empty-authority" role="status">
+                  <strong>No result loaded</strong>
+                  <span>Import VTK/VTU or open a completed local job.</span>
+                </div>
+              ) : null}
+              {project.visualization.mode === "sweep" && caseRecord && previewAuthority.kind === "concept" ? (
+                <div className="legacy-preview-notice" role="status">
+                  Legacy planar/source-strip preview retained for regression only; it is not a UI authority.
+                </div>
+              ) : null}
               <p id="cinema-canvas-status" className="sr-only" aria-live="polite">
                 {selected ? `Selected ${selectedKind}: ${(selected as FluidNode | FluidEdge).label}. Linked 3D view. Press F to fit or 0 to reset.` : "No item selected."}
               </p>
@@ -2031,6 +2105,16 @@ export default function App() {
             <h2>Instant estimate</h2>
             <p>Run the browser-side 1D model before deciding whether an experimental CFD case is needed.</p>
             <button className="primary-action" onClick={runInstant}><CircleGauge size={16} />Recompute estimate</button>
+            <button
+              type="button"
+              className="secondary-action illustrative-estimate-toggle"
+              aria-pressed={illustrativeEstimateAnimation}
+              onClick={() => setIllustrativeEstimateAnimation((value) => !value)}
+            >
+              {illustrativeEstimateAnimation ? <Pause size={16} /> : <Play size={16} />}
+              Illustrative estimate animation—not CFD
+            </button>
+            <small className="preview-boundary-copy">Off by default. This decorative motion only reflects the browser-side instant estimate.</small>
             <dl className="readouts compact-readouts">
               <div><dt>Total flow</dt><dd>{formatNumber(totals.flow, 4)} m3/s</dd></div>
               <div><dt>Pressure loss</dt><dd>{formatNumber(totals.pressureDrop / 1000)} kPa</dd></div>
@@ -2055,7 +2139,11 @@ export default function App() {
                 if (file) importResult(file);
               }}
             />
-            <button className="secondary-action" onClick={loadFixtureResult}><Layers3 size={16} />Load fixture result</button>
+            <section className="developer-example-tools" aria-label="Examples / Developer tooling">
+              <strong>Examples / Developer tooling</strong>
+              <button className="secondary-action" onClick={loadFixtureResult}><Layers3 size={16} />Load fixture result</button>
+              <small>Fixture result — developer example · probe only</small>
+            </section>
             <div className="result-state" aria-live="polite">
               <strong>Result provenance</strong>
               <span>{loadedResult ? activeResultLink.message : "No VTK/VTU result loaded"}</span>
@@ -2306,6 +2394,21 @@ export default function App() {
                 ))}
               </select>
             </label>
+          ) : null}
+          {loadedResult ? (
+            <div className="flow-path-controls" aria-label="Flow path availability">
+              <div>
+                <button type="button" disabled>Streamlines</button>
+                <button type="button" disabled>Pathlines</button>
+              </div>
+              <small>
+                {previewAuthority.flowPathsAllowed
+                  ? "Full solver result loaded; flow-path integration is not exposed by this viewer."
+                  : previewAuthority.surfaceOnly
+                    ? "Surface-only fallback: streamlines and pathlines cannot be enabled."
+                    : "Probe-only or non-solver data cannot enable derived flow paths."}
+              </small>
+            </div>
           ) : null}
           {resultSnapshots.length > 0 ? (
             <div className="time-controls" aria-label="Result timestep controls">
@@ -3193,6 +3296,8 @@ function MeshQualityPanel({
         {metadata ? (
           <div className="mesh-stl-metadata" aria-label="STL metadata">
             <div className="mesh-stl-preview" aria-label="STL preview">
+              <strong>Imported STL preview — setup geometry only</strong>
+              <small>Not solver-produced result evidence; result linkage remains probe-only until verified.</small>
               <svg viewBox="0 0 180 90" role="img" aria-label="Imported STL bounds preview">
                 <rect x="7" y="7" width="166" height="76" rx="6" />
                 {metadata.bounds && previewGeometry
@@ -4569,7 +4674,7 @@ function CaseSummary({
       ) : null}
       {artifactPreview ? (
         <small className="diagnostic-summary" aria-label="Result artifact preview">
-          Preview {formatResultPreview(artifactPreview)}
+          Thinned artifact preview — surface only · {formatResultPreview(artifactPreview)}
         </small>
       ) : null}
       {artifactPreviewError ? (
