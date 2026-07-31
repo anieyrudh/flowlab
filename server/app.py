@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from .flowlab.adapters import capabilities, generate_case
+from .flowlab.derived import (
+    DERIVED_CACHE,
+    DerivedImportRequest,
+    DerivedVisualizationRequest,
+    derive_visualization,
+)
 from .flowlab.execution import (
     JobManager,
     list_case_artifacts,
@@ -235,6 +242,69 @@ def get_job_artifact_preview(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/jobs/{job_id}/derived")
+def create_job_derived_visualization(job_id: str, request: DerivedVisualizationRequest):
+    job = JOB_MANAGER.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.caseDir:
+        raise HTTPException(status_code=404, detail="Job case directory is unavailable")
+    solver_case = CASES.get(job.caseId) or JOB_MANAGER.get_case_for_job(job_id)
+    if not solver_case:
+        raise HTTPException(status_code=409, detail="Generated case provenance is unavailable for this job.")
+    try:
+        return derive_visualization(
+            request,
+            scope=f"job:{job_id}",
+            case=solver_case,
+            case_dir=Path(job.caseDir),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/jobs/{job_id}/derived/{request_sha256}/blob/{blob_name}")
+def get_job_derived_blob(job_id: str, request_sha256: str, blob_name: str):
+    if not re.fullmatch(r"[a-f0-9]{64}", request_sha256):
+        raise HTTPException(status_code=400, detail="Derived request hash is invalid.")
+    try:
+        payload = DERIVED_CACHE.blob(f"job:{job_id}", request_sha256, blob_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=payload, media_type="application/octet-stream")
+
+
+@app.post("/api/derived/import")
+def create_imported_derived_visualization(payload: DerivedImportRequest):
+    try:
+        return derive_visualization(
+            payload.request,
+            scope="import",
+            inline_artifacts=payload.artifacts,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/derived/import/{request_sha256}/blob/{blob_name}")
+def get_imported_derived_blob(request_sha256: str, blob_name: str):
+    if not re.fullmatch(r"[a-f0-9]{64}", request_sha256):
+        raise HTTPException(status_code=400, detail="Derived request hash is invalid.")
+    try:
+        payload = DERIVED_CACHE.blob("import", request_sha256, blob_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=payload, media_type="application/octet-stream")
 
 
 @app.get("/api/jobs/{job_id}/logs/stream")

@@ -17,6 +17,11 @@ import type {
   SolverRuntimeStatus,
   SolverTier
 } from "../types";
+import type {
+  DerivedArtifactRef,
+  DerivedVisualizationManifest,
+  DerivedVisualizationRequest
+} from "../results/derived";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -117,6 +122,34 @@ export function fetchJobArtifactChunk(jobId: string, path: string, offset = 0, l
 export function fetchJobArtifactPreview(jobId: string, path: string, pointLimit = 500, cellLimit = 500): Promise<JobArtifactPreview> {
   const params = new URLSearchParams({ path, pointLimit: String(pointLimit), cellLimit: String(cellLimit) });
   return request<JobArtifactPreview>(`/api/jobs/${jobId}/artifact/preview?${params.toString()}`);
+}
+
+export function createJobDerivedVisualization(
+  jobId: string,
+  derivedRequest: DerivedVisualizationRequest
+): Promise<DerivedVisualizationManifest> {
+  return request<DerivedVisualizationManifest>(`/api/jobs/${encodeURIComponent(jobId)}/derived`, {
+    method: "POST",
+    body: JSON.stringify(derivedRequest)
+  });
+}
+
+export function createImportedDerivedVisualization(
+  derivedRequest: DerivedVisualizationRequest,
+  artifacts: Array<DerivedArtifactRef & { text: string }>
+): Promise<DerivedVisualizationManifest> {
+  return request<DerivedVisualizationManifest>("/api/derived/import", {
+    method: "POST",
+    body: JSON.stringify({ request: derivedRequest, artifacts })
+  });
+}
+
+export function jobDerivedBlobUrl(jobId: string, requestSha256: string, blobName: string) {
+  return `/api/jobs/${encodeURIComponent(jobId)}/derived/${encodeURIComponent(requestSha256)}/blob/${encodeURIComponent(blobName)}`;
+}
+
+export function importedDerivedBlobUrl(requestSha256: string, blobName: string) {
+  return `/api/derived/import/${encodeURIComponent(requestSha256)}/blob/${encodeURIComponent(blobName)}`;
 }
 
 export function cancelJob(jobId: string): Promise<JobRecord> {

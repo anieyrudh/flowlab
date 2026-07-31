@@ -65,6 +65,7 @@ dependencies, data locations, and troubleshooting are covered in the
 
 - [Installation and desktop packaging](docs/INSTALLATION.md)
 - [Benchmarks and verification status](docs/BENCHMARKS.md)
+- [Derived volume and pathline visualization contract](docs/derived-visualization-contract.md)
 - [Electron distribution status](docs/desktop-electron-distribution-status-2026-07-24.md)
 - [Full O-grid contract and review packet](docs/validation/full-ogrid-straight-pipe/REVIEW_HANDOFF_V2_2026-07-24.md)
 - [Evidence retention and Git boundaries](docs/evidence-retention-and-git-boundary.md)

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import type { DecodedDerivedVisualization } from "../results/derived";
 import { fieldValuesForOverlay, fieldValuesForSelection, type ResultFieldSelection, type ResultVectorComponent } from "../results/vtk";
 import type {
   FluidEdge,
@@ -13,6 +14,7 @@ import type {
 } from "../types";
 import type { CinemaCameraState } from "./viewportModel";
 import { recordEditorMetric } from "../performance/editorProfiler";
+import { buildDerivedPresentation, type DerivedPresentationOptions } from "./derivedRenderer";
 
 export type CinemaPick =
   | { kind: "node"; id: string }
@@ -34,6 +36,7 @@ export type CinemaRuntime = {
   pickableCount: number;
   projectedNodePositions: Record<string, { x: number; y: number }>;
   engine: string;
+  derivedFallback: "none" | "webgl2-required";
   render: (time: number, advancePreview?: boolean) => void;
   updateModel: (project: FluidProject, result: SimulationResult) => void;
   fitCamera: (settings: CinemaCameraState, project: FluidProject) => CinemaCameraState;
@@ -377,6 +380,8 @@ export function buildCinemaScene(options: {
   result: SimulationResult;
   cinemaCamera?: CinemaCameraState;
   resultDataset?: VtkResultDataset | null;
+  derivedVisualization?: DecodedDerivedVisualization | null;
+  derivedPresentationOptions?: DerivedPresentationOptions;
   resultFieldSelection: ResultFieldSelection | null;
   resultVectorComponent: ResultVectorComponent;
   resultColorMap: ResultColorMap;
@@ -384,7 +389,22 @@ export function buildCinemaScene(options: {
   selectedKind?: "node" | "edge" | null;
 }): CinemaRuntime {
   const buildStarted = performance.now();
-  const { canvas, width, height, project, result, cinemaCamera = { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } }, resultDataset, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind } = options;
+  const {
+    canvas,
+    width,
+    height,
+    project,
+    result,
+    cinemaCamera = { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } },
+    resultDataset,
+    derivedVisualization,
+    derivedPresentationOptions,
+    resultFieldSelection,
+    resultVectorComponent,
+    resultColorMap,
+    selectedId,
+    selectedKind
+  } = options;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(width, height, false);
@@ -462,6 +482,22 @@ export function buildCinemaScene(options: {
         resultColorMap
       )
     : null;
+  const derivedPresentation = derivedVisualization
+    ? buildDerivedPresentation(renderer, derivedVisualization, derivedPresentationOptions)
+    : null;
+  if (derivedPresentation) {
+    const physicalBounds = resultDataset ? datasetBounds(resultDataset) : null;
+    if (physicalBounds) {
+      const meshScale = 5.2 / physicalBounds.span;
+      derivedPresentation.group.scale.setScalar(meshScale);
+      derivedPresentation.group.position.set(
+        -physicalBounds.center[0] * meshScale,
+        -physicalBounds.center[1] * meshScale,
+        -physicalBounds.center[2] * meshScale + 0.16
+      );
+    }
+    scene.add(derivedPresentation.group);
+  }
 
   const edgeValues = Object.values(result.edgeResults).map((edge) => {
     if (project.visualization.overlay === "pressure") return edge.pressureDrop;
@@ -801,6 +837,7 @@ export function buildCinemaScene(options: {
   }
 
   function dispose() {
+    derivedPresentation?.dispose();
     scene.traverse((object: THREE.Object3D) => {
       const mesh = object as THREE.Mesh;
       if (mesh.geometry) mesh.geometry.dispose();
@@ -818,8 +855,10 @@ export function buildCinemaScene(options: {
     pickableCount: pickables.length,
     projectedNodePositions: projectedPositions,
     engine: `three.js r${THREE.REVISION}`,
+    derivedFallback: derivedPresentation?.fallback ?? "none",
     render(time: number, advancePreview = true) {
       if (advancePreview) particleUniforms.uTime.value = time / 1000;
+      if (advancePreview) derivedPresentation?.render(time / 1000);
       renderer.render(scene, camera);
     },
     updateModel,

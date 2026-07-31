@@ -1230,6 +1230,40 @@ dd {
   background: rgba(1, 7, 12, 0.42);
 }
 
+.derived-controls {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid rgba(87, 232, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(3, 17, 27, 0.62);
+}
+
+.derived-controls > label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.derived-controls input,
+.derived-controls select {
+  min-width: 0;
+}
+
+.derived-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+.derived-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
 .result-state strong,
 .field-source {
   color: #dceef8;
