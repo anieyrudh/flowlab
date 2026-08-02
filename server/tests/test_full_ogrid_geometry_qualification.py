@@ -141,3 +141,61 @@ def test_multi_segment_full_ogrid_routes_directly_to_block_mesh(tmp_path) -> Non
         "blockMesh",
         "checkMesh",
     ]
+
+
+def test_iteration_count_ignores_auxiliary_openfoam_commands() -> None:
+    """Regression: solve.log concatenates every command, not only foamRun.
+
+    Under MPI the level also runs decomposePar, a second parallel checkMesh, and
+    reconstructPar, and each emits its own `Time =` banner. Counting the whole
+    file reported 2,004 iterations for a level that ran exactly its declared
+    2,000, failing the iteration-control gate on an instrumentation artifact
+    rather than a real early stop. Serial runs matched only because those
+    auxiliary commands are absent.
+    """
+
+    from server.flowlab.full_ogrid_geometry_qualification import (
+        _foam_run_log_section,
+        _iteration_control_gate,
+    )
+
+    log = "\n".join(
+        [
+            "Exec   : checkMesh -allGeometry -allTopology",
+            "Time = 0s",
+            "Exec   : decomposePar -force",
+            "Time = 0s",
+            "Exec   : checkMesh -parallel -allGeometry -allTopology",
+            "Time = 0s",
+            "Exec   : foamRun -solver incompressibleFluid -parallel",
+            *[f"Time = {step}s" for step in range(1, 2001)],
+            "Exec   : reconstructPar -latestTime",
+            "Time = 2000s",
+            "",
+        ]
+    )
+
+    section = _foam_run_log_section(log)
+    assert section.count("Time = ") == 2000
+    assert "decomposePar" not in section and "reconstructPar" not in section
+
+    control = {
+        "iterations": 2000,
+        "method": "fixed-common-iteration-count",
+        "commonAcrossLevels": True,
+    }
+    gate = _iteration_control_gate(log, control)
+    assert gate["iterations"] == 2000
+    assert gate["iterationCountMatchesDeclared"] is True
+    assert gate["earlyStopObserved"] is False
+    assert gate["passed"] is True
+
+    # A genuine early stop must still fail closed.
+    short = log.replace("Exec   : reconstructPar -latestTime\nTime = 2000s\n", "")
+    short = "\n".join(short.split("\n")[:-1001])
+    early = _iteration_control_gate(short, control)
+    assert early["iterationCountMatchesDeclared"] is False
+    assert early["passed"] is False
+
+    # A log without banners must count as before, not silently report zero.
+    assert _foam_run_log_section("Time = 1s\nTime = 2s\n").count("Time = ") == 2

@@ -914,6 +914,28 @@ def _final_initial_residual(solver_log: str, field: str) -> float:
     return float(values[-1]) if values else math.inf
 
 
+def _foam_run_log_section(solver_log: str) -> str:
+    """Return only the ``foamRun`` portion of a concatenated solver log.
+
+    ``solve.log`` holds every OpenFOAM command run for a level, each introduced
+    by an ``Exec   : <command>`` banner. Only ``foamRun`` emits solver
+    iterations; ``checkMesh``, ``decomposePar`` and ``reconstructPar`` emit
+    their own ``Time =`` banners which must not be counted as iterations.
+
+    If no ``foamRun`` banner is present the whole log is returned unchanged, so
+    a log written by a runner that does not stamp banners still counts as it
+    did before rather than silently reporting zero iterations.
+    """
+
+    banners = list(re.finditer(r"^Exec\s*:\s*(?P<command>.+)$", solver_log, re.MULTILINE))
+    for index, banner in enumerate(banners):
+        if not banner.group("command").strip().startswith("foamRun"):
+            continue
+        end = banners[index + 1].start() if index + 1 < len(banners) else len(solver_log)
+        return solver_log[banner.end() : end]
+    return solver_log
+
+
 def _iteration_control_gate(
     solver_log: str, iteration_control: dict[str, Any]
 ) -> dict[str, Any]:
@@ -931,10 +953,20 @@ def _iteration_control_gate(
     ``residualControl`` - because grid levels stopping at different iterative
     states is what failed 18 of 24 laminar-all-hex v3 order-spread groups.
     Residual values are recorded as diagnostics, not thresholds.
+
+    The count is scoped to the ``foamRun`` section of the log. ``solve.log``
+    concatenates every OpenFOAM command for the level, and under MPI that
+    includes ``decomposePar``, a second ``checkMesh -parallel``, and
+    ``reconstructPar``, each of which emits its own ``Time =`` banner. Counting
+    the whole file therefore reported 2,004 iterations for a level that ran
+    exactly its declared 2,000, which is an instrumentation artifact rather than
+    an early stop. Serial runs happened to match only because those auxiliary
+    commands are absent.
     """
 
     expected = int(iteration_control["iterations"])
-    iterations = len(re.findall(r"^Time = ", solver_log, re.MULTILINE))
+    solver_section = _foam_run_log_section(solver_log)
+    iterations = len(re.findall(r"^Time = ", solver_section, re.MULTILINE))
     gate = {
         "method": iteration_control.get("method"),
         "iterations": iterations,
