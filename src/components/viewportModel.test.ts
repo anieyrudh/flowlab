@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { venturiPreset } from "../data/presets";
 import type { FluidProject, Vec2 } from "../types";
 import {
+  CINEMA_MAX_PITCH,
+  CINEMA_MIN_PITCH,
   MAX_FIT_ZOOM,
   MIN_NODE_SEPARATION,
   ROUTE_CLEARANCE,
@@ -10,6 +12,10 @@ import {
   axisDirection,
   boxesOverlap,
   buildSchematicRoutes,
+  cinemaCameraForPlane,
+  cinemaPlaneOrientations,
+  cinemaViewPlaneOf,
+  clampCinemaPitch,
   clampViewportZoom,
   countEdgeCrossings,
   defaultSchematicViewport,
@@ -19,6 +25,8 @@ import {
   isCellFree,
   labelPlacementCandidates,
   longestPolylineSegment,
+  normalizeCinemaCamera,
+  normalizeYawDegrees,
   panSchematicViewport,
   pointOnPolyline,
   polylineLength,
@@ -644,5 +652,107 @@ describe("geometry shared by the schematic and the 3D view", () => {
     // Every rounded point stays on or inside the routed path, so the 3D pipe cannot
     // wander off the run the schematic drew.
     for (const point of rounded) expect(distanceToPolyline(point, route)).toBeLessThanOrEqual(12 + 1e-6);
+  });
+});
+
+describe("Camera angles", () => {
+  it("folds a negative yaw onto the turn every control reads, unchanged when it is already there", () => {
+    expect(normalizeYawDegrees(-32)).toBe(-32);
+    expect(normalizeYawDegrees(-179)).toBe(-179);
+    expect(normalizeYawDegrees(0)).toBe(0);
+    expect(normalizeYawDegrees(179)).toBe(179);
+  });
+
+  it("wraps a yaw that an orbit drag has run past a full turn", () => {
+    // The orbit adds 0.45 degrees per pixel dragged and never wraps, so two turns of
+    // the wrist really do leave the stored yaw here. -572 is one such reading taken
+    // off the running app; the slider it feeds only goes to -180.
+    expect(normalizeYawDegrees(-572)).toBe(148);
+    expect(normalizeYawDegrees(400)).toBe(40);
+    expect(normalizeYawDegrees(360)).toBe(0);
+    expect(normalizeYawDegrees(-360)).toBe(0);
+    expect(normalizeYawDegrees(1080 + 37)).toBe(37);
+    expect(normalizeYawDegrees(-1080 - 37)).toBe(-37);
+  });
+
+  it("reports the two ends of the turn as the same bearing, and settles on the positive one", () => {
+    expect(normalizeYawDegrees(180)).toBe(180);
+    expect(normalizeYawDegrees(-180)).toBe(180);
+    expect(normalizeYawDegrees(540)).toBe(180);
+    // Idempotent, so normalising twice can never walk the camera round.
+    expect(normalizeYawDegrees(normalizeYawDegrees(-180))).toBe(180);
+  });
+
+  it("never returns a yaw a symmetric slider cannot represent", () => {
+    for (const yaw of [-1000, -572, -180.0001, -0.5, 0, 12.25, 180, 359, 721]) {
+      const normalized = normalizeYawDegrees(yaw);
+      expect(normalized).toBeGreaterThan(-180);
+      expect(normalized).toBeLessThanOrEqual(180);
+      // Same bearing: the difference is a whole number of turns.
+      expect(Math.abs(((yaw - normalized) % 360) % 360)).toBeLessThan(1e-9);
+    }
+  });
+
+  it("falls back rather than letting a broken angle through", () => {
+    expect(normalizeYawDegrees(Number.NaN)).toBe(0);
+    expect(normalizeYawDegrees(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+
+  it("lets pitch reach both poles, which is what puts the plan view in reach", () => {
+    expect(CINEMA_MAX_PITCH).toBe(90);
+    expect(CINEMA_MIN_PITCH).toBe(-90);
+    expect(clampCinemaPitch(90)).toBe(90);
+    expect(clampCinemaPitch(-90)).toBe(-90);
+    expect(clampCinemaPitch(140)).toBe(90);
+    expect(clampCinemaPitch(-140)).toBe(-90);
+  });
+
+  it("canonicalises a whole camera without touching what the viewer framed", () => {
+    const drifted = { yaw: -572, pitch: 140, zoom: 1.4, pan: { x: 2, y: -3 } };
+    const settled = normalizeCinemaCamera(drifted);
+
+    expect(settled.yaw).toBe(148);
+    expect(settled.pitch).toBe(90);
+    expect(settled.zoom).toBe(1.4);
+    expect(settled.pan).toEqual({ x: 2, y: -3 });
+    // A copy, so a normalised camera cannot alias the one it came from.
+    expect(settled.pan).not.toBe(drifted.pan);
+  });
+});
+
+describe("Principal planes", () => {
+  const framed = { yaw: -572, pitch: 11, zoom: 1.35, pan: { x: 4, y: -2 } };
+
+  it("offers the plan and both elevations, not just the plane the schematic is drawn on", () => {
+    expect(cinemaPlaneOrientations.xy.pitch).toBe(CINEMA_MAX_PITCH);
+    expect(cinemaPlaneOrientations.xz).toMatchObject({ yaw: 0, pitch: 0 });
+    expect(cinemaPlaneOrientations.yz).toMatchObject({ yaw: 90, pitch: 0 });
+  });
+
+  it("turns the camera onto a plane while keeping the viewer's own zoom and pan", () => {
+    const plan = cinemaCameraForPlane("xy", framed);
+
+    expect(plan.pitch).toBe(CINEMA_MAX_PITCH);
+    expect(plan.zoom).toBe(1.35);
+    expect(plan.pan).toEqual({ x: 4, y: -2 });
+    expect(plan.pan).not.toBe(framed.pan);
+  });
+
+  it("recognises the plane it is on, however far round the yaw has wound", () => {
+    expect(cinemaViewPlaneOf(cinemaCameraForPlane("xy", framed))).toBe("xy");
+    expect(cinemaViewPlaneOf(cinemaCameraForPlane("xz", framed))).toBe("xz");
+    expect(cinemaViewPlaneOf(cinemaCameraForPlane("yz", framed))).toBe("yz");
+    expect(cinemaViewPlaneOf(cinemaCameraForPlane("iso", framed))).toBe("iso");
+    // A negative and a wound-up bearing name the same plane as the positive one.
+    expect(cinemaViewPlaneOf({ yaw: -270, pitch: 0 })).toBe("yz");
+    expect(cinemaViewPlaneOf({ yaw: 450, pitch: 0 })).toBe("yz");
+    expect(cinemaViewPlaneOf({ yaw: -180, pitch: 0 })).toBe("xz");
+    // Underneath is still the plane the schematic is drawn on, seen from below.
+    expect(cinemaViewPlaneOf({ yaw: -572, pitch: CINEMA_MIN_PITCH })).toBe("xy");
+  });
+
+  it("says nothing rather than guessing when the camera is between planes", () => {
+    expect(cinemaViewPlaneOf({ yaw: 27, pitch: 13 })).toBeNull();
+    expect(cinemaViewPlaneOf({ yaw: 45, pitch: 0 })).toBeNull();
   });
 });
