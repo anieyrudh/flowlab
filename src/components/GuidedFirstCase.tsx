@@ -293,7 +293,7 @@ export function guidedFirstCaseModel(
         ? "The run gave a pressure drop between " + cfd.fromPatch + " and " + cfd.toPatch + "."
         : openfoamSelected
           ? steadySelected
-            ? "Click Generate and queue experimental CFD case."
+            ? "Click Run CFD case."
             : "Set Run mode to Steady. Transient does not converge to a pressure drop."
           : "Set Solver to OpenFOAM in the Inspector.",
       status: cfd ? "done" : estimateReynolds === null ? "waiting" : "next"
