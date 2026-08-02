@@ -2842,6 +2842,47 @@ def test_collect_patch_metrics_summarizes_openfoam_postprocessing(tmp_path: Path
     assert metrics["pressureProbes"][0]["pressureSpan"] == 2325.0
 
 
+def test_collect_patch_metrics_parses_foundation_vector_wall_shear_extrema(
+    tmp_path: Path,
+) -> None:
+    case_dir = tmp_path / "case"
+    shear_dir = case_dir / "postProcessing" / "wallShearStress" / "0"
+    shear_dir.mkdir(parents=True)
+    (shear_dir / "wallShearStress.dat").write_text(
+        "# Wall shear stress\n"
+        "# Time patch min max\n"
+        "0 walls (-5.75571294e-05 -1.11865096e-05 -7.45767274e-06) "
+        "(-3.95989057e-05 1.11865096e-05 7.45767274e-06)\n"
+        "3000 walls (-1.11153591e-05 -1.52194535e-05 -3.66447540e-06) "
+        "(3.27772359e-06 2.22108282e-08 3.66447538e-06)\n",
+        encoding="utf-8",
+    )
+
+    metrics = collect_patch_metrics(case_dir)
+
+    source = next(
+        row
+        for row in metrics["sources"]
+        if row["kind"] == "wall-shear"
+    )
+    assert source["status"] == "parsed"
+    wall_shear = metrics["patches"]["walls"]["wallShear"]
+    assert wall_shear["time"] == 3000.0
+    assert wall_shear["componentMinimumVector"] == pytest.approx(
+        [-1.11153591e-05, -1.52194535e-05, -3.66447540e-06]
+    )
+    assert wall_shear["componentMaximumVector"] == pytest.approx(
+        [3.27772359e-06, 2.22108282e-08, 3.66447538e-06]
+    )
+    assert wall_shear["aggregation"] == (
+        "componentwise-extrema-not-pointwise-magnitude"
+    )
+    assert not any(
+        "wallShearStress output is missing" in warning
+        for warning in metrics["warnings"]
+    )
+
+
 def test_collect_patch_metrics_builds_pressure_drop_from_per_patch_surface_field_value(tmp_path: Path) -> None:
     # Regression: FlowLab writes per-patch `patchAverage_<patch>/surfaceFieldValue.dat`
     # (not a single `patchAverage/p.dat`). The numeric-table parser drops the real

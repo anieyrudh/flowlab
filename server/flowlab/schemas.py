@@ -88,6 +88,7 @@ class ResultComponentCellRange(BaseModel):
     """A source-cell interval declared by the generated mesh, never reconstructed from geometry."""
 
     edgeId: str
+    componentId: str | None = None
     cellStart: int = Field(ge=0)
     cellCount: int = Field(gt=0)
 

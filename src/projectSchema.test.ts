@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mixerPreset, pipeLossPreset, venturiPreset } from "./data/presets";
+import { canonicalElbowPreset, mixerPreset, pipeLossPreset, venturiPreset } from "./data/presets";
 import { parseProject } from "./projectSchema";
 
 describe("project network validation", () => {
@@ -252,6 +252,37 @@ describe("project network validation", () => {
     const parsed = parseProject(project);
 
     expect(parsed.ok).toBe(true);
+  });
+
+  it("accepts only the bounded canonical Re100 curved-elbow preset", () => {
+    const parsed = parseProject(structuredClone(canonicalElbowPreset));
+
+    expect(parsed.ok).toBe(true);
+  });
+
+  it("rejects curved-elbow radius, angle, or provenance-control drift", () => {
+    const radiusDrift = structuredClone(canonicalElbowPreset);
+    radiusDrift.solver.curvedElbowVerification!.centrelineRadiusM = 0.04;
+    expect(parseProject(radiusDrift)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("Rc/D=3")
+    });
+
+    const angleDrift = structuredClone(canonicalElbowPreset) as unknown as {
+      solver: { curvedElbowVerification: { bendAngleDegrees: number } };
+    };
+    angleDrift.solver.curvedElbowVerification.bendAngleDegrees = 45;
+    expect(parseProject(angleDrift)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("expected 90")
+    });
+
+    const incompleteCounts = structuredClone(canonicalElbowPreset);
+    delete incompleteCounts.solver.meshControls!.curvedElbowBendAxialCells;
+    expect(parseProject(incompleteCounts)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("must be supplied together")
+    });
   });
 
   it("rejects ambiguous imported networks without source and sink boundaries", () => {

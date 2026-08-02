@@ -186,7 +186,8 @@ export type SolverSettings = {
   // OpenFOAM mesh topology. "planar-2d" (default) is a one-cell-thick channel
   // strip; "axisymmetric" compiles a circular profile into a 3D wedge; and
   // "full-ogrid" is the bounded full-360, five-block straight-pipe volume.
-  meshMode?: "planar-2d" | "axisymmetric" | "full-ogrid";
+  // "curved-elbow-ogrid" is only the canonical 90-degree Rc/D=3 elbow.
+  meshMode?: "planar-2d" | "axisymmetric" | "full-ogrid" | "curved-elbow-ogrid";
   axisymmetricBenchmark?: {
     fixtureId: "straight-pipe";
     boundaryCondition: "periodic-pressure-gradient";
@@ -205,6 +206,17 @@ export type SolverSettings = {
     lengthM: number;
     volumetricFlowRateM3PerS: number;
   };
+  curvedElbowVerification?: {
+    contractId: "canonical-circular-elbow-re100-v2";
+    boundaryCondition: "fully-developed-parabolic-inlet-pressure-outlet";
+    diameterM: number;
+    centrelineRadiusM: number;
+    inletLegLengthM: number;
+    outletLegLengthM: number;
+    bendAngleDegrees: 90;
+    volumetricFlowRateM3PerS: number;
+    qoiHistoryWriteIntervalIterations: 1;
+  };
   reviewedGeometry?: ReviewedGeometrySource;
   meshControls?: {
     longitudinalRefinement?: number;
@@ -217,6 +229,12 @@ export type SolverSettings = {
     fullOGridAnnularRadialCells?: number;
     fullOGridCircumferentialCells?: number;
     fullOGridCoreCellsPerSide?: number;
+    curvedElbowInletAxialCells?: number;
+    curvedElbowBendAxialCells?: number;
+    curvedElbowOutletAxialCells?: number;
+    curvedElbowAnnularRadialCells?: number;
+    curvedElbowCircumferentialCells?: number;
+    curvedElbowCoreCellsPerSide?: number;
     // Transverse (across-gap) cell distribution. "boundary-layer" (default)
     // clusters cells at the walls for near-wall/turbulent resolution; "uniform"
     // spaces them evenly, which resolves a laminar parabolic core far better and
@@ -378,6 +396,7 @@ export type ResultComponentMap = {
         identityContractSha256: string;
         cellRanges: Array<{
           edgeId: EdgeId;
+          componentId?: string | null;
           cellStart: number;
           cellCount: number;
         }>;

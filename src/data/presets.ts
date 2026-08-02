@@ -223,4 +223,93 @@ export const channelPreset: FluidProject = {
   sweeps: [{ id: "channel-height-sweep", targetKind: "edge", targetId: "channel", parameter: "height", min: 0.05, max: 0.16, steps: 6 }]
 };
 
-export const presets = [venturiPreset, pipeLossPreset, channelPreset, mixerPreset];
+const canonicalElbowDiameterM = 0.01;
+const canonicalElbowCentrelineRadiusM = 0.03;
+const canonicalElbowLegM = 0.1;
+const canonicalElbowFlowM3S = Math.PI * canonicalElbowDiameterM ** 2 / 4 * 0.01;
+
+export const canonicalElbowPreset: FluidProject = {
+  version: 1,
+  name: "Canonical 90° Elbow (Experimental)",
+  fluid: {
+    density: 1000,
+    dynamicViscosity: 0.001,
+    vaporPressure: 2_340,
+    bulkModulus: 2.2e9,
+    temperature: 293.15
+  },
+  solver: {
+    tier: "openfoam",
+    advancedMode: "incompressible-navier-stokes",
+    turbulence: "laminar",
+    meshResolution: "coarse",
+    runMode: "steady",
+    meshMode: "curved-elbow-ogrid",
+    curvedElbowVerification: {
+      contractId: "canonical-circular-elbow-re100-v2",
+      boundaryCondition: "fully-developed-parabolic-inlet-pressure-outlet",
+      diameterM: canonicalElbowDiameterM,
+      centrelineRadiusM: canonicalElbowCentrelineRadiusM,
+      inletLegLengthM: canonicalElbowLegM,
+      outletLegLengthM: canonicalElbowLegM,
+      bendAngleDegrees: 90,
+      volumetricFlowRateM3PerS: canonicalElbowFlowM3S,
+      qoiHistoryWriteIntervalIterations: 1
+    },
+    meshControls: {
+      curvedElbowInletAxialCells: 28,
+      curvedElbowBendAxialCells: 16,
+      curvedElbowOutletAxialCells: 28,
+      curvedElbowAnnularRadialCells: 2,
+      curvedElbowCircumferentialCells: 16,
+      curvedElbowCoreCellsPerSide: 4
+    },
+    maxIterations: 3000,
+    tolerance: 1e-8
+  },
+  visualization: {
+    mode: "simulate",
+    overlay: "pressure",
+    particles: false,
+    streamlines: true,
+    grid: true
+  },
+  viewport: { x: 0, y: 0, zoom: 1 },
+  nodes: {
+    source: {
+      id: "source",
+      type: "source",
+      label: "10D inlet",
+      position: { x: 180, y: 460 },
+      elevation: 0,
+      pressure: 101_325,
+      boundary: "pressure"
+    },
+    sink: {
+      id: "sink",
+      type: "sink",
+      label: "10D outlet",
+      position: { x: 620, y: 120 },
+      elevation: 0,
+      pressure: 101_325,
+      flowDemand: canonicalElbowFlowM3S,
+      boundary: "pressure"
+    }
+  },
+  edges: {
+    "canonical-elbow": {
+      id: "canonical-elbow",
+      type: "bend",
+      label: "90° elbow Rc/D=3",
+      from: "source",
+      to: "sink",
+      length: canonicalElbowLegM * 2 + canonicalElbowCentrelineRadiusM * Math.PI / 2,
+      shape: { kind: "circular", diameter: canonicalElbowDiameterM },
+      roughness: 0,
+      minorLossK: 0
+    }
+  },
+  sweeps: []
+};
+
+export const presets = [venturiPreset, pipeLossPreset, canonicalElbowPreset, channelPreset, mixerPreset];

@@ -10,6 +10,7 @@ Raw meshes and field histories remain in the governed evidence archive.
 | --- | --- | --- |
 | Laminar all-hex analytical/manufactured suite | Numerical gates passed | Solver and numerical-method verification within its frozen cases |
 | Full-360 O-grid straight circular pipe v2 | Candidate passed; independent review pending | End-to-end product-path numerical verification for one steady incompressible laminar pipe |
+| Canonical 90-degree circular elbow V2 R2 | Bounded candidate passed; independent review pending | One true-3D OpenFOAM elbow at Rc/D=3, 10D legs, and Re=100 |
 | FDA nozzle Re=500 v2 | Frozen validation gates did not pass | Retained diagnostic evidence; no validation or promotion claim |
 | Desktop release | macOS and Windows candidate CI passed | Signed public release checks remain |
 
@@ -60,6 +61,42 @@ contract and review packet are:
 - `docs/validation/full-ogrid-straight-pipe/VERIFICATION_CONTRACT_V2.json`;
 - `docs/validation/full-ogrid-straight-pipe/RUNBOOK_V2.md`;
 - `docs/validation/full-ogrid-straight-pipe/REVIEW_HANDOFF_V2_2026-07-24.md`.
+
+## Canonical curved-elbow result
+
+The bounded V2 campaign generated and solved one constant-diameter,
+90-degree circular elbow with centreline radius Rc/D=3, 10D straight inlet and
+outlet legs, and Re=100 through OpenFOAM Foundation 11. The coarse, medium,
+and fine all-hex meshes contained 3,456, 27,648, and 221,184 cells. Every
+prospective geometry, mesh, solver, conservation, symmetry, pressure, and
+explicit source-cell provenance gate passed.
+
+Pressure loss increased monotonically from `0.833388626 Pa` to
+`0.846635465 Pa` and `0.848178524 Pa`. The observed order was
+`3.1017830100`, and the fine-grid pressure-loss GCI was
+`0.0299820729%`. The fine result had relative mass-flow imbalance
+`1.47696e-7`, maximum symmetry-plane error `1.39648e-7`, positive static and
+total-pressure losses, one connected 3D fluid region, and no invalid cells.
+
+The fine solve completed normally, but the original runtime classified its
+diagnostics as an infrastructure failure because the parser did not accept
+OpenFOAM Foundation's component-wise wall-shear extrema table and the surface
+VTK fallback exceeded its size cap. V2 R2 corrected only that parser and
+re-evaluated the unchanged, fully hashed source campaign into a separate
+read-only package. It did not rerun CFD, edit retained evidence, or change a
+scientific gate.
+
+This result is a bounded numerical-qualification candidate, not independent
+experimental validation. It does not support arbitrary CAD, other elbows or
+Reynolds numbers, turbulence, transient, compressible, multiphase, hybrid-mesh,
+SU2, registry-promotion, product-promotion, or external-release claims.
+`validated` and `promotionAuthorized` remain false. The frozen contract and
+assessment are:
+
+- `docs/validation/curved-elbow-re100/QUALIFICATION_CONTRACT_V2.json`;
+- `docs/validation/curved-elbow-re100/RUNBOOK_V2.md`;
+- `docs/validation/curved-elbow-re100/RECOVERY_RUNBOOK_V2_R2.md`;
+- `docs/validation/curved-elbow-re100/QUALIFICATION_ASSESSMENT_V2_R2.md`.
 
 ## Reproducing checks
 
