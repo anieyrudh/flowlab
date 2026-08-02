@@ -3,6 +3,8 @@ import type { DecodedDerivedVisualization } from "../results/derived";
 import { datasetBounds, fieldValuesForOverlay, fieldValuesForSelection, type ResultFieldSelection, type ResultVectorComponent } from "../results/vtk";
 import { maxAbsoluteOf } from "../numeric";
 import type {
+  ChannelShape,
+  FluidEdge,
   FluidNode,
   FluidProject,
   OverlayMode,
@@ -12,9 +14,15 @@ import type {
   Vec2,
   VtkResultDataset
 } from "../types";
+import { hydraulicDiameter } from "../physics/hydraulics";
 import {
+  SCHEMATIC_GRID_SIZE,
   buildSchematicRoutes,
+  clampCinemaPitch,
+  normalizeCinemaCamera,
+  normalizeYawDegrees,
   pointOnPolyline,
+  polylineLength,
   roundPolylineCorners,
   schematicPortPosition,
   tangentOnPolyline,
@@ -368,21 +376,176 @@ function routesByEdge(project: FluidProject): Map<string, Vec2[]> {
   return new Map(buildSchematicRoutes(project).map((route: WireRoute) => [route.id, route.points]));
 }
 
+/* --- What a schematic pixel is worth ------------------------------------------
+ *
+ * The drawn plan is the schematic's, and the schematic is laid out in pixels on a
+ * 40-unit grid. A pixel is not a length: two components sit 200 apart because
+ * that is where the user dragged them, not because the pipe between them is 200
+ * of anything. So the plan distance between two components genuinely cannot be
+ * read as the pipe's physical length, and nothing here pretends otherwise.
+ *
+ * What every other physical quantity needs, though, is a *rate*: how many metres
+ * a pixel stands for, so that a bore and a rise can be drawn in the same units
+ * the plan is drawn in. That rate is taken from the model rather than invented -
+ *
+ *     metresPerPixel = (sum of every edge's length) / (sum of every routed run)
+ *
+ * - which is the one scale that makes the network's whole drawn run equal its
+ * whole specified length. Elevation is then a true height against that plan, and
+ * changing any edge's length moves it, because every edge is in that sum.
+ *
+ * A single pipe's *run* still cannot be honoured, because its two ends are pinned
+ * to two components the user placed. What is honoured per pipe is the ratio that
+ * actually governs it: `pipeWorldRadius` draws each pipe at its own true
+ * length-to-bore ratio, so a pipe told it is ten times longer is drawn ten times
+ * more slender. That is the only way length can show on a tube whose path is
+ * fixed, and it is the quantity friction is proportional to.
+ */
+
+/**
+ * Metres a schematic pixel stands for when no edge carries a usable length: one
+ * grid cell to the metre. Only reachable by a project with no routable pipe, and
+ * stated so the scene still has a defined scale rather than a hidden zero.
+ */
+export const FALLBACK_METRES_PER_PIXEL = 1 / SCHEMATIC_GRID_SIZE;
+
+export type NetworkMetricScale = {
+  /** Metres one schematic pixel stands for. */
+  metresPerPixel: number;
+  /** World units one metre is drawn at. */
+  worldPerMetre: number;
+  /** False when no edge had both a route and a length, so the fallback was used. */
+  fromModel: boolean;
+};
+
+/**
+ * The project's own metres-per-pixel, and the world-per-metre it implies.
+ *
+ * Pure, so the scale the whole scene hangs off can be pinned down in a test
+ * without a renderer.
+ */
+export function networkMetricScale(
+  project: FluidProject,
+  routes: Map<string, Vec2[]>,
+  worldScale: number
+): NetworkMetricScale {
+  let drawnPixels = 0;
+  let physicalMetres = 0;
+  for (const edge of Object.values(project.edges)) {
+    const route = routes.get(edge.id);
+    if (!route || route.length < 2) continue;
+    const drawn = polylineLength(route);
+    if (!(drawn > 0) || !Number.isFinite(edge.length) || !(edge.length > 0)) continue;
+    drawnPixels += drawn;
+    physicalMetres += edge.length;
+  }
+  const fromModel = drawnPixels > 0 && physicalMetres > 0;
+  const metresPerPixel = fromModel ? physicalMetres / drawnPixels : FALLBACK_METRES_PER_PIXEL;
+  return { metresPerPixel, worldPerMetre: 1 / (metresPerPixel * Math.max(worldScale, 1e-9)), fromModel };
+}
+
+/** The bore the solver sees: a diameter for round pipe, the hydraulic diameter for a duct. */
+export function channelDrawnDiameter(shape: ChannelShape): number {
+  return shape.kind === "circular" ? shape.diameter : hydraulicDiameter(shape);
+}
+
+/**
+ * Smallest radius a pipe is swept at, in world units.
+ *
+ * Purely a guard against degenerate geometry - a zero-radius sweep has no
+ * surface and no normals - and deliberately far below anything a real bore
+ * reaches, so it can never quietly become the scale. The 0.065 it replaces was
+ * the opposite: it drew every pipe under a 76 mm bore at exactly the same size,
+ * which is most of a plant's pipework, so half the diameter response was being
+ * clamped away before it reached the screen.
+ *
+ * Nothing is lost visually at this size: the pipe's centre line is a `Line`, one
+ * pixel wide whatever the bore, so an extremely slender run still reads as a run.
+ */
+export const MIN_PIPE_WORLD_RADIUS = 1e-4;
+
+/**
+ * World-space radius of one drawn pipe.
+ *
+ * `drawnWorldLength` is how long the routed path is in world units. Dividing the
+ * true half-bore by the true length and multiplying by that is what makes the
+ * ratio on screen the model's own: radius / run == (diameter / 2) / length.
+ */
+export function pipeWorldRadius(options: {
+  shape: ChannelShape;
+  physicalLength: number;
+  drawnWorldLength: number;
+}): number {
+  const diameter = channelDrawnDiameter(options.shape);
+  const usable =
+    Number.isFinite(diameter)
+    && diameter > 0
+    && Number.isFinite(options.physicalLength)
+    && options.physicalLength > 0
+    && options.drawnWorldLength > 0;
+  if (!usable) return MIN_PIPE_WORLD_RADIUS;
+  return Math.max(MIN_PIPE_WORLD_RADIUS, (diameter / 2) * (options.drawnWorldLength / options.physicalLength));
+}
+
+/** World-space height of a component, from its elevation in metres. */
+export function nodeWorldZ(node: Pick<FluidNode, "elevation">, worldPerMetre: number): number {
+  return Number.isFinite(node.elevation) ? node.elevation * worldPerMetre : 0;
+}
+
+/*
+ * Drawing lifts, in world units, applied on top of a component's own elevation.
+ * They separate the symbol from the pipe it sits on and the handle from both;
+ * they are stacking order, not height, which is why elevation is added to them
+ * rather than replaced by them.
+ */
+const NODE_BODY_Z = 0.08;
+const NODE_PORT_Z = 0.1;
+const NODE_HANDLE_Z = 0.16;
+
+/** Where a pipe starts and ends in height, so the run between them can ramp. */
+export function edgeWorldElevations(
+  edge: Pick<FluidEdge, "from" | "to">,
+  nodes: Record<string, FluidNode>,
+  worldPerMetre: number
+): { startZ: number; endZ: number } {
+  const from = nodes[edge.from];
+  const to = nodes[edge.to];
+  return {
+    startZ: from ? nodeWorldZ(from, worldPerMetre) : 0,
+    endZ: to ? nodeWorldZ(to, worldPerMetre) : 0
+  };
+}
+
 /**
  * The routed polyline lifted into world space, with its corners filleted so the
- * swept tube turns through a bend instead of a knife edge. `worldFromNetwork`
+ * swept tube turns through a bend instead of a knife edge, and its height ramped
+ * from the component it leaves to the component it reaches. `worldFromNetwork`
  * mirrors y, which is a reflection, so the fillets stay circular.
+ *
+ * The ramp is by travelled distance rather than by point index, so a run that
+ * turns two corners still climbs evenly instead of doing all its climbing in
+ * whichever segment happened to be sampled most.
  */
 function routeWorldPath(
   routePoints: readonly Vec2[],
   pipeRadius: number,
   center: Vec2,
-  worldScale: number
+  worldScale: number,
+  startZ = 0,
+  endZ = 0
 ): THREE.Vector3[] {
   const bendRadius = pipeRadius * PIPE_BEND_RADIUS_SCALE * worldScale;
-  return roundPolylineCorners(routePoints, bendRadius, PIPE_BEND_SEGMENTS).map((point) =>
-    worldFromNetwork(point, center, worldScale, 0)
-  );
+  const rounded = roundPolylineCorners(routePoints, bendRadius, PIPE_BEND_SEGMENTS);
+  const total = polylineLength(rounded);
+  let travelled = 0;
+  return rounded.map((point, index) => {
+    if (index > 0) {
+      const previous = rounded[index - 1];
+      travelled += Math.hypot(point.x - previous.x, point.y - previous.y);
+    }
+    const t = total > 0 ? Math.min(1, travelled / total) : 0;
+    return worldFromNetwork(point, center, worldScale, startZ + (endZ - startZ) * t);
+  });
 }
 
 /**
@@ -868,10 +1031,20 @@ function canvasNdc(canvas: HTMLCanvasElement, event: Pick<PointerEvent, "clientX
   return new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1));
 }
 
-function projectedNodePositions(project: FluidProject, center: Vec2, worldScale: number, camera: THREE.Camera, width: number, height: number) {
+function projectedNodePositions(
+  project: FluidProject,
+  center: Vec2,
+  worldScale: number,
+  worldPerMetre: number,
+  camera: THREE.Camera,
+  width: number,
+  height: number
+) {
   return Object.fromEntries(
     Object.values(project.nodes).map((node) => {
-      const projected = worldFromNetwork(node.position, center, worldScale, 0.08).project(camera);
+      // Through the component's own elevation, so an overlay pinned to a raised
+      // component lands on it rather than on the plan below it.
+      const projected = worldFromNetwork(node.position, center, worldScale, NODE_BODY_Z + nodeWorldZ(node, worldPerMetre)).project(camera);
       return [
         node.id,
         {
@@ -941,19 +1114,42 @@ export function cinemaFitZoom(worldSpan: number): number {
   return Math.max(0.25, Math.min(4, CINEMA_VIEW_HEIGHT / required));
 }
 
+/* --- Every plane, including the poles ------------------------------------------
+ *
+ * The basis used to be handed to `lookAt` as world +Z and left to it to build the
+ * image plane from. That works right up to the moment the view direction lines up
+ * with +Z - a plan view - where `up x depth` is the zero vector and the framing
+ * becomes whatever the fallback happens to be. The pitch clamp of 78 degrees
+ * existed to stay away from that, and the cost was that the XY plane, the plane
+ * the schematic is actually drawn on, could never be seen square on; the scene
+ * looked permanently locked to one three-quarter view.
+ *
+ * Writing the basis out in closed form removes the degeneracy instead of avoiding
+ * it. `up` below is world +Z with the view direction projected out of it,
+ * renormalised - the same vector `lookAt` derives for every pitch it could handle
+ * - and it stays defined at the pole, where it becomes the plan's own north
+ * turned by the yaw. So the camera now reaches both poles and the yaw keeps
+ * meaning something there: on a plan view it spins the drawing rather than
+ * doing nothing.
+ */
+
 /**
  * The camera's own axes for a yaw and pitch, matching `applyCinemaCamera`.
  *
- * Returned as `three.js` builds them in `lookAt`: `depth` runs from the target
- * back towards the eye, `right` and `up` span the image plane.
+ * `depth` runs from the target back towards the eye; `right` and `up` span the
+ * image plane. Angles are normalised first, so a yaw of -572 and a yaw of 148
+ * return the identical basis.
  */
-function cinemaViewBasis(settings: Pick<CinemaCameraState, "yaw" | "pitch">) {
-  const yaw = degreesToRadians(settings.yaw);
-  const pitch = degreesToRadians(Math.max(-12, Math.min(78, settings.pitch)));
-  const worldUp = new THREE.Vector3(0, 0, 1);
-  const depth = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), -Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch)).normalize();
-  const right = new THREE.Vector3().crossVectors(worldUp, depth).normalize();
-  const up = new THREE.Vector3().crossVectors(depth, right).normalize();
+export function cinemaViewBasis(settings: Pick<CinemaCameraState, "yaw" | "pitch">) {
+  const yaw = degreesToRadians(normalizeYawDegrees(settings.yaw));
+  const pitch = degreesToRadians(clampCinemaPitch(settings.pitch));
+  const sinYaw = Math.sin(yaw);
+  const cosYaw = Math.cos(yaw);
+  const sinPitch = Math.sin(pitch);
+  const cosPitch = Math.cos(pitch);
+  const depth = new THREE.Vector3(sinYaw * cosPitch, -cosYaw * cosPitch, sinPitch);
+  const up = new THREE.Vector3(-sinPitch * sinYaw, sinPitch * cosYaw, cosPitch);
+  const right = new THREE.Vector3(cosYaw, sinYaw, 0);
   return { right, up, depth };
 }
 
@@ -989,10 +1185,6 @@ export function cinemaFitZoomForBox(
 export function createCinemaCamera(width: number, height: number, settings: CinemaCameraState): THREE.OrthographicCamera {
   const frustum = cinemaOrthographicFrustum(width, height, settings.zoom);
   const camera = new THREE.OrthographicCamera(frustum.left, frustum.right, frustum.top, frustum.bottom, 0.1, 60);
-  // The network lies in the XY plane with +Z up, so the camera's own up axis is
-  // +Z. Under the old +Y up, a pitch of zero put the view direction along the up
-  // axis and the framing was whatever `lookAt` fell back to.
-  camera.up.set(0, 0, 1);
   applyCinemaCamera(camera, settings, width, height);
   return camera;
 }
@@ -1003,15 +1195,14 @@ export function applyCinemaCamera(
   width: number,
   height: number
 ) {
-  const yaw = degreesToRadians(settings.yaw);
-  const pitch = degreesToRadians(Math.max(-12, Math.min(78, settings.pitch)));
-  const horizontal = Math.cos(pitch) * CINEMA_CAMERA_DISTANCE;
+  const { depth, up } = cinemaViewBasis(settings);
   const target = new THREE.Vector3(settings.pan.x, settings.pan.y, 0);
-  camera.position.set(
-    target.x + Math.sin(yaw) * horizontal,
-    target.y - Math.cos(yaw) * horizontal,
-    target.z + Math.sin(pitch) * CINEMA_CAMERA_DISTANCE
-  );
+  // The network lies in the XY plane with +Z up, so screen-up is world +Z for
+  // every view except the two plan views, where it is the plan's own north turned
+  // by the yaw. `cinemaViewBasis` returns exactly that, continuously, so handing
+  // it to the camera is what lets a plan view be reached at all.
+  camera.up.copy(up);
+  camera.position.copy(target).addScaledVector(depth, CINEMA_CAMERA_DISTANCE);
   camera.lookAt(target);
   const frustum = cinemaOrthographicFrustum(width, height, settings.zoom);
   camera.left = frustum.left;
@@ -1081,9 +1272,20 @@ export function buildCinemaScene(options: {
   let viewWidth = width;
   let viewHeight = height;
   let center = projectCenter(project);
+  // Schematic pixels per world unit. Fixed, because the plan on screen is the
+  // drawing's own shape and nothing physical may stretch it; every physical
+  // quantity is converted through `worldPerMetre` below instead.
   const worldScale = 74;
   const pickables: THREE.Object3D[] = [];
   const raycaster = new THREE.Raycaster();
+  /**
+   * The plane a click in the 3D view is read back onto, to give a schematic
+   * coordinate. The schematic is a plan, so this is the ground plane - except
+   * that a raised component is no longer on it, and reading a drag on a raised
+   * component off the ground would put the pointer a long way from the thing it
+   * is dragging. The plane therefore sits at the selected component's own height,
+   * which is the only one a drag can currently be about.
+   */
   const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   const particleUniforms = { uTime: { value: 0 } };
   const edgeVisuals = new Map<
@@ -1103,18 +1305,31 @@ export function buildCinemaScene(options: {
       particleCount: number;
       coreMaterial: THREE.Material;
       radius: number;
+      /** The bore the fittings' primitive geometries were built at, so they can be rescaled. */
+      baseRadius: number;
+      startZ: number;
+      endZ: number;
       /** The route this pipe was last built from, so an unchanged route is never rebuilt. */
       routeKey: string;
+      /**
+       * Everything about the pipe that is not its route: bore and the two heights
+       * it runs between. Without this an edit to `shape` or to a component's
+       * elevation left the tube exactly as it was built, because the route had not
+       * moved - which is precisely why diameter did nothing to the 3D view.
+       */
+      formKey: string;
     }
   >();
   const nodeVisuals = new Map<string, { group: THREE.Group; ports: Map<PipePortId, THREE.Mesh>; handle?: THREE.Mesh; handleLine?: THREE.Line }>();
   const particleRanges: Array<{ edgeId: string; start: number; count: number }> = [];
   let particleGeometry: THREE.BufferGeometry | null = null;
 
-  function updatePipeMesh(mesh: THREE.Mesh, start: THREE.Vector3, end: THREE.Vector3) {
+  function updatePipeMesh(mesh: THREE.Mesh, start: THREE.Vector3, end: THREE.Vector3, boreScale = 1) {
     const baseLength = Number(mesh.userData.pipeBaseLength ?? 1);
     const length = Math.max(start.distanceTo(end), 0.01);
-    mesh.scale.set(1, length / baseLength, 1);
+    // The cylinder runs along its own +Y, so length is the y scale and the bore is
+    // the other two - which is what lets a throat follow a changed diameter.
+    mesh.scale.set(boreScale, length / baseLength, boreScale);
     orientBetweenPoints(mesh, start, end);
   }
 
@@ -1123,7 +1338,24 @@ export function buildCinemaScene(options: {
     return points.map((point) => `${Math.round(point.x * 100)},${Math.round(point.y * 100)}`).join(";");
   }
 
-  function routeWorldPoint(points: readonly Vec2[], t: number, z: number): THREE.Vector3 {
+  /** Cheap identity for a pipe's bore and the heights it spans. */
+  function formKeyOf(radius: number, startZ: number, endZ: number): string {
+    return `${radius.toFixed(6)}:${startZ.toFixed(6)}:${endZ.toFixed(6)}`;
+  }
+
+  /**
+   * A point a fraction along a route, lifted to the height the pipe has reached
+   * there plus `lift`, which is the drawing offset that keeps a fitting clear of
+   * the tube it sits on.
+   */
+  function routeWorldPoint(
+    points: readonly Vec2[],
+    t: number,
+    lift: number,
+    elevation: { startZ: number; endZ: number }
+  ): THREE.Vector3 {
+    const clamped = Math.max(0, Math.min(1, t));
+    const z = lift + elevation.startZ + (elevation.endZ - elevation.startZ) * clamped;
     return worldFromNetwork(pointOnPolyline(points, t), center, worldScale, z);
   }
 
@@ -1135,8 +1367,22 @@ export function buildCinemaScene(options: {
   }
 
   /** Where a pipe's interior corners land in world space: one collar per bend. */
-  function routeWorldCorners(points: readonly Vec2[], z: number): THREE.Vector3[] {
-    return points.slice(1, -1).map((point) => worldFromNetwork(point, center, worldScale, z));
+  function routeWorldCorners(
+    points: readonly Vec2[],
+    lift: number,
+    elevation: { startZ: number; endZ: number }
+  ): THREE.Vector3[] {
+    const total = polylineLength(points);
+    let travelled = 0;
+    const corners: THREE.Vector3[] = [];
+    for (let index = 1; index < points.length; index += 1) {
+      travelled += Math.hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y);
+      if (index >= points.length - 1) break;
+      const t = total > 0 ? Math.min(1, travelled / total) : 0;
+      const z = lift + elevation.startZ + (elevation.endZ - elevation.startZ) * t;
+      corners.push(worldFromNetwork(points[index], center, worldScale, z));
+    }
+    return corners;
   }
 
   scene.add(createCinemaAmbientLight());
@@ -1236,6 +1482,26 @@ export function buildCinemaScene(options: {
   }
 
   const initialRoutes = routesByEdge(project);
+  /**
+   * The project's own metres-per-pixel. Rebuilt on every `updateModel`, because a
+   * length or a route can change under us and this is the number every physical
+   * quantity in the scene is measured against.
+   */
+  let metricScale = networkMetricScale(project, initialRoutes, worldScale);
+  // `THREE.Plane` stores z = -constant, and the scene is rebuilt whenever the
+  // selection changes, so this only has to be set once.
+  const selectedNode = selectedKind === "node" && selectedId ? project.nodes[selectedId] : undefined;
+  plane.constant = selectedNode ? -nodeWorldZ(selectedNode, metricScale.worldPerMetre) : 0;
+
+  /** The world radius, and the two heights, one pipe should currently be drawn at. */
+  function pipeFormOf(edge: FluidEdge, route: readonly Vec2[], nodes: Record<string, FluidNode>) {
+    const radius = pipeWorldRadius({
+      shape: edge.shape,
+      physicalLength: edge.length,
+      drawnWorldLength: polylineLength(route) / worldScale
+    });
+    return { radius, ...edgeWorldElevations(edge, nodes, metricScale.worldPerMetre) };
+  }
 
   // Empty once the data is the subject, which is what silences the drawn network:
   // no pipes, no fittings, no vessels, no flow ticks, and nothing left in
@@ -1249,16 +1515,26 @@ export function buildCinemaScene(options: {
     if (!route || !solved) return;
     const metric = project.visualization.overlay === "pressure" ? solved.pressureDrop : project.visualization.overlay === "reynolds" ? solved.reynolds : solved.velocity;
     const color = new THREE.Color(overlayValueColor(metric, maxEdge, project.visualization.overlay));
-    const radius = Math.max(0.065, edge.shape.kind === "circular" ? edge.shape.diameter * 0.86 : edge.shape.height * 0.76);
+    // Bore, and the heights the run spans, both read from the model. The old
+    // constant-ish `max(0.065, diameter * 0.86)` drew every pipe under 76 mm at
+    // exactly one size and ignored elevation entirely.
+    const { radius, startZ, endZ } = pipeFormOf(edge, route, project.nodes);
+    const elevation = { startZ, endZ };
     const active = selectedKind === "edge" && selectedId === edge.id;
     const { cage: cageMaterial, core: coreMaterial, outline: outlineMaterial } = createSchematicPipeMaterials(color, active);
     // A coarse, visibly faceted cage: few enough segments that the wireframe
     // reads as a drawing rather than as a shaded tube, and sparse enough that it
     // never stripes the solved surface behind it.
     const cageRadius = radius * 1.42;
-    const coreRadius = Math.max(0.034, radius * 0.62);
-    const outerPipe = new THREE.Mesh(buildSweptTubeGeometry(routeWorldPath(route, cageRadius, center, worldScale), cageRadius, 8), cageMaterial);
-    const innerPipe = new THREE.Mesh(buildSweptTubeGeometry(routeWorldPath(route, coreRadius, center, worldScale), coreRadius, 16), coreMaterial);
+    const coreRadius = radius * 0.62;
+    const outerPipe = new THREE.Mesh(
+      buildSweptTubeGeometry(routeWorldPath(route, cageRadius, center, worldScale, startZ, endZ), cageRadius, 8),
+      cageMaterial
+    );
+    const innerPipe = new THREE.Mesh(
+      buildSweptTubeGeometry(routeWorldPath(route, coreRadius, center, worldScale, startZ, endZ), coreRadius, 16),
+      coreMaterial
+    );
     outerPipe.name = `Schematic pipe cage ${edge.id}`;
     innerPipe.name = `Schematic pipe core ${edge.id}`;
     registerPickable(outerPipe, { kind: "edge", id: edge.id });
@@ -1268,7 +1544,7 @@ export function buildCinemaScene(options: {
     // The centre line is the drawing's outline: it traces the routed path itself,
     // so where the pipe turns is legible without asking a highlight to say so.
     const outline = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(routeWorldPath(route, coreRadius, center, worldScale)),
+      new THREE.BufferGeometry().setFromPoints(routeWorldPath(route, coreRadius, center, worldScale, startZ, endZ)),
       outlineMaterial
     );
     outline.name = `Schematic pipe centre line ${edge.id}`;
@@ -1284,7 +1560,7 @@ export function buildCinemaScene(options: {
     const rings: THREE.Mesh[] = [];
     [0.08, 0.92].forEach((t) => {
       const ring = new THREE.Mesh(ringGeometry.clone(), ringMaterial);
-      ring.position.copy(routeWorldPoint(route, t, 0));
+      ring.position.copy(routeWorldPoint(route, t, 0, elevation));
       ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), routeWorldTangent(route, t));
       registerPickable(ring, { kind: "edge", id: edge.id });
       scene.add(ring);
@@ -1298,7 +1574,7 @@ export function buildCinemaScene(options: {
       color: steppedTone(active ? 0xffd98a : 0x9fb8c8, "shadow"),
       opacity: active ? 0.5 : 0.3
     });
-    const collars: THREE.Mesh[] = routeWorldCorners(route, 0).map((corner) => {
+    const collars: THREE.Mesh[] = routeWorldCorners(route, 0, elevation).map((corner) => {
       const collar = new THREE.Mesh(collarGeometry, collarMaterial);
       collar.position.copy(corner);
       collar.name = `Schematic pipe bend ${edge.id}`;
@@ -1314,9 +1590,9 @@ export function buildCinemaScene(options: {
     // brighter than the opaque solved surface.
     if (edge.type === "venturi") {
       throat = createPipeMesh(
-        routeWorldPoint(route, 0.42, 0),
-        routeWorldPoint(route, 0.58, 0),
-        Math.max(0.03, radius * 0.35),
+        routeWorldPoint(route, 0.42, 0, elevation),
+        routeWorldPoint(route, 0.58, 0, elevation),
+        radius * 0.35,
         createConstantSurfaceMaterial({ color: steppedTone(0xe8c775, "base"), opacity: 0.58 }),
         20
       );
@@ -1327,7 +1603,7 @@ export function buildCinemaScene(options: {
         new THREE.OctahedronGeometry(radius * 1.65, 0),
         createConstantSurfaceMaterial({ color: steppedTone(0xe0a266, "base"), opacity: 0.62 })
       );
-      valve.position.copy(routeWorldPoint(route, 0.5, 0)).setZ(radius * 1.7);
+      valve.position.copy(routeWorldPoint(route, 0.5, radius * 1.7, elevation));
       registerPickable(valve, { kind: "edge", id: edge.id });
       scene.add(valve);
     } else if (edge.type === "bend") {
@@ -1335,7 +1611,7 @@ export function buildCinemaScene(options: {
         new THREE.TorusGeometry(radius * 1.3, 0.02, 8, 40),
         createConstantSurfaceMaterial({ color: steppedTone(0x8fc6dc, "base"), opacity: 0.6 })
       );
-      bend.position.copy(routeWorldPoint(route, 0.5, 0)).setZ(radius * 1.4);
+      bend.position.copy(routeWorldPoint(route, 0.5, radius * 1.4, elevation));
       registerPickable(bend, { kind: "edge", id: edge.id });
       scene.add(bend);
     }
@@ -1344,7 +1620,7 @@ export function buildCinemaScene(options: {
     const particleCount = Math.max(16, Math.min(56, Math.round(Math.abs(solved.velocity) * 9)));
     for (let index = 0; index < particleCount; index += 1) {
       const t = index / particleCount;
-      const point = routeWorldPoint(route, t, 0);
+      const point = routeWorldPoint(route, t, 0, elevation);
       particlePositions.push(point.x, point.y, point.z + 0.07 + (index % 4) * 0.014);
       particleColors.push(color.r, color.g, color.b);
       particlePhases.push(t + edge.id.length * 0.07);
@@ -1365,7 +1641,11 @@ export function buildCinemaScene(options: {
       particleCount,
       coreMaterial,
       radius,
-      routeKey: routeKeyOf(route)
+      baseRadius: radius,
+      startZ,
+      endZ,
+      routeKey: routeKeyOf(route),
+      formKey: formKeyOf(radius, startZ, endZ)
     });
   });
 
@@ -1388,7 +1668,8 @@ export function buildCinemaScene(options: {
   }
 
   schematicNodes.forEach((node) => {
-    const position = worldFromNetwork(node.position, center, worldScale, 0.08);
+    const elevationZ = nodeWorldZ(node, metricScale.worldPerMetre);
+    const position = worldFromNetwork(node.position, center, worldScale, NODE_BODY_Z + elevationZ);
     const active = selectedKind === "node" && selectedId === node.id;
     const nodeGroup = new THREE.Group();
     const nodePortMeshes = new Map<PipePortId, THREE.Mesh>();
@@ -1459,7 +1740,7 @@ export function buildCinemaScene(options: {
     nodeGroup.add(pickVolume);
 
     ports.forEach((port) => {
-      const portPoint = worldFromNetwork(schematicPortPosition(node, port), center, worldScale, 0.1);
+      const portPoint = worldFromNetwork(schematicPortPosition(node, port), center, worldScale, NODE_PORT_Z + elevationZ);
       const portMesh = new THREE.Mesh(new THREE.SphereGeometry(port === "inlet" || port === "outlet" ? 0.064 : 0.048, 18, 12), new THREE.MeshBasicMaterial({ color: port === "inlet" || port === "outlet" ? 0x9dfbd7 : 0x8aa0b8 }));
       portMesh.position.copy(portPoint);
       registerPickable(portMesh, { kind: "port", nodeId: node.id, port, point: schematicPortPosition(node, port) });
@@ -1468,12 +1749,12 @@ export function buildCinemaScene(options: {
     });
 
     if (active) {
-      const handlePoint = worldFromNetwork(aimHandlePosition(node), center, worldScale, 0.16);
+      const handlePoint = worldFromNetwork(aimHandlePosition(node), center, worldScale, NODE_HANDLE_Z + elevationZ);
       nodeHandle = new THREE.Mesh(new THREE.SphereGeometry(0.08, 20, 14), new THREE.MeshBasicMaterial({ color: 0xffd54f }));
       nodeHandle.position.copy(handlePoint);
       registerPickable(nodeHandle, { kind: "rotate", nodeId: node.id });
       scene.add(nodeHandle);
-      const handleLineGeometry = new THREE.BufferGeometry().setFromPoints([position.clone().setZ(0.13), handlePoint]);
+      const handleLineGeometry = new THREE.BufferGeometry().setFromPoints([position.clone().setZ(0.13 + elevationZ), handlePoint]);
       nodeHandleLine = new THREE.Line(handleLineGeometry, new THREE.LineBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.72 }));
       scene.add(nodeHandleLine);
     }
@@ -1553,30 +1834,42 @@ export function buildCinemaScene(options: {
       const halfExtents = ([0, 1, 2] as const).map(
         (axis) => ((resultSurface.bounds.max[axis] - resultSurface.bounds.min[axis]) / 2) * resultSurface.meshScale
       ) as [number, number, number];
-      return { ...settings, zoom: cinemaFitZoomForBox(halfExtents, settings, viewWidth, viewHeight), pan: { x: 0, y: 0 } };
+      return normalizeCinemaCamera({
+        ...settings,
+        zoom: cinemaFitZoomForBox(halfExtents, settings, viewWidth, viewHeight),
+        pan: { x: 0, y: 0 }
+      });
     }
     const nodes = Object.values(nextProject.nodes);
-    if (nodes.length === 0) return { ...settings, zoom: 1, pan: { x: 0, y: 0 } };
+    if (nodes.length === 0) return normalizeCinemaCamera({ ...settings, zoom: 1, pan: { x: 0, y: 0 } });
     const minX = Math.min(...nodes.map((node) => node.position.x));
     const maxX = Math.max(...nodes.map((node) => node.position.x));
     const minY = Math.min(...nodes.map((node) => node.position.y));
     const maxY = Math.max(...nodes.map((node) => node.position.y));
     const worldSpan = Math.max(maxX - minX, maxY - minY, 1) / worldScale;
-    return { ...settings, zoom: cinemaFitZoom(worldSpan), pan: { x: 0, y: 0 } };
+    // Fit is the one moment the renderer hands a camera back to the application,
+    // so it is where a yaw that has been orbited to -572 is folded back onto the
+    // turn every control assumes. It changes nothing about what is on screen.
+    return normalizeCinemaCamera({ ...settings, zoom: cinemaFitZoom(worldSpan), pan: { x: 0, y: 0 } });
   }
 
   /**
-   * Re-sweeps one pipe along its current route.
+   * Re-sweeps one pipe along its current route, at its current bore and height.
    *
    * A route can gain or lose corners when a component moves, so the tube has to
    * be rebuilt rather than stretched - which is precisely the thing the old
    * fixed-length cylinder could not do, and why bends never reached this view.
+   * Bore and height are rebuilt here too: they are baked into the swept vertices,
+   * so there is no cheaper way to change them and no way at all to change them by
+   * moving the mesh.
    */
   function rebuildPipeGeometry(visual: NonNullable<ReturnType<typeof edgeVisuals.get>>, route: readonly Vec2[]) {
-    const cageRadius = visual.radius * 1.42;
-    const coreRadius = Math.max(0.034, visual.radius * 0.62);
-    const cagePath = routeWorldPath(route, cageRadius, center, worldScale);
-    const corePath = routeWorldPath(route, coreRadius, center, worldScale);
+    const { radius, startZ, endZ } = visual;
+    const elevation = { startZ, endZ };
+    const cageRadius = radius * 1.42;
+    const coreRadius = radius * 0.62;
+    const cagePath = routeWorldPath(route, cageRadius, center, worldScale, startZ, endZ);
+    const corePath = routeWorldPath(route, coreRadius, center, worldScale, startZ, endZ);
     visual.outerPipe.geometry.dispose();
     visual.outerPipe.geometry = buildSweptTubeGeometry(cagePath, cageRadius, 8);
     visual.innerPipe.geometry.dispose();
@@ -1585,7 +1878,7 @@ export function buildCinemaScene(options: {
     visual.outline.geometry = new THREE.BufferGeometry().setFromPoints(corePath);
 
     // One collar per corner, so a route that gains a bend gains a marker for it.
-    const corners = routeWorldCorners(route, 0);
+    const corners = routeWorldCorners(route, 0, elevation);
     while (visual.collars.length > corners.length) {
       const collar = visual.collars.pop();
       if (!collar) continue;
@@ -1602,7 +1895,16 @@ export function buildCinemaScene(options: {
       scene.add(collar);
       visual.collars.push(collar);
     }
-    visual.collars.forEach((collar, index) => collar.position.copy(corners[index]));
+    // Fittings are primitives sized off the bore when they were built, so the one
+    // thing that keeps them honest about a changed bore is a uniform scale.
+    const boreScale = visual.baseRadius > 0 ? radius / visual.baseRadius : 1;
+    visual.collars.forEach((collar, index) => {
+      collar.position.copy(corners[index]);
+      collar.scale.setScalar(boreScale);
+    });
+    visual.rings.forEach((ring) => ring.scale.setScalar(boreScale));
+    visual.valve?.scale.setScalar(boreScale);
+    visual.bend?.scale.setScalar(boreScale);
   }
 
   function updateModel(nextProject: FluidProject, nextResult: SimulationResult) {
@@ -1611,19 +1913,28 @@ export function buildCinemaScene(options: {
     center.x = nextCenter.x;
     center.y = nextCenter.y;
     const routes = routesByEdge(nextProject);
+    // Re-measured every update: an edit to any edge's length changes what a
+    // schematic pixel is worth, and every elevation in the scene is drawn against
+    // that. Doing this once at build time was half of why the 3D view ignored the
+    // model it was supposed to be showing.
+    metricScale = networkMetricScale(nextProject, routes, worldScale);
+
     Object.values(nextProject.nodes).forEach((node) => {
       const visual = nodeVisuals.get(node.id);
       if (!visual) return;
-      visual.group.position.copy(worldFromNetwork(node.position, center, worldScale, 0.08));
+      const elevationZ = nodeWorldZ(node, metricScale.worldPerMetre);
+      visual.group.position.copy(worldFromNetwork(node.position, center, worldScale, NODE_BODY_Z + elevationZ));
       visual.group.rotation.z = -degreesToRadians(node.rotation ?? 0);
       ports.forEach((port) => {
         const portMesh = visual.ports.get(port);
-        if (portMesh) portMesh.position.copy(worldFromNetwork(schematicPortPosition(node, port), center, worldScale, 0.1));
+        if (portMesh) {
+          portMesh.position.copy(worldFromNetwork(schematicPortPosition(node, port), center, worldScale, NODE_PORT_Z + elevationZ));
+        }
       });
-      if (visual.handle) visual.handle.position.copy(worldFromNetwork(aimHandlePosition(node), center, worldScale, 0.16));
+      const handlePoint = worldFromNetwork(aimHandlePosition(node), center, worldScale, NODE_HANDLE_Z + elevationZ);
+      if (visual.handle) visual.handle.position.copy(handlePoint);
       if (visual.handleLine) {
-        const handlePoint = worldFromNetwork(aimHandlePosition(node), center, worldScale, 0.16);
-        const nodePoint = worldFromNetwork(node.position, center, worldScale, 0.13);
+        const nodePoint = worldFromNetwork(node.position, center, worldScale, 0.13 + elevationZ);
         visual.handleLine.geometry.dispose();
         visual.handleLine.geometry = new THREE.BufferGeometry().setFromPoints([nodePoint, handlePoint]);
       }
@@ -1633,28 +1944,45 @@ export function buildCinemaScene(options: {
       const visual = edgeVisuals.get(edge.id);
       const route = routes.get(edge.id);
       if (!visual || !route) return;
+      const form = pipeFormOf(edge, route, nextProject.nodes);
+      const elevation = { startZ: form.startZ, endZ: form.endZ };
       const routeKey = routeKeyOf(route);
-      if (routeKey !== visual.routeKey) {
+      const formKey = formKeyOf(form.radius, form.startZ, form.endZ);
+      if (routeKey !== visual.routeKey || formKey !== visual.formKey) {
+        visual.radius = form.radius;
+        visual.startZ = form.startZ;
+        visual.endZ = form.endZ;
         rebuildPipeGeometry(visual, route);
         visual.routeKey = routeKey;
+        visual.formKey = formKey;
       }
       visual.rings.forEach((ring, index) => {
         const t = index === 0 ? 0.08 : 0.92;
-        ring.position.copy(routeWorldPoint(route, t, 0));
+        ring.position.copy(routeWorldPoint(route, t, 0, elevation));
         ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), routeWorldTangent(route, t));
       });
-      if (visual.throat) updatePipeMesh(visual.throat, routeWorldPoint(route, 0.42, 0), routeWorldPoint(route, 0.58, 0));
-      if (visual.valve) visual.valve.position.copy(routeWorldPoint(route, 0.5, 0)).setZ(0.12);
-      if (visual.bend) visual.bend.position.copy(routeWorldPoint(route, 0.5, 0)).setZ(0.1);
+      const boreScale = visual.baseRadius > 0 ? visual.radius / visual.baseRadius : 1;
+      if (visual.throat) {
+        updatePipeMesh(
+          visual.throat,
+          routeWorldPoint(route, 0.42, 0, elevation),
+          routeWorldPoint(route, 0.58, 0, elevation),
+          boreScale
+        );
+      }
+      if (visual.valve) visual.valve.position.copy(routeWorldPoint(route, 0.5, visual.radius * 1.7, elevation));
+      if (visual.bend) visual.bend.position.copy(routeWorldPoint(route, 0.5, visual.radius * 1.4, elevation));
     });
 
     const particlePosition = particleGeometry?.getAttribute("position") as THREE.BufferAttribute | undefined;
     if (particlePosition) {
       particleRanges.forEach(({ edgeId, start, count }) => {
         const route = routes.get(edgeId);
-        if (!route) return;
+        const visual = edgeVisuals.get(edgeId);
+        if (!route || !visual) return;
+        const elevation = { startZ: visual.startZ, endZ: visual.endZ };
         for (let index = 0; index < count; index += 1) {
-          const point = routeWorldPoint(route, index / count, 0);
+          const point = routeWorldPoint(route, index / count, 0, elevation);
           particlePosition.setXYZ(start + index, point.x, point.y, point.z + 0.07 + (index % 4) * 0.014);
         }
       });
@@ -1662,7 +1990,10 @@ export function buildCinemaScene(options: {
     }
 
     camera.updateMatrixWorld();
-    Object.assign(projectedPositions, projectedNodePositions(nextProject, center, worldScale, camera, viewWidth, viewHeight));
+    Object.assign(
+      projectedPositions,
+      projectedNodePositions(nextProject, center, worldScale, metricScale.worldPerMetre, camera, viewWidth, viewHeight)
+    );
     renderer.render(scene, camera);
     void nextResult;
   }
@@ -1697,7 +2028,15 @@ export function buildCinemaScene(options: {
     renderer.dispose();
   }
 
-  const projectedPositions = projectedNodePositions(project, center, worldScale, camera, viewWidth, viewHeight);
+  const projectedPositions = projectedNodePositions(
+    project,
+    center,
+    worldScale,
+    metricScale.worldPerMetre,
+    camera,
+    viewWidth,
+    viewHeight
+  );
   const runtime: CinemaRuntime = {
     center,
     worldScale,
@@ -1718,7 +2057,10 @@ export function buildCinemaScene(options: {
       applyCinemaCamera(camera, settings, viewWidth, viewHeight);
       layoutCaption();
       camera.updateMatrixWorld();
-      Object.assign(projectedPositions, projectedNodePositions(currentProject, center, worldScale, camera, viewWidth, viewHeight));
+      Object.assign(
+        projectedPositions,
+        projectedNodePositions(currentProject, center, worldScale, metricScale.worldPerMetre, camera, viewWidth, viewHeight)
+      );
       renderer.render(scene, camera);
     },
     resize,

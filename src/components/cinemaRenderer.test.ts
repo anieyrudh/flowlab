@@ -1,16 +1,20 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import type { VtkResultDataset } from "../types";
+import type { ChannelShape, FluidEdge, FluidNode, FluidProject, VtkResultDataset } from "../types";
 import {
   CINEMA_VIEW_HEIGHT,
+  FALLBACK_METRES_PER_PIXEL,
+  MIN_PIPE_WORLD_RADIUS,
   RESULT_SURFACE_Z_OFFSET,
   SOLVED_DOMAIN_VIEW_FILL,
   SOLVED_DOMAIN_WORLD_SPAN,
   applyCinemaCamera,
   buildSweptTubeGeometry,
+  channelDrawnDiameter,
   cinemaFitZoom,
   cinemaFitZoomForBox,
   cinemaOrthographicFrustum,
+  cinemaViewBasis,
   clampCinemaZoom,
   createCinemaAmbientLight,
   createCinemaCamera,
@@ -20,12 +24,17 @@ import {
   createResultSurfaceMaterial,
   createSchematicPipeMaterials,
   describeSolvedDomain,
+  edgeWorldElevations,
   exteriorTriangleCount,
   extractExteriorCellFaces,
+  networkMetricScale,
+  nodeWorldZ,
+  pipeWorldRadius,
   resultSurfaceTriangles,
   solvedDomainCaptionPlacement,
   steppedTone
 } from "./cinemaRenderer";
+import { buildSchematicRoutes, cinemaCameraForPlane, polylineLength } from "./viewportModel";
 
 function dataset(
   points: [number, number, number][],
@@ -263,11 +272,17 @@ describe("Orthographic framing", () => {
     expect(CINEMA_VIEW_HEIGHT / cinemaFitZoom(span)).toBeGreaterThanOrEqual(span);
   });
 
-  it("builds an orthographic camera whose up axis matches the scene's +Z", () => {
+  it("builds an orthographic camera that prints the scene's +Z up the screen", () => {
     const camera = createCinemaCamera(900, 600, { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } });
+    camera.updateMatrixWorld();
+    const ground = new THREE.Vector3(0, 0, 0).project(camera);
+    const overhead = new THREE.Vector3(0, 0, 1).project(camera);
 
     expect(camera).toBeInstanceOf(THREE.OrthographicCamera);
-    expect(camera.up.z).toBe(1);
+    // The property that matters is the picture, not the vector: a point a metre
+    // above the plan has to land above it on screen, and directly above it.
+    expect(overhead.y).toBeGreaterThan(ground.y);
+    expect(overhead.x).toBeCloseTo(ground.x, 9);
   });
 
   it("keeps parallel pipes parallel: equal world lengths project to equal screen lengths", () => {
@@ -686,5 +701,322 @@ describe("Naming the solved domain", () => {
     expect(empty.extent).toEqual([0, 0, 0]);
     expect(empty.layers).toBe(0);
     expect(empty.lines).toHaveLength(4);
+  });
+});
+
+/* --- The model the 3D view is supposed to be showing ---------------------------
+ *
+ * Fault 1 was that a pipe's diameter, its length and a component's elevation all
+ * left the 3D view exactly as it was. The pure pieces below are the ones that
+ * carry each of those three quantities into world space, so they are where the
+ * fix can be pinned down without a WebGL context.
+ */
+
+const WORLD_SCALE = 74;
+
+function node(id: string, x: number, y: number, elevation = 0): FluidNode {
+  return { id, type: "junction", label: id, position: { x, y }, elevation };
+}
+
+function pipe(id: string, from: string, to: string, length: number, shape: ChannelShape): FluidEdge {
+  return { id, type: "pipe", label: id, from, to, length, shape, roughness: 4.5e-5, minorLossK: 0 };
+}
+
+function network(nodes: FluidNode[], edges: FluidEdge[]): FluidProject {
+  return {
+    id: "scale-fixture",
+    name: "scale fixture",
+    nodes: Object.fromEntries(nodes.map((entry) => [entry.id, entry])),
+    edges: Object.fromEntries(edges.map((entry) => [entry.id, entry])),
+    fluid: { density: 998, dynamicViscosity: 1e-3, vaporPressure: 2339, bulkModulus: 2.2e9, temperature: 293 },
+    visualization: { mode: "design", overlay: "velocity", particles: true, streamlines: false, grid: true },
+    solver: { tier: "instant-1d" }
+  } as unknown as FluidProject;
+}
+
+function routesOf(project: FluidProject) {
+  return new Map(buildSchematicRoutes(project).map((route) => [route.id, route.points]));
+}
+
+describe("What a schematic pixel is worth", () => {
+  const project = network(
+    [node("a", 0, 0), node("b", 400, 0)],
+    [pipe("p", "a", "b", 20, { kind: "circular", diameter: 0.2 })]
+  );
+
+  it("takes the scale from the model rather than from a constant", () => {
+    const routes = routesOf(project);
+    const scale = networkMetricScale(project, routes, WORLD_SCALE);
+    const drawnPixels = polylineLength(routes.get("p") ?? []);
+
+    expect(scale.fromModel).toBe(true);
+    // The one scale that makes the network's whole drawn run equal its whole
+    // specified length.
+    expect(scale.metresPerPixel).toBeCloseTo(20 / drawnPixels, 12);
+    expect(scale.worldPerMetre).toBeCloseTo(1 / (scale.metresPerPixel * WORLD_SCALE), 12);
+  });
+
+  it("moves when any edge's length moves, so a length edit can reach the picture", () => {
+    const asDrawn = networkMetricScale(project, routesOf(project), WORLD_SCALE);
+    const tenTimesLonger = network(
+      [node("a", 0, 0), node("b", 400, 0)],
+      [pipe("p", "a", "b", 200, { kind: "circular", diameter: 0.2 })]
+    );
+    const stretched = networkMetricScale(tenTimesLonger, routesOf(tenTimesLonger), WORLD_SCALE);
+
+    expect(stretched.metresPerPixel).toBeCloseTo(asDrawn.metresPerPixel * 10, 12);
+    // A metre is drawn smaller once the same drawing stands for ten times the run,
+    // which is what makes a longer pipe read as a more slender one.
+    expect(stretched.worldPerMetre).toBeCloseTo(asDrawn.worldPerMetre / 10, 12);
+  });
+
+  it("states a fallback rather than dividing by a network with no lengths in it", () => {
+    const lengthless = network(
+      [node("a", 0, 0), node("b", 400, 0)],
+      [pipe("p", "a", "b", 0, { kind: "circular", diameter: 0.2 })]
+    );
+    const scale = networkMetricScale(lengthless, routesOf(lengthless), WORLD_SCALE);
+
+    expect(scale.fromModel).toBe(false);
+    expect(scale.metresPerPixel).toBe(FALLBACK_METRES_PER_PIXEL);
+    expect(Number.isFinite(scale.worldPerMetre)).toBe(true);
+    expect(scale.worldPerMetre).toBeGreaterThan(0);
+  });
+
+  it("survives an empty project instead of returning a scale of nothing", () => {
+    const empty = network([], []);
+    const scale = networkMetricScale(empty, routesOf(empty), WORLD_SCALE);
+
+    expect(scale.fromModel).toBe(false);
+    expect(Number.isFinite(scale.metresPerPixel)).toBe(true);
+    expect(Number.isFinite(scale.worldPerMetre)).toBe(true);
+  });
+});
+
+describe("Drawing a pipe at the bore it was given", () => {
+  it("draws the pipe at its own true length-to-bore ratio", () => {
+    const radius = pipeWorldRadius({
+      shape: { kind: "circular", diameter: 0.4 },
+      physicalLength: 8,
+      drawnWorldLength: 2
+    });
+
+    // radius / run has to equal (diameter / 2) / length, which is the only thing
+    // about a length a tube with pinned ends can show.
+    expect(radius / 2).toBeCloseTo(0.2 / 8, 12);
+  });
+
+  it("responds to diameter at every size, including the sizes the old floor flattened", () => {
+    const at = (diameter: number) =>
+      pipeWorldRadius({ shape: { kind: "circular", diameter }, physicalLength: 6, drawnWorldLength: 2.7 });
+
+    // 20 mm and 75 mm both used to come back as 0.065 - the same pipe on screen.
+    expect(at(0.02)).toBeLessThan(at(0.075));
+    expect(at(0.075)).toBeLessThan(at(0.18));
+    expect(at(0.36)).toBeCloseTo(at(0.18) * 2, 12);
+  });
+
+  it("responds to length: a pipe told it is ten times longer is drawn ten times more slender", () => {
+    const shape: ChannelShape = { kind: "circular", diameter: 0.18 };
+    const short = pipeWorldRadius({ shape, physicalLength: 6, drawnWorldLength: 2.7 });
+    const long = pipeWorldRadius({ shape, physicalLength: 60, drawnWorldLength: 2.7 });
+
+    expect(long).toBeCloseTo(short / 10, 12);
+    expect(long).toBeGreaterThan(MIN_PIPE_WORLD_RADIUS);
+  });
+
+  it("guards against a degenerate sweep without clamping away the response", () => {
+    const hairline = pipeWorldRadius({
+      shape: { kind: "circular", diameter: 0.001 },
+      physicalLength: 5000,
+      drawnWorldLength: 2
+    });
+
+    expect(hairline).toBe(MIN_PIPE_WORLD_RADIUS);
+    // The floor the 0.065 constant used to sit at swallowed every bore under
+    // 76 mm. This one is orders of magnitude below any of them, so a 20 mm pipe
+    // and a 75 mm pipe can no longer come back the same size.
+    const at = (diameter: number) =>
+      pipeWorldRadius({ shape: { kind: "circular", diameter }, physicalLength: 6, drawnWorldLength: 2.7 });
+    expect(at(0.02)).toBeGreaterThan(MIN_PIPE_WORLD_RADIUS);
+    expect(at(0.02)).not.toBe(at(0.075));
+  });
+
+  it("falls back to the floor rather than emitting an unusable radius", () => {
+    const shape: ChannelShape = { kind: "circular", diameter: 0.2 };
+    expect(pipeWorldRadius({ shape, physicalLength: 0, drawnWorldLength: 2 })).toBe(MIN_PIPE_WORLD_RADIUS);
+    expect(pipeWorldRadius({ shape, physicalLength: 6, drawnWorldLength: 0 })).toBe(MIN_PIPE_WORLD_RADIUS);
+    expect(pipeWorldRadius({ shape, physicalLength: Number.NaN, drawnWorldLength: 2 })).toBe(MIN_PIPE_WORLD_RADIUS);
+  });
+
+  it("draws a duct at the bore the solver gives it, so both sides of it matter", () => {
+    expect(channelDrawnDiameter({ kind: "circular", diameter: 0.25 })).toBe(0.25);
+    // Hydraulic diameter, the same 4A/P the Reynolds number is built on.
+    expect(channelDrawnDiameter({ kind: "rectangular", width: 0.2, height: 0.1 })).toBeCloseTo(
+      (4 * 0.02) / (2 * 0.3),
+      12
+    );
+    expect(channelDrawnDiameter({ kind: "rectangular", width: 0.2, height: 0.4 })).toBeGreaterThan(
+      channelDrawnDiameter({ kind: "rectangular", width: 0.2, height: 0.1 })
+    );
+  });
+});
+
+describe("Elevation reaching the scene", () => {
+  it("lifts a component by its elevation, in the same metres the network is measured in", () => {
+    expect(nodeWorldZ({ elevation: 0 }, 0.2)).toBe(0);
+    expect(nodeWorldZ({ elevation: 3 }, 0.2)).toBeCloseTo(0.6, 12);
+    expect(nodeWorldZ({ elevation: -2 }, 0.2)).toBeCloseTo(-0.4, 12);
+  });
+
+  it("does not lift anything when the elevation is not a number", () => {
+    expect(nodeWorldZ({ elevation: Number.NaN }, 0.2)).toBe(0);
+  });
+
+  it("gives a pipe the two heights it actually runs between", () => {
+    const nodes = { a: node("a", 0, 0, 1), b: node("b", 400, 0, 4) };
+    const elevations = edgeWorldElevations({ from: "a", to: "b" }, nodes, 0.25);
+
+    expect(elevations.startZ).toBeCloseTo(0.25, 12);
+    expect(elevations.endZ).toBeCloseTo(1, 12);
+  });
+
+  it("treats a missing component as ground rather than as a hole in the geometry", () => {
+    const elevations = edgeWorldElevations({ from: "a", to: "gone" }, { a: node("a", 0, 0, 2) }, 0.25);
+
+    expect(elevations.startZ).toBeCloseTo(0.5, 12);
+    expect(elevations.endZ).toBe(0);
+  });
+
+  it("carries a change of elevation all the way to a difference in world height", () => {
+    const flat = network(
+      [node("a", 0, 0, 0), node("b", 400, 0, 0)],
+      [pipe("p", "a", "b", 20, { kind: "circular", diameter: 0.2 })]
+    );
+    const raised = network(
+      [node("a", 0, 0, 0), node("b", 400, 0, 5)],
+      [pipe("p", "a", "b", 20, { kind: "circular", diameter: 0.2 })]
+    );
+    const scaleOf = (subject: FluidProject) => networkMetricScale(subject, routesOf(subject), WORLD_SCALE);
+
+    expect(edgeWorldElevations({ from: "a", to: "b" }, flat.nodes, scaleOf(flat).worldPerMetre).endZ).toBe(0);
+    expect(
+      edgeWorldElevations({ from: "a", to: "b" }, raised.nodes, scaleOf(raised).worldPerMetre).endZ
+    ).toBeGreaterThan(0.1);
+  });
+});
+
+describe("Reaching every plane", () => {
+  const basisAt = (yaw: number, pitch: number) => cinemaViewBasis({ yaw, pitch });
+
+  it("keeps an orthonormal basis at both poles, where lookAt used to give up", () => {
+    for (const pitch of [-90, -12, 0, 38, 78, 90]) {
+      for (const yaw of [-572, -90, 0, 37, 180]) {
+        const { right, up, depth } = basisAt(yaw, pitch);
+        expect(right.length()).toBeCloseTo(1, 9);
+        expect(up.length()).toBeCloseTo(1, 9);
+        expect(depth.length()).toBeCloseTo(1, 9);
+        expect(right.dot(up)).toBeCloseTo(0, 9);
+        expect(right.dot(depth)).toBeCloseTo(0, 9);
+        expect(up.dot(depth)).toBeCloseTo(0, 9);
+      }
+    }
+  });
+
+  it("gives a wrapped or negative yaw the identical camera to its folded equivalent", () => {
+    const wrapped = createCinemaCamera(800, 600, { yaw: -572, pitch: 24, zoom: 1, pan: { x: 0, y: 0 } });
+    const folded = createCinemaCamera(800, 600, { yaw: 148, pitch: 24, zoom: 1, pan: { x: 0, y: 0 } });
+    wrapped.updateMatrixWorld();
+    folded.updateMatrixWorld();
+    const probe = new THREE.Vector3(1.3, -0.7, 0.4);
+
+    expect(wrapped.position.distanceTo(folded.position)).toBeCloseTo(0, 9);
+    expect(probe.clone().project(wrapped).distanceTo(probe.clone().project(folded))).toBeCloseTo(0, 9);
+  });
+
+  it("turns a negative yaw the opposite way to the matching positive one", () => {
+    const left = createCinemaCamera(800, 600, { yaw: -45, pitch: 24, zoom: 1, pan: { x: 0, y: 0 } });
+    const right = createCinemaCamera(800, 600, { yaw: 45, pitch: 24, zoom: 1, pan: { x: 0, y: 0 } });
+    const centre = createCinemaCamera(800, 600, { yaw: 0, pitch: 24, zoom: 1, pan: { x: 0, y: 0 } });
+
+    expect(left.position.x).toBeLessThan(centre.position.x);
+    expect(right.position.x).toBeGreaterThan(centre.position.x);
+    // A mirror image, not a different view: the same distance the other side of Y.
+    expect(left.position.x).toBeCloseTo(-right.position.x, 9);
+    expect(left.position.y).toBeCloseTo(right.position.y, 9);
+  });
+
+  it("shows the XY plan true when the camera is taken overhead", () => {
+    const camera = createCinemaCamera(
+      800,
+      800,
+      cinemaCameraForPlane("xy", { yaw: -572, pitch: 0, zoom: 1, pan: { x: 0, y: 0 } })
+    );
+    camera.updateMatrixWorld();
+    const origin = new THREE.Vector3(0, 0, 0).project(camera);
+    const alongZ = new THREE.Vector3(0, 0, 1).project(camera);
+
+    // Looking straight down Z, so height projects to nothing and the plan is undistorted.
+    expect(alongZ.x).toBeCloseTo(origin.x, 9);
+    expect(alongZ.y).toBeCloseTo(origin.y, 9);
+    const eastward = new THREE.Vector3(1, 0, 0).project(camera).distanceTo(origin);
+    const northward = new THREE.Vector3(0, 1, 0).project(camera).distanceTo(origin);
+    expect(eastward).toBeCloseTo(northward, 9);
+  });
+
+  it("shows each elevation plane edge on, which is where an elevation reads", () => {
+    const front = createCinemaCamera(
+      800,
+      800,
+      cinemaCameraForPlane("xz", { yaw: 0, pitch: 0, zoom: 1, pan: { x: 0, y: 0 } })
+    );
+    front.updateMatrixWorld();
+    const origin = new THREE.Vector3(0, 0, 0).project(front);
+    // Depth into the XZ plane collapses; X runs across and Z runs up.
+    expect(new THREE.Vector3(0, 1, 0).project(front).x).toBeCloseTo(origin.x, 9);
+    expect(new THREE.Vector3(0, 1, 0).project(front).y).toBeCloseTo(origin.y, 9);
+    expect(new THREE.Vector3(1, 0, 0).project(front).x).toBeGreaterThan(origin.x);
+    expect(new THREE.Vector3(0, 0, 1).project(front).y).toBeGreaterThan(origin.y);
+
+    const side = createCinemaCamera(
+      800,
+      800,
+      cinemaCameraForPlane("yz", { yaw: 0, pitch: 0, zoom: 1, pan: { x: 0, y: 0 } })
+    );
+    side.updateMatrixWorld();
+    const sideOrigin = new THREE.Vector3(0, 0, 0).project(side);
+    expect(new THREE.Vector3(1, 0, 0).project(side).x).toBeCloseTo(sideOrigin.x, 9);
+    expect(new THREE.Vector3(0, 1, 0).project(side).x).not.toBeCloseTo(sideOrigin.x, 6);
+    expect(new THREE.Vector3(0, 0, 1).project(side).y).toBeGreaterThan(sideOrigin.y);
+  });
+
+  it("holds the scene inside the near and far planes at every reachable pitch", () => {
+    for (const pitch of [-90, -45, 0, 45, 90]) {
+      const camera = createCinemaCamera(800, 600, { yaw: -572, pitch, zoom: 1, pan: { x: 0, y: 0 } });
+      camera.updateMatrixWorld();
+      const depth = new THREE.Vector3(0, 0, 0).applyMatrix4(camera.matrixWorldInverse).z;
+
+      expect(-depth).toBeGreaterThan(camera.near);
+      expect(-depth).toBeLessThan(camera.far);
+    }
+  });
+
+  it("moves continuously through the pole rather than snapping at it", () => {
+    const positionAt = (pitch: number) =>
+      createCinemaCamera(800, 600, { yaw: 20, pitch, zoom: 1, pan: { x: 0, y: 0 } }).position.clone();
+
+    expect(positionAt(89.9).distanceTo(positionAt(90))).toBeLessThan(0.05);
+    expect(positionAt(-89.9).distanceTo(positionAt(-90))).toBeLessThan(0.05);
+  });
+
+  it("re-aims an existing camera without rebuilding it, at any angle", () => {
+    const settings = { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } };
+    const camera = createCinemaCamera(800, 600, settings);
+    applyCinemaCamera(camera, { ...settings, yaw: -572, pitch: 90 }, 800, 600);
+    camera.updateMatrixWorld();
+    const overhead = createCinemaCamera(800, 600, { ...settings, yaw: 148, pitch: 90 });
+    overhead.updateMatrixWorld();
+
+    expect(camera.position.distanceTo(overhead.position)).toBeCloseTo(0, 9);
   });
 });

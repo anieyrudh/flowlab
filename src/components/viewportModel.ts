@@ -260,6 +260,110 @@ export function resetCinemaCamera(): CinemaCameraState {
 }
 
 /* ------------------------------------------------------------------------------------ *
+ * Camera angles
+ *
+ * Yaw and pitch are bearings, not free numbers. Orbiting adds to them without bound, so
+ * after two turns of the drag the stored yaw is something like -572 while every control
+ * that shows it - a -180..180 slider, a "N deg" readout, a check for "am I on the XY
+ * plane" - is reading an angle it has no way to recognise. Folding both onto their
+ * canonical range is what makes a negative or wrapped angle mean the same thing to the
+ * camera and to the user interface, so it is done once, here, next to the state's own type.
+ * ------------------------------------------------------------------------------------ */
+
+/**
+ * Steepest downward and upward pitch.
+ *
+ * The poles are included: at +90 the camera is directly overhead and the XY plane is seen
+ * true, at -90 it is directly underneath. Those are two of the three principal views, so a
+ * clamp that stopped short of them was the reason the scene could only ever be looked at
+ * from one plane.
+ */
+export const CINEMA_MIN_PITCH = -90;
+export const CINEMA_MAX_PITCH = 90;
+
+/**
+ * Yaw folded onto one turn, in (-180, 180].
+ *
+ * -180 and 180 are the same bearing; the positive one is reported so the value is stable
+ * under repeated normalisation and lands exactly on a symmetric slider's own end stop
+ * rather than one step outside it.
+ */
+export function normalizeYawDegrees(yaw: number): number {
+  if (!Number.isFinite(yaw)) return 0;
+  const wrapped = ((((yaw + 180) % 360) + 360) % 360) - 180;
+  return wrapped === -180 ? 180 : wrapped;
+}
+
+export function clampCinemaPitch(pitch: number): number {
+  if (!Number.isFinite(pitch)) return defaultCinemaCamera.pitch;
+  return Math.max(CINEMA_MIN_PITCH, Math.min(CINEMA_MAX_PITCH, pitch));
+}
+
+/** The same camera with its angles folded onto the range every control assumes. */
+export function normalizeCinemaCamera(camera: CinemaCameraState): CinemaCameraState {
+  return {
+    ...camera,
+    yaw: normalizeYawDegrees(camera.yaw),
+    pitch: clampCinemaPitch(camera.pitch),
+    pan: { ...camera.pan }
+  };
+}
+
+/**
+ * The three principal planes, plus the isometric three-quarter view.
+ *
+ * `xy` is the plan the schematic is drawn on; `xz` and `yz` are the two elevations, which
+ * are the views that show what `node.elevation` actually does. Naming them by plane rather
+ * than by "Top"/"Front" keeps the button and the geometry saying the same thing.
+ */
+export type CinemaViewPlane = "iso" | "xy" | "xz" | "yz";
+
+export const cinemaPlaneOrientations: Record<CinemaViewPlane, { yaw: number; pitch: number; label: string }> = {
+  iso: { yaw: 0, pitch: 38, label: "Iso" },
+  xy: { yaw: 0, pitch: CINEMA_MAX_PITCH, label: "XY plan" },
+  xz: { yaw: 0, pitch: 0, label: "XZ elevation" },
+  yz: { yaw: 90, pitch: 0, label: "YZ elevation" }
+};
+
+/**
+ * The camera turned onto one plane, keeping whatever the viewer had zoomed and panned to.
+ *
+ * Carrying zoom and pan across is what makes the plane buttons a turn of the same camera
+ * rather than four separate modes the viewer has to re-establish their place in.
+ */
+export function cinemaCameraForPlane(plane: CinemaViewPlane, camera: CinemaCameraState): CinemaCameraState {
+  const orientation = cinemaPlaneOrientations[plane];
+  return { ...camera, yaw: orientation.yaw, pitch: orientation.pitch, pan: { ...camera.pan } };
+}
+
+/** How close to a plane's own bearing still counts as being on it, in degrees. */
+const PLANE_TOLERANCE_DEGREES = 0.5;
+
+/**
+ * Which plane the camera is looking along, or null when it is between planes.
+ *
+ * Comparison is on normalised angles, so a yaw of -270 is recognised as the YZ elevation
+ * exactly as a yaw of 90 is - which is the whole point of normalising in the first place.
+ */
+export function cinemaViewPlaneOf(camera: Pick<CinemaCameraState, "yaw" | "pitch">): CinemaViewPlane | null {
+  const yaw = normalizeYawDegrees(camera.yaw);
+  const pitch = clampCinemaPitch(camera.pitch);
+  // Straight overhead or straight underneath both look along Z, so both see the XY plane
+  // true; the compass bearing only decides which way up the plan is printed.
+  if (Math.abs(Math.abs(pitch) - CINEMA_MAX_PITCH) <= PLANE_TOLERANCE_DEGREES) return "xy";
+  for (const plane of ["xz", "yz", "iso"] as CinemaViewPlane[]) {
+    const orientation = cinemaPlaneOrientations[plane];
+    if (Math.abs(pitch - orientation.pitch) > PLANE_TOLERANCE_DEGREES) continue;
+    const yawGap = Math.abs(normalizeYawDegrees(yaw - orientation.yaw));
+    if (yawGap <= PLANE_TOLERANCE_DEGREES) return plane;
+    // An elevation shows the same plane from either side of it; a three-quarter view seen
+    // from behind is a different three-quarter view, so only the elevations get this.
+    if (plane !== "iso" && Math.abs(yawGap - 180) <= PLANE_TOLERANCE_DEGREES) return plane;
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------------------------ *
  * Orthogonal pipe routing
  *
  * An electronics schematic reads cleanly because every wire is a run of horizontal and
