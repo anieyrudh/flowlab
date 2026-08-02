@@ -128,7 +128,7 @@ test.describe("FlowLab workspace shell", () => {
     await expect(cfdPanels.getByRole("button", { name: "Diagnostics" })).toBeVisible();
     await expect(cfdPanels.getByRole("button", { name: "Warnings" })).toBeVisible();
     await expect(page.getByText("Solver diagnostics", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Generate and queue experimental CFD case" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Run CFD case" })).toBeDisabled();
     await expect(page.getByText(/Instant 1D runs in the Estimate stage/i)).toBeVisible();
 
     await stages.getByRole("button", { name: /Inspect/ }).click();
@@ -274,7 +274,7 @@ test.describe("FlowLab workspace shell", () => {
     await stages.getByRole("button", { name: /CFD/ }).click();
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
     await page.getByLabel("Mesh mode").selectOption("full-ogrid");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
     await expect(page.getByText("Generated-case mesh preview", { exact: true }).first()).toBeVisible();
     await assertPrimaryControlsAccessible(page);
     await page.screenshot({ path: "test-results/preview-governance/cfd.png" });
