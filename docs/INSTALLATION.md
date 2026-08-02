@@ -5,22 +5,28 @@ Apple Silicon. It also runs on Windows 11 x64.
 
 ## Downloading a release
 
-**There is no signed public release. You cannot download and install FlowLab
-yet.** To use FlowLab now, run it from source. Refer to
+**There is no public release. You cannot download and install FlowLab yet.** To
+use FlowLab now, run it from source. Refer to
 [Running from source](#running-from-source).
 
-The project will publish signed installers on the GitHub
-[Releases](https://github.com/anieyrudh/flowlab/releases) page. It will publish
-them only after the platform signing gate and the release gate pass. The
-installers will be:
+External release is blocked. It stays blocked until these gates pass:
 
-- macOS: DMG and ZIP;
-- Windows: Setup EXE and ZIP.
+- controlled independent review accepts the full O-grid evidence digest;
+- macOS Developer ID and Apple notary credentials are configured;
+- Windows Authenticode credentials are configured; and
+- a clean-machine installer acceptance is recorded on macOS and on Windows.
+
+Refer to
+[the distribution status record](desktop-electron-distribution-status-2026-07-24.md)
+for the current state of each gate. Do not tell a user that an installer is
+available before every gate passes.
 
 The repository's `Desktop Electron candidate` workflow builds short-lived macOS
 and Windows artifacts. These artifacts are for engineering review. They are not
-release installers. They are not signed, and your operating system will refuse
-to open them.
+release installers. They are not signed. Your operating system shows a warning
+the first time you open one. Refer to
+[the user guide](USER_GUIDE.md#3-start-the-application) for the one-time steps
+that let an unsigned build open.
 
 ## Running from source
 
