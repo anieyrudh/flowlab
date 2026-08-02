@@ -835,7 +835,7 @@ AXISYMMETRIC_QUALIFICATION_SCHEMA = (
     "flowlab.axisymmetric-geometry-experimental-qualification-request.v1"
 )
 AXISYMMETRIC_QUALIFICATION_CONTRACT_ID = (
-    "axisymmetric-generated-geometry-experimental-qualification-v1"
+    "axisymmetric-generated-geometry-experimental-qualification-v3"
 )
 AXISYMMETRIC_ALLOWED_EDGE_TYPES = {"pipe", "venturi", "expansion", "contraction", "nozzle"}
 

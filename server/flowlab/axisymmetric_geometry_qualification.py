@@ -46,15 +46,19 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "axisymmetric-geometry-experimental-qualification"
-    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V2.json"
+    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V3.json"
 )
-BASE_CONTRACT_PATH = CONTRACT_PATH.with_name(
-    "EXPERIMENTAL_QUALIFICATION_CONTRACT_V1.json"
+# V1 and V2 are retained failures. They stay listed as frozen so their digests
+# remain provable, and V3 binds them explicitly, but neither is the active
+# contract and neither may be resumed or reused.
+PREDECESSOR_CONTRACT_PATHS = (
+    CONTRACT_PATH.with_name("EXPERIMENTAL_QUALIFICATION_CONTRACT_V1.json"),
+    CONTRACT_PATH.with_name("EXPERIMENTAL_QUALIFICATION_CONTRACT_V2.json"),
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V2.md")
-CAMPAIGN_SCHEMA = "flowlab.axisymmetric-geometry-experimental-qualification-campaign.v1"
-LEVEL_SCHEMA = "flowlab.axisymmetric-geometry-experimental-qualification-level.v1"
-RESULT_PIPELINE_SCHEMA = "flowlab.axisymmetric-multi-edge-result-pipeline-proof.v1"
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V3.md")
+CAMPAIGN_SCHEMA = "flowlab.axisymmetric-geometry-experimental-qualification-campaign.v3"
+LEVEL_SCHEMA = "flowlab.axisymmetric-geometry-experimental-qualification-level.v3"
+RESULT_PIPELINE_SCHEMA = "flowlab.axisymmetric-multi-edge-result-pipeline-proof.v3"
 EXPECTED_PATCHES = {
     "inlet": "patch",
     "outlet": "patch",
@@ -65,9 +69,10 @@ EXPECTED_PATCHES = {
 }
 FROZEN_PATHS = [
     str(CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
-    str(BASE_CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
+    *(str(path.relative_to(REPOSITORY_ROOT)) for path in PREDECESSOR_CONTRACT_PATHS),
     str(RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
     str(RUNBOOK_PATH.with_name("RUNBOOK_V1.md").relative_to(REPOSITORY_ROOT)),
+    str(RUNBOOK_PATH.with_name("RUNBOOK_V2.md").relative_to(REPOSITORY_ROOT)),
     "server/flowlab/adapters.py",
     "server/flowlab/axisymmetric_geometry_qualification.py",
     "server/flowlab/execution.py",
@@ -120,64 +125,54 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def load_frozen_contract() -> tuple[dict[str, Any], str]:
+    """Load the standalone V3 contract and bind its retained predecessors.
+
+    V2 was a merge-patch revision layered over V1. V3 is a complete standalone
+    contract, because it changes a mesh gate: V1 froze ``geometricDirections`` at
+    3, which no OpenFOAM wedge can satisfy, and a revision schema exists to
+    certify that no scientific gate changed. The V1 and V2 digests are still
+    verified here so their retained evidence stays provably unmodified.
+    """
+
     text = CONTRACT_PATH.read_text(encoding="utf-8")
     try:
-        revision = json.loads(text)
+        contract = json.loads(text)
     except json.JSONDecodeError as exc:
         raise AxisymmetricGeometryQualificationError(
             "experimental qualification contract is invalid JSON"
         ) from exc
     if (
-        not isinstance(revision, dict)
-        or revision.get("schema")
-        != "flowlab.axisymmetric-geometry-experimental-qualification-contract-revision.v1"
-        or revision.get("revisionId")
-        != "axisymmetric-generated-geometry-experimental-qualification-v2"
-        or revision.get("status")
-        != "prospective-frozen-before-v2-retained-scientific-execution"
-    ):
-        raise AxisymmetricGeometryQualificationError(
-            "experimental qualification revision is unsupported or not prospectively frozen"
-        )
-    base_reference = revision.get("baseContract")
-    if (
-        not isinstance(base_reference, dict)
-        or base_reference.get("path") != BASE_CONTRACT_PATH.name
-        or base_reference.get("sha256") != _sha256_file(BASE_CONTRACT_PATH)
-    ):
-        raise AxisymmetricGeometryQualificationError(
-            "experimental qualification base contract digest does not match the v2 revision"
-        )
-    contract = _read_json(BASE_CONTRACT_PATH)
-
-    def merge_patch(target: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
-        merged = dict(target)
-        for key, value in patch.items():
-            if isinstance(value, dict) and isinstance(merged.get(key), dict):
-                merged[key] = merge_patch(merged[key], value)
-            else:
-                merged[key] = value
-        return merged
-
-    patch = revision.get("mergePatch")
-    if not isinstance(patch, dict):
-        raise AxisymmetricGeometryQualificationError(
-            "experimental qualification revision lacks its merge patch"
-        )
-    contract = merge_patch(contract, patch)
-    if (
-        contract.get("schema")
-        != "flowlab.axisymmetric-geometry-experimental-qualification-contract.v2"
+        not isinstance(contract, dict)
+        or contract.get("schema")
+        != "flowlab.axisymmetric-geometry-experimental-qualification-contract.v3"
         or contract.get("contractId")
         != adapters.AXISYMMETRIC_QUALIFICATION_CONTRACT_ID
         or contract.get("status")
-        != "prospective-frozen-before-v2-retained-scientific-execution"
+        != "prospective-frozen-before-v3-retained-scientific-execution"
         or contract.get("promotionAuthorized") is not False
         or contract.get("identity", {}).get("algorithm")
         != SOURCE_IDENTITY_ALGORITHM
     ):
         raise AxisymmetricGeometryQualificationError(
             "experimental qualification contract is unsupported or not prospectively frozen"
+        )
+    disposition = contract.get("predecessorDisposition")
+    expected_digests = {
+        path.name: _sha256_file(path) for path in PREDECESSOR_CONTRACT_PATHS
+    }
+    if (
+        not isinstance(disposition, dict)
+        or disposition.get("v1ContractSha256")
+        != expected_digests["EXPERIMENTAL_QUALIFICATION_CONTRACT_V1.json"]
+        or disposition.get("v2ContractSha256")
+        != expected_digests["EXPERIMENTAL_QUALIFICATION_CONTRACT_V2.json"]
+        or disposition.get("freshV1OrV2ExecutionAuthorized") is not False
+        or disposition.get("predecessorResultMayBeReusedAsV3Outcome") is not False
+        or disposition.get("predecessorEvidenceMayBeEditedOrReused") is not False
+    ):
+        raise AxisymmetricGeometryQualificationError(
+            "experimental qualification contract does not bind its retained "
+            "v1 and v2 predecessors"
         )
     return contract, _sha256_text(text)
 
@@ -773,6 +768,38 @@ def _trend_gates(
     }
 
 
+def _check_mesh_directions(check_mesh: str) -> tuple[int | None, int | None]:
+    """Parse the geometric and solution direction counts from a checkMesh log.
+
+    OpenFOAM 11 always writes the geometric line with the ``(non-empty/wedge)``
+    classification, and only the solution line uses the bare ``(non-empty)``
+    form. A wedge reports::
+
+        Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)
+        Mesh has 3 solution (non-empty) directions (1 1 1)
+
+    The previous literal test searched for ``"Mesh has 3 geometric (non-empty)
+    directions"``, which is wrong twice over for a wedge: the count is 2, and the
+    parenthetical never matches any topology. Correcting the count alone would
+    therefore still have failed.
+
+    ``None`` means the line was absent, which the caller must treat as a failure.
+    """
+
+    geometric = re.search(
+        r"Mesh has\s+(\d+)\s+geometric\s+\(non-empty(?:/wedge)?\)\s+directions",
+        check_mesh,
+    )
+    solution = re.search(
+        r"Mesh has\s+(\d+)\s+solution\s+\(non-empty\)\s+directions",
+        check_mesh,
+    )
+    return (
+        int(geometric.group(1)) if geometric else None,
+        int(solution.group(1)) if solution else None,
+    )
+
+
 def evaluate_level(
     case_dir: Path,
     case: SolverCase,
@@ -795,10 +822,20 @@ def evaluate_level(
     cell_count, minimum_cell_volume = _check_mesh_cell_count_and_minimum_volume(
         check_mesh
     )
+    mesh_limits = contract["gates"]["meshPerLevel"]
+    geometric_directions, solution_directions = _check_mesh_directions(check_mesh)
     mesh_gate = {
         "checkMeshPassed": "Mesh OK." in check_mesh,
-        "solutionDirections3": "Mesh has 3 solution (non-empty) directions" in check_mesh,
-        "geometricDirections3": "Mesh has 3 geometric (non-empty) directions" in check_mesh,
+        # Record what OpenFOAM actually reported, not only the verdict, so retained
+        # evidence shows the observed classification.
+        "geometricDirections": geometric_directions,
+        "solutionDirections": solution_directions,
+        "expectedGeometricDirections": mesh_limits["geometricDirections"],
+        "expectedSolutionDirections": mesh_limits["solutionDirections"],
+        "geometricDirectionsMatch": geometric_directions
+        == mesh_limits["geometricDirections"],
+        "solutionDirectionsMatch": solution_directions
+        == mesh_limits["solutionDirections"],
         "cellCount": cell_count,
         "minimumCellVolumeM3": minimum_cell_volume,
         "boundaryTypes": boundary_types,
@@ -806,8 +843,8 @@ def evaluate_level(
     }
     mesh_gate["passed"] = (
         mesh_gate["checkMeshPassed"]
-        and mesh_gate["solutionDirections3"]
-        and mesh_gate["geometricDirections3"]
+        and mesh_gate["solutionDirectionsMatch"]
+        and mesh_gate["geometricDirectionsMatch"]
         and mesh_gate["minimumCellVolumeM3"] > 0.0
         and mesh_gate["exactPatches"]
     )

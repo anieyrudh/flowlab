@@ -1,0 +1,291 @@
+{
+  "schema": "flowlab.axisymmetric-geometry-experimental-qualification-contract.v3",
+  "contractId": "axisymmetric-generated-geometry-experimental-qualification-v3",
+  "frozenOn": "2026-08-02",
+  "status": "prospective-frozen-before-v3-retained-scientific-execution",
+  "claim": {
+    "candidate": "FlowLab can deterministically generate and execute a bounded straight-axis, circular, axisymmetric wedge path containing contraction, throat, expansion, and recovery geometry while retaining explicit solver-cell-to-source-edge identity.",
+    "qualificationClass": "experimental-software-geometry-only",
+    "included": [
+      "constant straight circular pipes remain governed by their existing stricter campaign",
+      "generation-only Venturi",
+      "generation-only contraction",
+      "generation-only expansion",
+      "generation-only nozzle",
+      "one five-edge straight-axis contraction-throat-expansion-recovery runtime path",
+      "OpenFOAM generated-case, JobManager, result loading, and schematic-selection pipeline"
+    ],
+    "excluded": [
+      "independent experimental validation",
+      "benchmark or fixture promotion",
+      "validated preset changes",
+      "registry or campaign pointer changes",
+      "product promotion",
+      "release authorization",
+      "turbulence",
+      "transient flow",
+      "multiphase flow",
+      "compressible flow",
+      "branches",
+      "elbows",
+      "arbitrary CAD",
+      "SU2 axisymmetric execution"
+    ]
+  },
+  "existingStraightPipeCampaign": {
+    "module": "server/flowlab/axisymmetric_straight_pipe_campaign.py",
+    "mustRemainByteUnchanged": true,
+    "thresholdsMayNotBeReusedOrWeakened": true,
+    "statusMayNotChange": true
+  },
+  "runtime": {
+    "solver": "OpenFOAM through FlowLab JobManager",
+    "imageTag": "flowlab/openfoam11-gmsh:2026-07-13",
+    "imageIdRequired": true,
+    "physics": "steady incompressible laminar",
+    "meshMode": "axisymmetric",
+    "maxIterations": 2000,
+    "qoiHistoryWriteIntervalIterations": 1,
+    "freshOutputDirectoryRequired": true,
+    "overwriteAllowed": false
+  },
+  "physicalCase": {
+    "id": "contraction-throat-recovery",
+    "densityKgPerM3": 1000.0,
+    "dynamicViscosityPaS": 0.001,
+    "volumetricFlowRateM3PerS": 5e-06,
+    "edges": [
+      {
+        "id": "inlet-pipe",
+        "type": "pipe",
+        "lengthM": 0.06,
+        "inletDiameterM": 0.012,
+        "outletDiameterM": 0.012
+      },
+      {
+        "id": "contraction",
+        "type": "contraction",
+        "lengthM": 0.03,
+        "inletDiameterM": 0.012,
+        "outletDiameterM": 0.006
+      },
+      {
+        "id": "throat",
+        "type": "pipe",
+        "lengthM": 0.03,
+        "inletDiameterM": 0.006,
+        "outletDiameterM": 0.006
+      },
+      {
+        "id": "expansion",
+        "type": "expansion",
+        "lengthM": 0.06,
+        "inletDiameterM": 0.006,
+        "outletDiameterM": 0.012
+      },
+      {
+        "id": "recovery",
+        "type": "pipe",
+        "lengthM": 0.12,
+        "inletDiameterM": 0.012,
+        "outletDiameterM": 0.012
+      }
+    ],
+    "expectedTrends": {
+      "contraction": [
+        "axial velocity increases from contraction inlet to contraction outlet",
+        "kinematic pressure decreases from contraction inlet to contraction outlet"
+      ],
+      "throat": [
+        "mean axial velocity exceeds the inlet-pipe mean axial velocity",
+        "mean kinematic pressure is below the inlet-pipe mean kinematic pressure"
+      ],
+      "recovery": [
+        "axial velocity decreases from expansion inlet to recovery outlet",
+        "kinematic pressure at recovery exceeds kinematic pressure at the throat"
+      ]
+    }
+  },
+  "levels": [
+    {
+      "id": "coarse",
+      "radialCells": 4,
+      "axialCellsByEdge": {
+        "inlet-pipe": 8,
+        "contraction": 8,
+        "throat": 8,
+        "expansion": 12,
+        "recovery": 16
+      },
+      "refinementRatioFromPrevious": null
+    },
+    {
+      "id": "medium",
+      "radialCells": 8,
+      "axialCellsByEdge": {
+        "inlet-pipe": 16,
+        "contraction": 16,
+        "throat": 16,
+        "expansion": 24,
+        "recovery": 32
+      },
+      "refinementRatioFromPrevious": 2.0
+    },
+    {
+      "id": "fine",
+      "radialCells": 16,
+      "axialCellsByEdge": {
+        "inlet-pipe": 32,
+        "contraction": 32,
+        "throat": 32,
+        "expansion": 48,
+        "recovery": 64
+      },
+      "refinementRatioFromPrevious": 2.0
+    }
+  ],
+  "generationOnlyCases": [
+    {
+      "id": "venturi",
+      "edgeType": "venturi",
+      "inletDiameterM": 0.012,
+      "throatDiameterM": 0.006,
+      "outletDiameterM": 0.012
+    },
+    {
+      "id": "contraction",
+      "edgeType": "contraction",
+      "inletDiameterM": 0.012,
+      "outletDiameterM": 0.006
+    },
+    {
+      "id": "expansion",
+      "edgeType": "expansion",
+      "inletDiameterM": 0.006,
+      "outletDiameterM": 0.012
+    },
+    {
+      "id": "nozzle",
+      "edgeType": "nozzle",
+      "inletDiameterM": 0.012,
+      "outletDiameterM": 0.006
+    }
+  ],
+  "identity": {
+    "contractSchema": "flowlab.source-cell-identity-contract.v1",
+    "runtimeReportSchema": "flowlab.openfoam-source-cell-identity.v1",
+    "identityField": "flowlabSourceCellId",
+    "algorithm": "axisymmetric-logical-cell-vertex-signature-v2",
+    "generatedMeshAndPolyMeshMustMatchOneToOne": true,
+    "orderingAssumptionAllowed": false,
+    "uniqueExplicitEdgeOwnershipRequired": true,
+    "connectorCellsOwnedByEdges": false,
+    "unsupportedOrAmbiguousIdentityFailsClosed": true,
+    "allowedArtifactPattern": "postProcessing/flowlabNative/*.vtk"
+  },
+  "gates": {
+    "determinism": {
+      "independentBuildCount": 2,
+      "allGeneratedFileHashesMustMatch": true
+    },
+    "meshPerLevel": {
+      "spatialDimension": 3,
+      "minimumCellVolumeM3ExclusiveLowerBound": 0.0,
+      "checkMeshExitCode": 0,
+      "meshOk": true,
+      "solutionDirections": 3,
+      "geometricDirections": 2,
+      "requiredPatches": {
+        "inlet": "patch",
+        "outlet": "patch",
+        "walls": "wall",
+        "front": "wedge",
+        "back": "wedge",
+        "axis": "empty"
+      },
+      "unexpectedBoundaryPatchesAllowed": false,
+      "solutionDirectionVector": [
+        1,
+        1,
+        1
+      ],
+      "geometricDirectionVector": [
+        1,
+        1,
+        0
+      ],
+      "geometricDirectionClassification": "non-empty/wedge",
+      "wedgeHalfAngleDegrees": 2.5,
+      "connectedRegions": 1
+    },
+    "solverPerLevel": {
+      "finitePressureAndVelocityRequired": true,
+      "exitCode": 0,
+      "normalTerminationRequired": true,
+      "maximumRelativeMassFlowImbalance": 0.001,
+      "tailSampleCount": 100,
+      "maximumPressureDropRelativeSpan": 0.005,
+      "maximumMeasuredFlowRateRelativeSpan": 0.001
+    },
+    "sequence": {
+      "refinementRatio": 2.0,
+      "minimumObservedOrder": 0.5,
+      "maximumObservedOrder": 4.0,
+      "maximumFineGridGciPercent": 5.0,
+      "mathematicallyInvalidGciPasses": false
+    },
+    "geometryTrends": {
+      "allExpectedTrendsRequired": true
+    },
+    "resultPipeline": {
+      "generatedCaseRequired": true,
+      "completedJobArtifactRequired": true,
+      "fullResultLoadRequired": true,
+      "boundedPreviewLoadRequired": true,
+      "sourceCellIdentityRequired": true,
+      "schematicSelectionRequired": true,
+      "unownedCellMustRemainProbeOnly": true
+    }
+  },
+  "su2": {
+    "axisymmetricMeshModeSupported": false,
+    "fullOGridMeshModeSupported": false,
+    "unsupportedRequestsFailClosed": true,
+    "fallbackToPlanarAllowed": false
+  },
+  "retention": {
+    "rawCampaignTreeIgnoredByGit": true,
+    "editRetainedEvidenceInPlaceAllowed": false,
+    "trackedEvidenceMutationAuthorized": false,
+    "fixturePointerMutationAuthorized": false,
+    "registryMutationAuthorized": false
+  },
+  "review": {
+    "validatedStatusChangeAuthorized": false,
+    "promotionAuthorized": false,
+    "releaseAuthorized": false
+  },
+  "promotionAuthorized": false,
+  "predecessorDisposition": {
+    "v1Contract": "EXPERIMENTAL_QUALIFICATION_CONTRACT_V1.json",
+    "v1ContractSha256": "b0a2cceaf4a83f95d3f30c9318496f06ec0f12e1c90c71066c48a99f8b3f83bb",
+    "v2Contract": "EXPERIMENTAL_QUALIFICATION_CONTRACT_V2.json",
+    "v2ContractSha256": "072e356d925521cd7969e9181505887b2e0f972522c152e571f8aeb2a5c9ebed",
+    "v1CampaignDirectory": "benchmarks/cases/axisymmetric-geometry/campaigns/2026-07-31-v1-r1",
+    "v2CampaignDirectory": "benchmarks/cases/axisymmetric-geometry/campaigns/2026-07-31-v2-preflight-r1",
+    "classification": "immutable retained evidence plus a prospectively corrected mesh-dimensionality contract-authoring error",
+    "v1AndV2RemainRetainedFailures": true,
+    "freshV1OrV2ExecutionAuthorized": false,
+    "predecessorEvidenceMayBeEditedOrReused": false,
+    "predecessorResultMayBeReusedAsV3Outcome": false,
+    "scientificThresholdsChanged": false,
+    "meshDimensionalityCriterionChanged": true,
+    "rationale": "The v1 mesh gate froze geometricDirections at 3. OpenFOAM classifies a wedge mesh as 2 geometric (non-empty/wedge) directions (1 1 0) and 3 solution (non-empty) directions (1 1 1), so that condition is unsatisfiable for any wedge topology and was never a statement about mesh quality; it was copied from the solution-direction line. The retained v1 mesh was otherwise healthy: Mesh OK, positive volume, one region, and exactly the six required patches. V3 is a new prospective contract that declares the wedge classification correctly before any v3 execution. It does not weaken, reinterpret, resume, or rerun v1 or v2, and no v1 or v2 observation may be reused as a v3 outcome. Asserting 2 geometric and 3 solution directions together is strictly more discriminating than v1's unsatisfiable pair, so this is a correction toward a stronger satisfiable gate rather than a relaxation. The reviewed product decision selecting this route is recorded in reviewDecision."
+  },
+  "reviewDecision": {
+    "decidedOn": "2026-08-02",
+    "decidedBy": "project owner",
+    "decision": "The wedge route is a wanted product capability for round, straight, axisymmetric parts. The full-revolution O-grid route covers the general case. The two routes are complementary, so the wedge qualification is pursued rather than closed as a retained failure.",
+    "alternativeConsidered": "Leaving the axisymmetric qualification closed as a retained failure and relying only on the full-O-grid three-geometric-direction topology."
+  }
+}

@@ -196,7 +196,7 @@ export type SolverSettings = {
     volumetricFlowRateM3PerS: number;
   };
   axisymmetricQualification?: {
-    contractId: "axisymmetric-generated-geometry-experimental-qualification-v1";
+    contractId: "axisymmetric-generated-geometry-experimental-qualification-v3";
     contractSha256: string;
     caseId: string;
     qoiHistoryWriteIntervalIterations: 1;

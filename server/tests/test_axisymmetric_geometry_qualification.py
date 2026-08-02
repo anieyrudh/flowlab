@@ -22,9 +22,19 @@ def test_contract_is_prospective_nonpromotional_and_keeps_straight_pipe_unchange
     assert len(digest) == 64
     assert (
         contract["schema"]
-        == "flowlab.axisymmetric-geometry-experimental-qualification-contract.v2"
+        == "flowlab.axisymmetric-geometry-experimental-qualification-contract.v3"
     )
-    assert contract["prospectiveRevision"]["scientificGateChanges"] is False
+    # V3 is a standalone contract, not a merge-patch revision, because it changes
+    # a mesh gate. It must still bind its retained predecessors as unusable.
+    disposition = contract["predecessorDisposition"]
+    assert disposition["v1AndV2RemainRetainedFailures"] is True
+    assert disposition["freshV1OrV2ExecutionAuthorized"] is False
+    assert disposition["predecessorResultMayBeReusedAsV3Outcome"] is False
+    assert disposition["predecessorEvidenceMayBeEditedOrReused"] is False
+    assert disposition["scientificThresholdsChanged"] is False
+    assert disposition["meshDimensionalityCriterionChanged"] is True
+    for name in ("v1ContractSha256", "v2ContractSha256"):
+        assert len(disposition[name]) == 64
     assert (
         contract["identity"]["algorithm"]
         == "axisymmetric-logical-cell-vertex-signature-v2"
@@ -40,6 +50,43 @@ def test_contract_is_prospective_nonpromotional_and_keeps_straight_pipe_unchange
     assert hashlib.sha256(straight_pipe_path.read_bytes()).hexdigest() == (
         STRAIGHT_PIPE_CAMPAIGN_BASELINE_SHA256
     )
+
+
+def test_wedge_mesh_gate_matches_what_openfoam_reports_for_a_wedge() -> None:
+    """Regression: the V1 gate was unsatisfiable and the parser matched nothing.
+
+    V1 froze ``geometricDirections: 3``, but OpenFOAM classifies a wedge as 2
+    geometric ``(non-empty/wedge)`` directions and 3 solution ``(non-empty)``
+    directions. The evaluator additionally searched for the literal string
+    ``"Mesh has 3 geometric (non-empty) directions"``, whose parenthetical never
+    appears on the geometric line of any topology, so correcting the count alone
+    would still have failed. Both faults are covered here.
+    """
+
+    contract, _ = qualification.load_frozen_contract()
+    limits = contract["gates"]["meshPerLevel"]
+    assert limits["geometricDirections"] == 2
+    assert limits["solutionDirections"] == 3
+
+    wedge_log = (
+        "    Mesh has 2 geometric (non-empty/wedge) directions (1 1 0)\n"
+        "    Mesh has 3 solution (non-empty) directions (1 1 1)\n"
+        "Mesh OK.\n"
+    )
+    geometric, solution = qualification._check_mesh_directions(wedge_log)
+    assert (geometric, solution) == (2, 3)
+    assert geometric == limits["geometricDirections"]
+    assert solution == limits["solutionDirections"]
+
+    # A three-geometric-direction mesh must not satisfy the wedge contract.
+    ogrid_log = (
+        "    Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)\n"
+        "    Mesh has 3 solution (non-empty) directions (1 1 1)\n"
+    )
+    assert qualification._check_mesh_directions(ogrid_log) == (3, 3)
+
+    # Absent direction lines must fail closed, never silently pass.
+    assert qualification._check_mesh_directions("Mesh OK.\n") == (None, None)
 
 
 def test_preflight_materializes_generation_matrix_and_two_identical_builds(
