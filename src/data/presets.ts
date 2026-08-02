@@ -25,6 +25,135 @@ const baseVisualization = {
   grid: true
 };
 
+// Light mineral oil at 20 C (ISO VG 32 grade, kinematic viscosity 1.0e-4 m2/s
+// = 100 cSt). A viscous fluid keeps a normal 20 mm line laminar at a normal
+// 1 m/s, which is why the starter case uses oil and not water.
+const lightMineralOil20C = {
+  density: 870,
+  dynamicViscosity: 0.087,
+  vaporPressure: 100,
+  bulkModulus: 1.5e9,
+  temperature: 293.15
+};
+
+// --- Laminar starter case -------------------------------------------------
+//
+// Design point (all SI):
+//   diameter   D = 0.02 m
+//   length     L = 2.0 m            (100 diameters, so the flow develops)
+//   fluid      rho = 870 kg/m3, mu = 0.087 Pa.s  -> nu = 1.0e-4 m2/s
+//   velocity   U = 1.0 m/s
+//   Reynolds   Re = rho*U*D/mu = 870*1.0*0.02/0.087 = 200
+//
+// Re = 200 is 11.5 times below the laminar limit of 2300, so the case sits
+// inside the only regime FlowLab has accuracy evidence for. No FlowLab result
+// is validated against a physical experiment.
+//
+// Flow rate  Q = U * pi*D^2/4 = 1.0 * 3.14159265e-4 = 3.14159265e-4 m3/s
+//              = 18.85 litres per minute.
+// The sink carries that flow as `flowDemand` because the OpenFOAM case takes
+// its inlet velocity from flowDemand / area. Instant-1D and CFD therefore run
+// the same operating point.
+//
+// Source pressure. The instant-1D solver sizes the flow from the boundary
+// pressures with a turbulent friction guess, f(Re=1e5) = 0.0183099 for this
+// tube. Its port-to-port length is 1.8 m, so
+//   resistance = 0.0183099 * (1.8/0.02) = 1.6478873
+//   dp         = U^2 * rho * resistance / 2 = 1.0 * 870 * 1.6478873 / 2
+//              = 716.83 Pa
+// Rounding to 717 Pa gives U = 1.00012 m/s and Re = 200.02.
+//
+// Analytic pressure loss at this design point:
+//   round pipe   (Hagen-Poiseuille) dp = 32*mu*U*L/D^2 = 13 920 Pa
+//   flat channel (plane-Poiseuille) dp = 12*mu*U*L/H^2 =  5 220 Pa, H = D
+// The two differ by 32/12. The `planar-2d` mesh mode below builds the flat
+// channel, not the round pipe. GuidedFirstCase shows the matching law.
+const laminarStarterDiameterM = 0.02;
+const laminarStarterLengthM = 2;
+const laminarStarterMeanVelocityMPerS = 1;
+const laminarStarterAreaM2 = (Math.PI * laminarStarterDiameterM ** 2) / 4;
+const laminarStarterFlowM3S = laminarStarterAreaM2 * laminarStarterMeanVelocityMPerS;
+
+export const laminarStarterPreset: FluidProject = {
+  version: 1,
+  name: "Laminar Starter Pipe (Experimental)",
+  fluid: lightMineralOil20C,
+  solver: {
+    tier: "instant-1d",
+    advancedMode: "incompressible-navier-stokes",
+    turbulence: "laminar",
+    meshResolution: "medium",
+    runMode: "steady",
+    meshMode: "planar-2d",
+    meshControls: {
+      // Uniform transverse spacing resolves the parabolic core. Wall-clustered
+      // spacing leaves one coarse cell where a laminar profile peaks.
+      transverseDistribution: "uniform",
+      boundaryLayerLayers: 6,
+      longitudinalRefinement: 4
+    },
+    maxIterations: 2000,
+    tolerance: 1e-7
+  },
+  visualization: {
+    mode: "design",
+    overlay: "velocity",
+    particles: true,
+    streamlines: true,
+    grid: true
+  },
+  viewport: { x: 0, y: 0, zoom: 1 },
+  nodes: {
+    supply: {
+      id: "supply",
+      type: "source",
+      label: "Oil supply",
+      position: { x: 150, y: 300 },
+      // Explicit rotations keep the run straight: both ports stay on the
+      // centreline, so the estimate adds no port-misalignment minor loss.
+      rotation: 0,
+      elevation: 0,
+      pressure: 102_042,
+      boundary: "pressure"
+    },
+    tank: {
+      id: "tank",
+      type: "sink",
+      label: "Return tank",
+      position: { x: 690, y: 300 },
+      rotation: 0,
+      elevation: 0,
+      pressure: 101_325,
+      flowDemand: laminarStarterFlowM3S,
+      boundary: "pressure"
+    }
+  },
+  edges: {
+    tube: {
+      id: "tube",
+      type: "pipe",
+      label: "Straight tube 20 mm",
+      from: "supply",
+      to: "tank",
+      length: laminarStarterLengthM,
+      shape: { kind: "circular", diameter: laminarStarterDiameterM },
+      roughness: 0.0000015,
+      minorLossK: 0
+    }
+  },
+  sweeps: [
+    {
+      id: "starter-diameter-sweep",
+      targetKind: "edge",
+      targetId: "tube",
+      parameter: "diameter",
+      min: 0.012,
+      max: 0.032,
+      steps: 6
+    }
+  ]
+};
+
 export const venturiPreset: FluidProject = {
   version: 1,
   name: "Venturi Cavitation Lab",
@@ -312,4 +441,19 @@ export const canonicalElbowPreset: FluidProject = {
   sweeps: []
 };
 
-export const presets = [venturiPreset, pipeLossPreset, canonicalElbowPreset, channelPreset, mixerPreset];
+/**
+ * The case a new user must see first. Its Reynolds number is 200, which is
+ * inside the laminar regime that FlowLab has accuracy evidence for. The showy
+ * `venturiPreset` stays available from the Preset list, but it runs far outside
+ * that regime, so it must not be the case the application opens with.
+ */
+export const defaultPreset = laminarStarterPreset;
+
+export const presets = [
+  laminarStarterPreset,
+  venturiPreset,
+  pipeLossPreset,
+  canonicalElbowPreset,
+  channelPreset,
+  mixerPreset
+];
