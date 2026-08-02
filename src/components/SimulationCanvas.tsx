@@ -104,6 +104,12 @@ type PortHit = { nodeId: string; port: PipePortId; point: Vec2 };
 /** A snap candidate plus whether the store will actually accept a connection there. */
 type PortSnap = PortHit & { free: boolean };
 type ViewTransform = { scale: number; offset: Vec2 };
+/**
+ * Which lattice a rotation drag is landing on. Snapping is the default, exactly as a
+ * dropped component always lands on the 40px grid; the modifiers pick a coarser lattice
+ * or step off it entirely.
+ */
+type RotateSnapMode = "fine" | "coarse" | "free";
 type DragState =
   | {
       kind: "node";
@@ -121,7 +127,16 @@ type DragState =
     }
   | { kind: "connect"; from: PortHit; pointer: Vec2; snap: PortSnap | null }
   | { kind: "endpoint"; edgeId: string; endpoint: "from" | "to"; pointer: Vec2; snap: PortSnap | null }
-  | { kind: "rotate"; nodeId: string; rotation: number }
+  | {
+      kind: "rotate";
+      nodeId: string;
+      /** The angle the component will be committed at: already snapped, in degrees. */
+      rotation: number;
+      /** Angle at the press, so a handle grab that turns nothing commits nothing. */
+      start: number;
+      /** Lattice in force this instant, read from the live modifier keys. */
+      snap: RotateSnapMode;
+    }
   | { kind: "canvas-pan"; start: Vec2; viewport: SchematicViewport; moved: boolean }
   | { kind: "cinema-orbit"; startX: number; startY: number; camera: CinemaCameraState; moved: boolean }
   | { kind: "cinema-pan"; startX: number; startY: number; camera: CinemaCameraState; moved: boolean };
@@ -142,6 +157,37 @@ const ignoreRenderBackendChange = () => {};
 const LABEL_WIRE_CLEARANCE = 5;
 
 /**
+ * Rotation snaps the way a drop snaps: 15 degrees is the angular analogue of the 40px
+ * grid, and both are on by default. Shift takes the coarser 45-degree lattice, matching
+ * Shift-arrow's coarser nudge, and Alt lifts the snap for a free angle.
+ */
+const ROTATE_SNAP_FINE = 15;
+const ROTATE_SNAP_COARSE = 45;
+
+/**
+ * Screen-pixel gap between the port ring and the rotate handle, the handle's drawn radius,
+ * and the screen-pixel reach of its hit zone. The gap is wider than the port reach (18) so
+ * a click on a port can never land inside the handle, and the handle is drawn well inside
+ * its own reach so it is easy to grab.
+ */
+const ROTATE_HANDLE_GAP = 26;
+const ROTATE_HANDLE_RADIUS = 7;
+const ROTATE_HANDLE_REACH = 12;
+
+/**
+ * No CSS keyword means "rotate", so the handle carries a turn-arrow glyph and falls back
+ * to `grab`: the same "take hold of this" sense the empty canvas uses, and distinct from
+ * `move` on a component body and `crosshair` on a port.
+ */
+const ROTATE_CURSOR =
+  `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'>`
+  + `<g fill='none' stroke='black' stroke-width='4.4' stroke-linejoin='round' stroke-linecap='round'>`
+  + `<path d='M16.9 7.1A7 7 0 1 1 7.1 7.1'/><path d='M9.9 4.2L8.4 9.1L5 5.7Z'/></g>`
+  + `<g fill='white' stroke='white' stroke-width='1.9' stroke-linejoin='round' stroke-linecap='round'>`
+  + `<path d='M16.9 7.1A7 7 0 1 1 7.1 7.1' fill='none'/><path d='M9.9 4.2L8.4 9.1L5 5.7Z'/></g>`
+  + `</svg>") 12 12, grab`;
+
+/**
  * Screen-space margin auto-fit keeps clear. The bottom strip is the anchored Fit/Reset
  * cluster; the side and top margins are room for the label chips, which are drawn at a
  * fixed screen size and therefore need screen-space allowance rather than world padding.
@@ -153,7 +199,7 @@ const cursorForHover: Record<HoverTarget["kind"], string> = {
   edge: "pointer",
   port: "crosshair",
   endpoint: "crosshair",
-  rotate: "crosshair"
+  rotate: ROTATE_CURSOR
 };
 
 function roundedRectPath(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
@@ -226,6 +272,11 @@ function nodeRadius(node: FluidNode) {
   return 14;
 }
 
+/** World distance from a component's centre out to its port rings. */
+function portRingRadius(node: FluidNode) {
+  return nodeRadius(node) + 10;
+}
+
 function portAngle(node: FluidNode, port: PipePortId) {
   const base = node.rotation ?? 0;
   if (port === "outlet") return base;
@@ -234,8 +285,8 @@ function portAngle(node: FluidNode, port: PipePortId) {
   return base + 90;
 }
 
-function portPosition(node: FluidNode, port: PipePortId): Vec2 {
-  const radius = nodeRadius(node) + 10;
+export function portPosition(node: FluidNode, port: PipePortId): Vec2 {
+  const radius = portRingRadius(node);
   const angle = degreesToRadians(portAngle(node, port));
   return {
     x: node.position.x + Math.cos(angle) * radius,
@@ -279,7 +330,7 @@ function componentCentres(nodes: Record<string, FluidNode>): Vec2[] {
  * runs to the next, so a second pipe picks a different lane instead of being drawn on top
  * of the first. Edge order is the project's own, so the picture is stable frame to frame.
  */
-function buildEdgeRoutes(project: FluidProject): WireRoute[] {
+export function buildEdgeRoutes(project: FluidProject): WireRoute[] {
   const obstacles = componentCentres(project.nodes);
   const occupiedLanes: LaneSpan[] = [];
   const routes: WireRoute[] = [];
@@ -342,12 +393,59 @@ function edgeCasingWidth(edge: FluidEdge | undefined): number {
   return Math.max(18, widthScale + 18);
 }
 
-function aimHandlePosition(node: FluidNode): Vec2 {
+/**
+ * Where the rotate handle sits: on the outlet axis, a fixed number of screen pixels beyond
+ * the port ring. Every hit tolerance in this file is authored in screen pixels, and the
+ * handle has to be too — held at a fixed world distance it would sink into the body when
+ * the drawing is zoomed in and swallow the ports when it is zoomed out.
+ */
+export function rotateHandlePosition(node: FluidNode, scale: number): Vec2 {
   const angle = degreesToRadians(node.rotation ?? 0);
+  const radius = portRingRadius(node) + ROTATE_HANDLE_GAP / Math.max(0.05, scale);
   return {
-    x: node.position.x + Math.cos(angle) * 46,
-    y: node.position.y + Math.sin(angle) * 46
+    x: node.position.x + Math.cos(angle) * radius,
+    y: node.position.y + Math.sin(angle) * radius
   };
+}
+
+/** Degrees wrapped to (-180, 180], the range the inspector already shows angles in. */
+function normalizeDegrees(degrees: number) {
+  const wrapped = (((degrees + 180) % 360) + 360) % 360 - 180;
+  return wrapped === -180 ? 180 : wrapped;
+}
+
+function rotateSnapStep(mode: RotateSnapMode) {
+  return mode === "coarse" ? ROTATE_SNAP_COARSE : ROTATE_SNAP_FINE;
+}
+
+/** Which lattice the modifiers held this instant ask for. */
+function rotateSnapMode(event: { shiftKey: boolean; altKey: boolean }): RotateSnapMode {
+  if (event.altKey) return "free";
+  return event.shiftKey ? "coarse" : "fine";
+}
+
+/** The angle a pointer bearing commits at. Free rotation still lands on whole degrees. */
+export function snapRotation(degrees: number, mode: RotateSnapMode = "fine") {
+  if (mode === "free") return normalizeDegrees(Math.round(degrees));
+  const step = rotateSnapStep(mode);
+  return normalizeDegrees(Math.round(degrees / step) * step);
+}
+
+/**
+ * Publishes the live rotate drag. The angle the user reads is drawn on the canvas; this is
+ * the same fact in a form a test can assert, and it is written from the pointer handlers
+ * rather than the frame loop so it is exact at the moment of the event.
+ */
+function publishRotateDrag(canvas: HTMLCanvasElement, drag: Extract<DragState, { kind: "rotate" }> | null) {
+  if (!drag) {
+    delete canvas.dataset.rotateNode;
+    delete canvas.dataset.rotateAngle;
+    delete canvas.dataset.rotateSnap;
+    return;
+  }
+  canvas.dataset.rotateNode = drag.nodeId;
+  canvas.dataset.rotateAngle = String(Math.round(drag.rotation));
+  canvas.dataset.rotateSnap = drag.snap === "free" ? "free" : String(rotateSnapStep(drag.snap));
 }
 
 function endpointPoint(edge: FluidEdge, endpoint: "from" | "to", nodes: Record<string, FluidNode>) {
@@ -1022,6 +1120,21 @@ export function SimulationCanvas({
         delete canvasElement.dataset.snapPort;
         delete canvasElement.dataset.snapPortFree;
       }
+      // Where the rotate handle is drawn this frame, so a test can aim at the affordance
+      // instead of re-deriving its screen-authored offset.
+      const rotatableNode = selectedKind === "node" && selectedId ? renderedProject.nodes[selectedId] : undefined;
+      if (rotatableNode) {
+        const handle = rotateHandlePosition(rotatableNode, view.scale);
+        canvasElement.dataset.rotateHandle = rotatableNode.id;
+        canvasElement.dataset.rotateHandleX = String(handle.x);
+        canvasElement.dataset.rotateHandleY = String(handle.y);
+        canvasElement.dataset.rotateSnapDefault = String(ROTATE_SNAP_FINE);
+      } else {
+        delete canvasElement.dataset.rotateHandle;
+        delete canvasElement.dataset.rotateHandleX;
+        delete canvasElement.dataset.rotateHandleY;
+        delete canvasElement.dataset.rotateSnapDefault;
+      }
 
       context.save();
       context.translate(view.offset.x, view.offset.y);
@@ -1237,19 +1350,91 @@ export function SimulationCanvas({
           context.stroke();
         });
 
-        if (active && ["pump", "sink", "source", "junction"].includes(node.type)) {
-          const handle = aimHandlePosition(node);
+        // The rotate handle. Every component can be aimed, so every selected component
+        // gets one; the aim it shows is the outlet axis, which is the thing being turned.
+        if (active && selectedKind === "node") {
+          const handle = rotateHandlePosition(node, view.scale);
+          const orbit = Math.hypot(handle.x - node.position.x, handle.y - node.position.y);
           const handleHovered = hover?.kind === "rotate" && hover.nodeId === node.id;
-          context.strokeStyle = "rgba(247, 216, 75, 0.58)";
-          context.lineWidth = 1.5;
+          const turning = draft?.kind === "rotate" && draft.nodeId === node.id;
+
+          if (turning) {
+            // The orbit and its ticks are rotation's answer to the grid: the angles the
+            // handle may land on are drawn before it lands on one, so a snapped result
+            // reads as the editor obeying a lattice the user can already see.
+            context.save();
+            context.strokeStyle = "rgba(247, 216, 75, 0.28)";
+            context.lineWidth = px(1.2);
+            context.setLineDash([px(5), px(5)]);
+            context.beginPath();
+            context.arc(node.position.x, node.position.y, orbit, 0, Math.PI * 2);
+            context.stroke();
+            context.setLineDash([]);
+            if (draft.snap !== "free") {
+              const step = rotateSnapStep(draft.snap);
+              context.strokeStyle = "rgba(247, 216, 75, 0.46)";
+              context.lineWidth = px(1.4);
+              context.beginPath();
+              for (let tick = 0; tick < 360; tick += step) {
+                const direction = degreesToRadians(tick);
+                const inner = orbit - px(tick % 90 === 0 ? 8 : 4.5);
+                context.moveTo(node.position.x + Math.cos(direction) * inner, node.position.y + Math.sin(direction) * inner);
+                context.lineTo(node.position.x + Math.cos(direction) * orbit, node.position.y + Math.sin(direction) * orbit);
+              }
+              context.stroke();
+            }
+            // The angle the drag started from, so how far the component has come is visible.
+            const from = degreesToRadians(draft.start);
+            context.strokeStyle = "rgba(238, 248, 255, 0.34)";
+            context.lineWidth = px(1.2);
+            context.setLineDash([px(4), px(4)]);
+            context.beginPath();
+            context.moveTo(node.position.x, node.position.y);
+            context.lineTo(node.position.x + Math.cos(from) * orbit, node.position.y + Math.sin(from) * orbit);
+            context.stroke();
+            context.setLineDash([]);
+            context.restore();
+          }
+
+          context.save();
+          context.strokeStyle = turning || handleHovered ? "rgba(247, 216, 75, 0.9)" : "rgba(247, 216, 75, 0.58)";
+          context.lineWidth = px(1.5);
           context.beginPath();
           context.moveTo(node.position.x, node.position.y);
           context.lineTo(handle.x, handle.y);
           context.stroke();
-          context.fillStyle = handleHovered ? "#fff0a6" : "#f7d84b";
+
+          // Drawn at a screen size, like every other affordance, and carrying a turn arrow:
+          // a port is a plain ring and the move halo is a plain ring, so another disc would
+          // be one more circle to tell apart. The glyph says what the handle does.
+          const size = px(handleHovered || turning ? ROTATE_HANDLE_RADIUS + 1.5 : ROTATE_HANDLE_RADIUS);
+          context.fillStyle = handleHovered || turning ? "#fff0a6" : "#f7d84b";
+          context.strokeStyle = "#07131c";
+          context.lineWidth = px(1.6);
           context.beginPath();
-          context.arc(handle.x, handle.y, handleHovered ? 8 : 6, 0, Math.PI * 2);
+          context.arc(handle.x, handle.y, size, 0, Math.PI * 2);
           context.fill();
+          context.stroke();
+
+          const glyph = size * 0.52;
+          const head = degreesToRadians(30);
+          context.strokeStyle = "#07131c";
+          context.lineCap = "round";
+          context.lineWidth = px(1.6);
+          context.beginPath();
+          context.arc(handle.x, handle.y, glyph, degreesToRadians(120), head);
+          context.stroke();
+          const nose = { x: handle.x + Math.cos(head) * glyph, y: handle.y + Math.sin(head) * glyph };
+          const along = { x: -Math.sin(head), y: Math.cos(head) };
+          const out = { x: Math.cos(head), y: Math.sin(head) };
+          context.fillStyle = "#07131c";
+          context.beginPath();
+          context.moveTo(nose.x + along.x * glyph * 0.72, nose.y + along.y * glyph * 0.72);
+          context.lineTo(nose.x + out.x * glyph * 0.62, nose.y + out.y * glyph * 0.62);
+          context.lineTo(nose.x - out.x * glyph * 0.62, nose.y - out.y * glyph * 0.62);
+          context.closePath();
+          context.fill();
+          context.restore();
         }
       });
 
@@ -1342,6 +1527,12 @@ export function SimulationCanvas({
         const half = Math.max(4, (edgeCasingWidth(renderedProject.edges[route.id]) * view.scale) / 2 + LABEL_WIRE_CLEARANCE);
         reservedBoxes.push(...polylineObstacleBoxes(route.points.map((point) => worldToScreen(point, viewport)), half));
       }
+      // A chip on the rotate handle would hide the thing the user is reaching for.
+      if (rotatableNode) {
+        const handle = worldToScreen(rotateHandlePosition(rotatableNode, view.scale), viewport);
+        const half = ROTATE_HANDLE_RADIUS + 5;
+        reservedBoxes.push({ left: handle.x - half, top: handle.y - half, right: handle.x + half, bottom: handle.y + half });
+      }
       const snapMarkerHalf = (Math.max(SCHEMATIC_GRID_SIZE * 1.5, px(52)) * view.scale) / 2;
       if (draft?.kind === "node" && draft.moved) {
         const centre = worldToScreen(draft.position, viewport);
@@ -1359,6 +1550,42 @@ export function SimulationCanvas({
             right: requested.x + snapMarkerHalf,
             bottom: requested.y + snapMarkerHalf
           });
+        }
+      }
+
+      // The angle readout. Drawn before the labels and reserved against them, because the
+      // number the user is steering by must never be the chip that loses a placement race.
+      if (draft?.kind === "rotate") {
+        const turned = renderedProject.nodes[draft.nodeId];
+        if (turned) {
+          const aim = degreesToRadians(draft.rotation);
+          const handle = worldToScreen(rotateHandlePosition(turned, view.scale), viewport);
+          const heading = `${Math.round(draft.rotation)}°`;
+          const hint = draft.snap === "free" ? "free · release Alt to snap" : `${rotateSnapStep(draft.snap)}° steps · Alt free`;
+          context.save();
+          context.font = "700 13px Inter, system-ui, sans-serif";
+          const headingWidth = context.measureText(heading).width;
+          context.font = "500 10.5px Inter, system-ui, sans-serif";
+          const boxWidth = Math.max(headingWidth, context.measureText(hint).width) + 16;
+          const boxHeight = 34;
+          const left = Math.min(Math.max(6, handle.x + Math.cos(aim) * 20 - boxWidth / 2), width - boxWidth - 6);
+          const top = Math.min(Math.max(6, handle.y + Math.sin(aim) * 20 - boxHeight / 2), height - boxHeight - 6);
+          roundedRectPath(context, left, top, boxWidth, boxHeight, 7);
+          context.fillStyle = "rgba(38, 32, 8, 0.92)";
+          context.fill();
+          context.lineWidth = 1;
+          context.strokeStyle = "rgba(247, 216, 75, 0.72)";
+          context.stroke();
+          context.textAlign = "center";
+          context.textBaseline = "alphabetic";
+          context.font = "700 13px Inter, system-ui, sans-serif";
+          context.fillStyle = "#fff3c4";
+          context.fillText(heading, left + boxWidth / 2, top + 15);
+          context.font = "500 10.5px Inter, system-ui, sans-serif";
+          context.fillStyle = "rgba(247, 216, 75, 0.82)";
+          context.fillText(hint, left + boxWidth / 2, top + 27);
+          context.restore();
+          reservedBoxes.push({ left, top, right: left + boxWidth, bottom: top + boxHeight });
         }
       }
 
@@ -1593,8 +1820,17 @@ export function SimulationCanvas({
     if (selectedKind !== "node" || !selectedId) return null;
     const node = currentProject().nodes[selectedId];
     if (!node) return null;
-    const handle = aimHandlePosition(node);
-    return Math.hypot(handle.x - point.x, handle.y - point.y) < tolerance(18) ? node : null;
+    const handle = rotateHandlePosition(node, viewRef.current.scale);
+    const distance = Math.hypot(handle.x - point.x, handle.y - point.y);
+    if (distance >= tolerance(ROTATE_HANDLE_REACH)) return null;
+    // The handle stands clear of its own component's ports at every zoom, but zoomed out it
+    // can reach across to a neighbour. It only wins when it is the nearest thing to the
+    // pointer, the same distance-resolved rule a body and a port already settle overlap by,
+    // so it can never swallow a click meant for something else.
+    const rival = nodeOrPortAt(point);
+    if (!rival) return node;
+    const rivalPoint = rival.kind === "node" ? rival.node.position : rival.hit.point;
+    return Math.hypot(rivalPoint.x - point.x, rivalPoint.y - point.y) < distance ? null : node;
   }
 
   /**
@@ -1699,7 +1935,10 @@ export function SimulationCanvas({
       const rect = event.currentTarget.getBoundingClientRect();
       if (pick?.kind === "rotate") {
         const node = project.nodes[pick.nodeId];
-        dragRef.current = { kind: "rotate", nodeId: pick.nodeId, rotation: node?.rotation ?? 0 };
+        const start = snapRotation(node?.rotation ?? 0, "free");
+        dragRef.current = { kind: "rotate", nodeId: pick.nodeId, rotation: start, start, snap: rotateSnapMode(event) };
+        publishRotateDrag(event.currentTarget, dragRef.current);
+        applyCursor(event.currentTarget, ROTATE_CURSOR, "rotate");
         capturePointer(event.currentTarget, event.pointerId);
         return;
       }
@@ -1748,7 +1987,12 @@ export function SimulationCanvas({
     const rect = event.currentTarget.getBoundingClientRect();
     const rotateNode = rotateHandleAt(point);
     if (rotateNode) {
-      dragRef.current = { kind: "rotate", nodeId: rotateNode.id, rotation: rotateNode.rotation ?? 0 };
+      // The component does not jump to the pointer's bearing on press: the drag starts from
+      // the angle it already has, so a grab that goes nowhere changes nothing.
+      const start = snapRotation(rotateNode.rotation ?? 0, "free");
+      dragRef.current = { kind: "rotate", nodeId: rotateNode.id, rotation: start, start, snap: rotateSnapMode(event) };
+      publishRotateDrag(event.currentTarget, dragRef.current);
+      applyCursor(event.currentTarget, ROTATE_CURSOR, "rotate");
       capturePointer(event.currentTarget, event.pointerId);
       return;
     }
@@ -1867,8 +2111,12 @@ export function SimulationCanvas({
       } else if (dragRef.current.kind === "rotate") {
       const node = currentProject().nodes[dragRef.current.nodeId];
       if (node) {
-        const angle = (Math.atan2(point.y - node.position.y, point.x - node.position.x) * 180) / Math.PI;
-        dragRef.current = { ...dragRef.current, rotation: angle };
+        // The handle follows the pointer's bearing from the component's centre, and lands
+        // on the lattice the modifiers held this instant ask for.
+        const bearing = (Math.atan2(point.y - node.position.y, point.x - node.position.x) * 180) / Math.PI;
+        const snap = rotateSnapMode(event);
+        dragRef.current = { ...dragRef.current, rotation: snapRotation(bearing, snap), snap };
+        publishRotateDrag(event.currentTarget, dragRef.current);
         if (canvasRenderMode === "cinema") cinemaRef.current?.updateModel(currentProject(), result);
       }
       } else if (dragRef.current.kind === "connect") {
@@ -1922,7 +2170,9 @@ export function SimulationCanvas({
         : (dragSnap ?? portAt(point, tolerance(PORT_SNAP_RADIUS)));
     if (!cancelled && active?.kind === "node" && active.moved) {
       onMoveNode(active.id, active.position);
-    } else if (!cancelled && active?.kind === "rotate") {
+    } else if (!cancelled && active?.kind === "rotate" && active.rotation !== active.start) {
+      // A press that never turns the component is a selection, not a rotation; committing
+      // the angle it already had would put an empty step on the undo stack.
       onRotateNode(active.nodeId, active.rotation);
     } else if (!cancelled && active?.kind === "connect" && target && target.nodeId !== active.from.nodeId) {
       onConnectEdge(active.from.nodeId, target.nodeId, active.from.port, target.port);
@@ -1941,6 +2191,7 @@ export function SimulationCanvas({
     }
 
     dragRef.current = null;
+    publishRotateDrag(event.currentTarget, null);
     if (canvasRenderMode === "schematic") {
       const hovered = hoverTargetAt(point);
       hoverRef.current = hovered;
@@ -2024,6 +2275,7 @@ export function SimulationCanvas({
       dragRef.current = null;
       pinchRef.current = null;
       activePointersRef.current.clear();
+      publishRotateDrag(event.currentTarget, null);
       event.preventDefault();
     } else if (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowRight") {
       const node = selectedKind === "node" && selectedId ? project.nodes[selectedId] : null;
