@@ -1,9 +1,8 @@
 {
   "schema": "flowlab.full-ogrid-geometry-experimental-qualification-contract-revision.v1",
   "revisionId": "full-ogrid-generated-geometry-experimental-qualification-v6",
-  "frozenOn": null,
-  "status": "draft-not-frozen",
-  "draftNotice": "This revision is a DRAFT. No runner loads it, no campaign may cite it, and no measurement recorded in its rationale is a qualification result. Freezing it requires setting status to prospective-frozen-before-v6-retained-scientific-execution on both this object and mergePatch.status, setting frozenOn, adding RUNBOOK_V6.md, and repointing CONTRACT_PATH plus the three literal revision/status/schema checks in server/flowlab/full_ogrid_geometry_qualification.py at v6.",
+  "frozenOn": "2026-08-02",
+  "status": "prospective-frozen-before-v6-retained-scientific-execution",
   "baseContract": {
     "path": "EXPERIMENTAL_QUALIFICATION_CONTRACT_V3.json",
     "sha256": "f40c0dc582c58496209872c03808ee493c32535f3048af9e5ddbf78cbf98ba1f"
@@ -96,7 +95,7 @@
   },
   "mergePatch": {
     "schema": "flowlab.full-ogrid-geometry-experimental-qualification-contract.v6",
-    "status": "draft-not-frozen",
+    "status": "prospective-frozen-before-v6-retained-scientific-execution",
     "identity": {
       "algorithm": "full-ogrid-normalized-logical-vertex-signature-v4"
     },
@@ -222,5 +221,6 @@
       "predecessorResultMayBeReusedAsV6Outcome": false
     }
   },
-  "promotionAuthorized": false
+  "promotionAuthorized": false,
+  "freezeNotice": "Frozen prospectively before any v6 execution. Every measurement quoted in the rationale was taken on scratch cases and is engineering evidence for the runtime configuration only; none of it is a qualification result. No v3, v4, or v5 observation may be reused as a v6 outcome."
 }

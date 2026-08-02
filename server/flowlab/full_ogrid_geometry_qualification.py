@@ -62,43 +62,41 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "full-ogrid-geometry-experimental-qualification"
-    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V5.json"
+    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V6.json"
 )
 BASE_CONTRACT_PATH = CONTRACT_PATH.with_name(
     "EXPERIMENTAL_QUALIFICATION_CONTRACT_V3.json"
 )
 # V4 is retained unchanged. It is listed as frozen so its digest stays provable,
 # but it is no longer the active revision.
-PRIOR_CONTRACT_PATH = CONTRACT_PATH.with_name(
-    "EXPERIMENTAL_QUALIFICATION_CONTRACT_V4.json"
+PRIOR_CONTRACT_PATHS = (
+    CONTRACT_PATH.with_name("EXPERIMENTAL_QUALIFICATION_CONTRACT_V4.json"),
+    CONTRACT_PATH.with_name("EXPERIMENTAL_QUALIFICATION_CONTRACT_V5.json"),
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V5.md")
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V6.md")
 BASE_RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V3.md")
-PRIOR_RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V4.md")
-# V6 is drafted but deliberately not frozen and not loaded. Runtime-efficiency
-# levers (MPI decomposition, mesh sequencing, iteration control) are authorized
-# only by the active revision, so under V5 every lever below refuses to run.
-DRAFT_CONTRACT_PATH = CONTRACT_PATH.with_name(
-    "EXPERIMENTAL_QUALIFICATION_CONTRACT_V6.json"
+PRIOR_RUNBOOK_PATHS = (
+    CONTRACT_PATH.with_name("RUNBOOK_V4.md"),
+    CONTRACT_PATH.with_name("RUNBOOK_V5.md"),
 )
 CAMPAIGN_SCHEMA = (
-    "flowlab.full-ogrid-geometry-experimental-qualification-campaign.v5"
+    "flowlab.full-ogrid-geometry-experimental-qualification-campaign.v6"
 )
 LEVEL_SCHEMA = (
-    "flowlab.full-ogrid-geometry-experimental-qualification-level.v5"
+    "flowlab.full-ogrid-geometry-experimental-qualification-level.v6"
 )
 RESULT_PIPELINE_SCHEMA = (
-    "flowlab.full-ogrid-multi-edge-result-pipeline-proof.v5"
+    "flowlab.full-ogrid-multi-edge-result-pipeline-proof.v6"
 )
 EXPECTED_PATCHES = {"inlet": "patch", "outlet": "patch", "walls": "wall"}
 MESH_SEQUENCING_TIMEOUT_SECONDS = 1800.0
 FROZEN_PATHS = [
     str(CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
     str(BASE_CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
-    str(PRIOR_CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
+    *(str(path.relative_to(REPOSITORY_ROOT)) for path in PRIOR_CONTRACT_PATHS),
     str(RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
     str(BASE_RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
-    str(PRIOR_RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
+    *(str(path.relative_to(REPOSITORY_ROOT)) for path in PRIOR_RUNBOOK_PATHS),
     "server/flowlab/adapters.py",
     "server/flowlab/execution.py",
     "server/flowlab/full_ogrid.py",
@@ -136,9 +134,9 @@ def load_frozen_contract() -> tuple[dict[str, Any], str]:
             "contract-revision.v1"
         )
         or revision.get("revisionId")
-        != "full-ogrid-generated-geometry-experimental-qualification-v5"
+        != "full-ogrid-generated-geometry-experimental-qualification-v6"
         or revision.get("status")
-        != "prospective-frozen-before-v5-retained-scientific-execution"
+        != "prospective-frozen-before-v6-retained-scientific-execution"
     ):
         raise FullOGridGeometryQualificationError(
             "full-O-grid experimental qualification revision is unsupported "
@@ -151,7 +149,7 @@ def load_frozen_contract() -> tuple[dict[str, Any], str]:
         or base_reference.get("sha256") != _sha256_file(BASE_CONTRACT_PATH)
     ):
         raise FullOGridGeometryQualificationError(
-            "full-O-grid qualification base contract digest does not match v5"
+            "full-O-grid qualification base contract digest does not match v6"
         )
     contract = json.loads(BASE_CONTRACT_PATH.read_text(encoding="utf-8"))
 
@@ -174,11 +172,11 @@ def load_frozen_contract() -> tuple[dict[str, Any], str]:
     contract = merge_patch(contract, patch)
     if (
         contract.get("schema")
-        != "flowlab.full-ogrid-geometry-experimental-qualification-contract.v5"
+        != "flowlab.full-ogrid-geometry-experimental-qualification-contract.v6"
         or contract.get("contractId")
         != adapters.FULL_OGRID_QUALIFICATION_CONTRACT_ID
         or contract.get("status")
-        != "prospective-frozen-before-v5-retained-scientific-execution"
+        != "prospective-frozen-before-v6-retained-scientific-execution"
         or contract.get("identity", {}).get("algorithm")
         != SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4
         or contract.get("promotionAuthorized") is not False
@@ -195,9 +193,11 @@ def runtime_efficiency(contract: dict[str, Any]) -> dict[str, Any]:
 
     Runtime settings are contract-governed, so a revision that does not declare
     ``runtime.efficiency`` authorizes nothing. This is deliberately fail-closed:
-    V5 declares no block, so ``--mpi-ranks`` and ``--mesh-sequencing`` refuse
-    rather than silently producing a campaign whose runtime configuration was
-    never prospectively declared.
+    under such a revision ``--mpi-ranks`` and ``--mesh-sequencing`` refuse rather
+    than silently producing a campaign whose runtime configuration was never
+    prospectively declared. V5 declared no block; V6 authorizes MPI at 1, 2, 4,
+    or 8 ranks and keeps mesh sequencing unauthorized, because measurement showed
+    it moved durable stationarity later rather than earlier.
     """
 
     runtime = contract.get("runtime")
@@ -1279,14 +1279,14 @@ def _authorize_efficiency(
             f"rank(s); authorized rank counts are "
             f"{list(efficiency['allowedRanks'])}. Runtime settings are contract "
             f"governed: freeze a revision declaring runtime.efficiency.parallel "
-            f"first (draft: {DRAFT_CONTRACT_PATH.name})."
+            f"first (active revision: {CONTRACT_PATH.name})."
         )
     if mesh_sequencing and not efficiency["meshSequencingAuthorized"]:
         raise FullOGridGeometryQualificationError(
             "the active contract revision does not authorize mesh sequencing. "
             "Mesh sequencing makes the levels an ordered chain rather than "
-            "independent runs, so it must be declared prospectively (draft: "
-            f"{DRAFT_CONTRACT_PATH.name})."
+            "independent runs, so it must be declared prospectively "
+            f"(active revision: {CONTRACT_PATH.name})."
         )
     return efficiency
 
