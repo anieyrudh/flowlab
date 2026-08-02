@@ -690,11 +690,17 @@ def read_case_artifact_preview(case_dir: Path, relative_path: str, point_limit: 
     if not is_result or path.suffix.lower() not in RESULT_EXTENSIONS:
         raise ValueError("Only VTK/VTU result artifacts can be previewed.")
     size = path.stat().st_size
-    if size > MAX_RESULT_PREVIEW_FILE_BYTES:
+    # A preview returns a bounded sample - point_limit points and cell_limit
+    # cells - regardless of how large the source is, so the source bound only
+    # needs to keep the read and parse finite. Bounding it at the smaller
+    # embedding-oriented limit made the endpoint refuse exactly the large
+    # artifacts it exists to sample: a 159,744-cell level converts to 24 MB,
+    # which reported no preview and therefore no source-cell identity at all.
+    if size > MAX_RESULT_VERIFICATION_FILE_BYTES:
         return {
             "path": relative_name,
             "size": size,
-            "skipped": f"file exceeds preview limit {MAX_RESULT_PREVIEW_FILE_BYTES}",
+            "skipped": f"file exceeds preview limit {MAX_RESULT_VERIFICATION_FILE_BYTES}",
         }
     try:
         text = path.read_text(encoding="utf-8")

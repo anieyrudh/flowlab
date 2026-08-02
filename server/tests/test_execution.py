@@ -6097,3 +6097,65 @@ def test_oversized_converted_result_is_verified_on_disk_not_reported_as_failure(
     nan_flagged = dict(verified)
     nan_flagged["nanDetected"] = True
     assert "NaN" in (solver_output_quality_error("openfoam", [], [nan_flagged]) or "")
+
+
+def test_preview_bound_is_the_verification_cap_not_the_embedding_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A preview returns a bounded sample, so it must not refuse large sources.
+
+    Bounding the preview source at the embedding-oriented limit made the endpoint
+    refuse exactly the artifacts it exists to sample. A 159,744-cell level
+    converts to a 24 MB result, which reported no preview and therefore no
+    source-cell identity, failing the identity gate on file size alone.
+    """
+
+    from server.flowlab import execution
+
+    # The preview bound must exceed the embedding bound, or previewing a large
+    # artifact is impossible by construction.
+    assert (
+        execution.MAX_RESULT_VERIFICATION_FILE_BYTES
+        > execution.MAX_RESULT_PREVIEW_FILE_BYTES
+    )
+
+    case_dir = tmp_path / "case"
+    (case_dir / "postProcessing" / "flowlabNative").mkdir(parents=True)
+    target = case_dir / "postProcessing" / "flowlabNative" / "time_1.vtk"
+    points = 40
+    target.write_text(
+        "\n".join(
+            [
+                "# vtk DataFile Version 3.0",
+                "flowlab",
+                "ASCII",
+                "DATASET UNSTRUCTURED_GRID",
+                f"POINTS {points} float",
+                *[f"{index}.0 0.0 0.0" for index in range(points)],
+                f"CELLS {points - 2} {(points - 2) * 4}",
+                *[
+                    f"3 {index} {index + 1} {index + 2}"
+                    for index in range(points - 2)
+                ],
+                f"CELL_TYPES {points - 2}",
+                *["5"] * (points - 2),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    relative = "postProcessing/flowlabNative/time_1.vtk"
+    size = target.stat().st_size
+
+    # Below the embedding cap the file would previously have been previewed too,
+    # so drop that cap under the file size: the preview must still succeed,
+    # proving the embedding cap is no longer what bounds a preview.
+    monkeypatch.setattr(execution, "MAX_RESULT_PREVIEW_FILE_BYTES", size - 1)
+    preview = execution.read_case_artifact_preview(case_dir, relative, point_limit=5, cell_limit=5)
+    assert preview.get("skipped") is None
+    assert len(preview.get("points") or []) <= 5
+
+    # The verification cap is the bound actually in force, and it still fails closed.
+    monkeypatch.setattr(execution, "MAX_RESULT_VERIFICATION_FILE_BYTES", size - 1)
+    refused = execution.read_case_artifact_preview(case_dir, relative, point_limit=5, cell_limit=5)
+    assert "exceeds preview limit" in str(refused.get("skipped"))
