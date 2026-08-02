@@ -1050,9 +1050,12 @@ test.describe("FlowLab editor workspace", () => {
       .poll(() => page.evaluate(() => window.localStorage.getItem("flowlab.project.v1") ?? ""))
       .toContain("pump-4");
 
+    // Drops snap to the schematic grid, and then to the nearest free cell when the
+    // requested one would crowd another component: (396, 230) rounds to (400, 240),
+    // which is too close to the throat at (420, 260), so the pump takes the next cell.
     await dragCanvas(page, { x: 336, y: 180 }, { x: 396, y: 230 });
-    await expect(page.getByLabel("X px value")).toHaveValue("396");
-    await expect(page.getByLabel("Y px value")).toHaveValue("230");
+    await expect(page.getByLabel("X px value")).toHaveValue("360");
+    await expect(page.getByLabel("Y px value")).toHaveValue("200");
 
     await page.getByTestId("rotation-degrees-input").fill("45");
     await expect(page.getByTestId("rotation-degrees-input")).toHaveValue("45");

@@ -675,17 +675,27 @@ dd {
   cursor: grabbing;
 }
 
+/*
+ * Anchored to one corner and sized by its own content. `top` and `bottom` must never
+ * both be set: an absolutely positioned box with both and `height: auto` stretches to
+ * fill the panel, which turned this control cluster into a translucent slab across the
+ * schematic.
+ */
 .viewport-actions {
   position: absolute;
   z-index: 3;
-  top: 14px;
+  top: auto;
   right: 14px;
+  bottom: 14px;
   display: inline-flex;
+  align-items: center;
+  width: max-content;
+  height: max-content;
   gap: 6px;
   padding: 4px;
   border: 1px solid var(--line-subtle);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(14px);
 }
@@ -701,6 +711,7 @@ dd {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
+  cursor: pointer;
 }
 
 .viewport-actions button:hover,
@@ -742,37 +753,40 @@ dd {
   border-color: rgba(247, 216, 75, 0.56);
 }
 
+/*
+ * Per-selection actions live on a docked toolbar strip, not floating over the drawing.
+ * The pad is laid out as a normal flow item by `.workspace-view-canvas` below, so the
+ * inline left/top coordinates App passes for the old floating placement are inert.
+ */
 .action-pad {
-  position: absolute;
   z-index: 3;
-  display: grid;
-  grid-template-columns: repeat(2, 58px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  width: 122px;
-  padding: 5px;
-  border: 1px solid rgba(241, 202, 76, 0.42);
+  padding: 5px 7px;
+  border: 1px solid rgba(241, 202, 76, 0.28);
   border-radius: var(--radius);
   background: rgba(13, 18, 23, 0.94);
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
-  pointer-events: none;
 }
 
 .action-pad button {
-  width: 58px;
-  height: 50px;
-  min-height: 50px;
-  display: grid;
-  place-items: center;
-  gap: 2px;
-  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
   border-color: rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
   color: #f4f8fb;
   background: #161d24;
   text-transform: uppercase;
-  pointer-events: auto;
+  cursor: pointer;
 }
 
-.action-pad button:hover {
+.action-pad button:hover,
+.action-pad button:focus-visible {
   border-color: rgba(241, 202, 76, 0.54);
   background: var(--yellow-soft);
 }
@@ -781,10 +795,12 @@ dd {
   font-size: 9px;
   font-weight: 880;
   line-height: 1;
-  letter-spacing: 0;
+  letter-spacing: 0.04em;
 }
 
 .action-pad svg {
+  width: 14px;
+  height: 14px;
   color: var(--yellow);
 }
 
@@ -3430,8 +3446,7 @@ body {
 }
 
 .simulation-canvas,
-.overlay-switcher,
-.action-pad {
+.overlay-switcher {
   position: absolute;
 }
 
@@ -3447,20 +3462,15 @@ body {
 }
 
 .action-pad {
-  grid-template-columns: repeat(2, 54px);
-  width: 116px;
-  border-color: rgba(255, 213, 79, 0.32);
-  border-radius: 18px;
-  background: rgba(8, 16, 25, 0.62);
+  border-color: rgba(255, 213, 79, 0.24);
+  border-radius: 12px;
+  background: rgba(8, 16, 25, 0.86);
   backdrop-filter: blur(18px);
 }
 
 .action-pad button {
-  width: 54px;
-  height: 48px;
-  min-height: 48px;
-  border-radius: 16px;
-  background: rgba(16, 27, 39, 0.78);
+  border-radius: 8px;
+  background: rgba(16, 27, 39, 0.86);
 }
 
 .inspector {
@@ -3838,12 +3848,41 @@ body {
 
 .workspace-view-canvas .viewport-actions {
   z-index: 4;
+  top: auto;
   right: 10px;
   bottom: 10px;
+  border-color: rgba(154, 194, 220, 0.28);
+  background: rgba(4, 12, 20, 0.88);
 }
 
-.workspace-view-canvas .action-pad {
+.workspace-view-canvas .viewport-actions button {
+  color: #d6e8f5;
+}
+
+/*
+ * Schematic pane: a column with the selection toolbar docked above the drawing surface.
+ * The canvas becomes a flex item rather than an inset overlay so the toolbar can never
+ * cover geometry, and shrinking the drawing area triggers the canvas's own auto-refit.
+ */
+.schematic-view .workspace-view-canvas {
+  display: flex;
+  flex-direction: column;
+}
+
+.schematic-view .workspace-view-canvas .simulation-canvas {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.schematic-view .workspace-view-canvas .action-pad {
+  position: static;
   z-index: 5;
+  order: -1;
+  flex: 0 0 auto;
+  margin: 6px 6px 0;
 }
 
 .workspace-divider {
@@ -4163,14 +4202,9 @@ body {
     bottom: 8px;
   }
 
-  .action-pad {
-    grid-template-columns: repeat(2, 52px);
-    width: 112px;
-  }
-
   .action-pad button {
-    width: 52px;
-    min-height: 48px;
+    flex: 1 1 auto;
+    min-height: 34px;
   }
 
   .coordinate-row {
