@@ -623,7 +623,30 @@ def read_case_artifact(case_dir: Path, relative_path: str) -> dict[str, Any]:
         return {"path": relative_name, "size": size, "text": text, "collectionSummary": _parse_pvd_collection(path, case_dir)}
     limit = MAX_RESULT_FILE_BYTES if is_result else MAX_DIAGNOSTIC_FILE_BYTES
     if size > limit:
-        return {"path": relative_name, "size": size, "skipped": "file too large"}
+        oversized: dict[str, Any] = {
+            "path": relative_name,
+            "size": size,
+            "skipped": "file too large",
+        }
+        # The cap bounds the text returned to a caller, not what can be known
+        # about the artifact. Summarize an oversized result from disk so callers
+        # that only need metadata - field inventory, source-cell identity - are
+        # served, while its text is still withheld. Without this, an artifact
+        # above the cap reports no identity at all, which reads as "identity
+        # absent" rather than "text too large to return".
+        if is_result and size <= MAX_RESULT_VERIFICATION_FILE_BYTES:
+            try:
+                oversized_text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                oversized_text = None
+            if oversized_text is not None:
+                try:
+                    oversized["fieldSummary"] = summarize_vtk_result_text(oversized_text)
+                except Exception as exc:  # pragma: no cover - defensive
+                    oversized["fieldSummaryError"] = str(exc)
+                else:
+                    oversized["verifiedOnDisk"] = True
+        return oversized
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
