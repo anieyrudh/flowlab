@@ -69,6 +69,42 @@ const resultColorPalettes: Record<ResultColorMap, string[]> = {
   grayscale: ["#17212b", "#4b5d70", "#8da1b5", "#d6e2ec", "#ffffff"]
 };
 
+// --- Solved domain vs. schematic network -------------------------------------
+//
+// Two unrelated things share this scene and used to look alike:
+//   * the SOLVED DOMAIN - the VTK dataset the solver actually produced. Under
+//     the default `planar-2d` mesh mode that domain genuinely is a one-cell-thick
+//     channel, so a flat coloured slab is the honest picture of it.
+//   * the SCHEMATIC NETWORK - the pipe layout the user drew. It illustrates the
+//     layout; it is never a solved field.
+// Everything below keeps the two apart by construction: measured data is opaque,
+// unlit, un-fogged and outlined, while the drawn network is a ghosted wireframe.
+
+/**
+ * World-space Z the solved surface is lifted to. Negative so the measured data
+ * sits *under* the drawn network rather than being hidden by it, and still well
+ * clear of the reference grid. `probeAt` and the derived overlay reuse this so
+ * physical coordinates round-trip exactly.
+ */
+export const RESULT_SURFACE_Z_OFFSET = -0.24;
+
+/** Largest world extent of the solved domain when there is no network to match. */
+export const DEFAULT_RESULT_WORLD_SPAN = 5.2;
+
+/**
+ * Bounds on the solved domain's world extent, so it is never a speck and never
+ * overruns the default framing. The upper bound sits just inside the ~6.5 world
+ * units the default camera sees, which is why a sprawling network does not drag
+ * the solved slab off-screen with it.
+ */
+const RESULT_WORLD_SPAN_RANGE: readonly [number, number] = [2.4, 5.8];
+
+/** Above this triangle count the boundary outline is skipped to protect frame time. */
+const MAX_OUTLINE_TRIANGLES = 120_000;
+
+/** Crease angle above which the solved domain's outline draws an interior edge. */
+const OUTLINE_CREASE_DEGREES = 30;
+
 const flowParticleVertexShader = `
   uniform float uTime;
   attribute float aPhase;
@@ -88,7 +124,10 @@ const flowParticleFragmentShader = `
   varying vec3 vColor;
   void main() {
     vec2 uv = gl_PointCoord - vec2(0.5);
-    float alpha = smoothstep(0.5, 0.16, length(uv));
+    // Held well below full alpha: these ticks illustrate flow direction on the
+    // drawn network, they are not sampled field data, so they must not read as
+    // brightly as the solved surface.
+    float alpha = smoothstep(0.5, 0.16, length(uv)) * 0.5;
     gl_FragColor = vec4(vColor, alpha);
   }
 `;
@@ -104,6 +143,121 @@ function overlayValueColor(value: number, max: number, overlay: OverlayMode): st
 
 function resultValueColor(value: number, max: number, colorMap: ResultColorMap): string {
   return valueColor(value, max, resultColorPalettes[colorMap]);
+}
+
+export type CinemaLightRig = {
+  key: THREE.DirectionalLight;
+  fill: THREE.DirectionalLight;
+  rim: THREE.DirectionalLight;
+  ambient: THREE.HemisphereLight;
+};
+
+/**
+ * Neutral three-point rig.
+ *
+ * Every light here is directional or hemispherical, so the light a surface
+ * receives depends only on its normal - never on where it happens to sit in the
+ * scene. The rig this replaces added two saturated short-range PointLights
+ * (cyan at x=+4, warm orange at y=+2.8), which tinted one identical material
+ * cyan on one side of the network and orange on the other; that positional hue
+ * shift was the inconsistency. Keeping all four lights white or near-white
+ * leaves hue to the materials and puts the lighting to work describing form.
+ *
+ * Scene convention: the network lies in the XY plane and +Z is up, so the key
+ * is high on +Z rather than the +Y a Y-up scene would use.
+ */
+export function createCinemaLightRig(): CinemaLightRig {
+  const key = new THREE.DirectionalLight(0xffffff, 2.85);
+  key.position.set(-3.6, -4.6, 7.4); // high, and over the viewer's left shoulder
+  key.name = "Cinema key light";
+  const fill = new THREE.DirectionalLight(0xffffff, 1.05);
+  fill.position.set(4.9, -3.2, 2.1); // opposite the key, opens up the shadow side
+  fill.name = "Cinema fill light";
+  const rim = new THREE.DirectionalLight(0xffffff, 0.7);
+  rim.position.set(0.7, 5.4, 3.1); // from behind, separates silhouettes from the background
+  rim.name = "Cinema rim light";
+  const ambient = new THREE.HemisphereLight(0xeef2f6, 0x1b2026, 0.85);
+  ambient.position.set(0, 0, 1); // hemisphere axis follows the scene's +Z up
+  ambient.name = "Cinema ambient";
+  return { key, fill, rim, ambient };
+}
+
+/**
+ * Material for the solved surface.
+ *
+ * Deliberately unlit, fully opaque, un-fogged and un-tone-mapped: the pixel a
+ * reader sees has to be the colour-map colour for the sampled value. The
+ * previous material was translucent (opacity 0.82) and picked up the scene fog,
+ * so every value was blended toward the dark background before it reached the
+ * eye and the picture quietly disagreed with the legend. Shading it would do the
+ * same thing by another route.
+ */
+export function createResultSurfaceMaterial(): THREE.MeshBasicMaterial {
+  const material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, depthWrite: true });
+  material.fog = false;
+  material.toneMapped = false;
+  material.polygonOffset = true; // let the boundary outline win the depth test
+  material.polygonOffsetFactor = 1;
+  material.polygonOffsetUnits = 1;
+  return material;
+}
+
+/** Crisp outline around the solved domain, so the slab reads as a measured extent. */
+export function createResultBoundaryMaterial(): THREE.LineBasicMaterial {
+  const material = new THREE.LineBasicMaterial({ color: 0xf2f8ff, transparent: true, opacity: 0.92 });
+  material.fog = false;
+  material.toneMapped = false;
+  return material;
+}
+
+export type SchematicPipeMaterials = {
+  cage: THREE.MeshBasicMaterial;
+  core: THREE.MeshStandardMaterial;
+};
+
+/**
+ * Materials for one drawn pipe.
+ *
+ * The outer surface becomes a ghosted wireframe cage - a treatment no solver
+ * ever outputs - so the drawn network reads as a diagram at a glance. The core
+ * still carries the network overlay colour but stays translucent, so it can
+ * never look more authoritative than the opaque solved surface beneath it.
+ */
+export function createSchematicPipeMaterials(color: THREE.Color, active: boolean): SchematicPipeMaterials {
+  const cage = new THREE.MeshBasicMaterial({
+    color: active ? 0xffd98a : 0x7ea8c2,
+    wireframe: true,
+    transparent: true,
+    opacity: active ? 0.36 : 0.2,
+    depthWrite: false
+  });
+  const core = new THREE.MeshStandardMaterial({
+    color,
+    transparent: true,
+    opacity: active ? 0.5 : 0.34,
+    roughness: 0.36,
+    metalness: 0.02,
+    emissive: color,
+    emissiveIntensity: active ? 0.42 : 0.16,
+    depthWrite: false
+  });
+  return { cage, core };
+}
+
+/**
+ * Size the solved domain to the drawn network so the two read at a comparable
+ * scale in one frame instead of one dwarfing the other. `fitCamera` frames the
+ * network, so tying the domain to the same extent keeps both in view.
+ */
+export function resultWorldSpanForNetwork(project: FluidProject, worldScale: number): number {
+  const nodes = Object.values(project.nodes);
+  if (nodes.length < 2) return DEFAULT_RESULT_WORLD_SPAN;
+  const xs = nodes.map((node) => node.position.x);
+  const ys = nodes.map((node) => node.position.y);
+  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / worldScale;
+  if (!Number.isFinite(span) || span <= 0) return DEFAULT_RESULT_WORLD_SPAN;
+  const [minimum, maximum] = RESULT_WORLD_SPAN_RANGE;
+  return Math.max(minimum, Math.min(maximum, span * 0.92));
 }
 
 function degreesToRadians(degrees: number) {
@@ -185,9 +339,9 @@ function orientBetweenPoints(object: THREE.Object3D, start: THREE.Vector3, end: 
   object.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
 }
 
-function createPipeMesh(start: THREE.Vector3, end: THREE.Vector3, radius: number, material: THREE.Material) {
+function createPipeMesh(start: THREE.Vector3, end: THREE.Vector3, radius: number, material: THREE.Material, radialSegments = 36) {
   const length = Math.max(start.distanceTo(end), 0.01);
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 36, 1, true), material);
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, radialSegments, 1, true), material);
   mesh.userData.pipeBaseLength = length;
   orientBetweenPoints(mesh, start, end);
   return mesh;
@@ -298,7 +452,8 @@ function addResultSurfaceMesh(
   overlay: OverlayMode,
   resultFieldSelection: ResultFieldSelection | null,
   resultVectorComponent: ResultVectorComponent,
-  resultColorMap: ResultColorMap
+  resultColorMap: ResultColorMap,
+  worldSpan: number
 ): {
   surface: THREE.Mesh;
   triangles: ResultSurfaceTriangle[];
@@ -311,7 +466,7 @@ function addResultSurfaceMesh(
   const maxValue = Math.max(...fieldValues.values.map((value) => Math.abs(value)), 1e-9);
   const positions: number[] = [];
   const colors: number[] = [];
-  const meshScale = 5.2 / bounds.span;
+  const meshScale = worldSpan / bounds.span;
   const triangles = resultSurfaceTriangles(dataset);
 
   triangles.forEach(({ pointIndices, ownerCellIndex }) => {
@@ -321,7 +476,11 @@ function addResultSurfaceMesh(
       const color = new THREE.Color(
         resultValueColor(fieldValueForDatasetPoint(fieldValues.values, fieldValues.location, pointIndex, ownerCellIndex, cell), maxValue, resultColorMap)
       );
-      positions.push((point[0] - bounds.center[0]) * meshScale, (point[1] - bounds.center[1]) * meshScale, (point[2] - bounds.center[2]) * meshScale + 0.16);
+      positions.push(
+        (point[0] - bounds.center[0]) * meshScale,
+        (point[1] - bounds.center[1]) * meshScale,
+        (point[2] - bounds.center[2]) * meshScale + RESULT_SURFACE_Z_OFFSET
+      );
       colors.push(color.r, color.g, color.b);
     });
   });
@@ -331,15 +490,21 @@ function addResultSurfaceMesh(
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geometry.computeVertexNormals();
-  const material = new THREE.MeshBasicMaterial({
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.82,
-    side: THREE.DoubleSide,
-    depthWrite: true
-  });
-  const surface = new THREE.Mesh(geometry, material);
-  surface.name = `VTK ${fieldValues.field} exterior surface`;
+  const surface = new THREE.Mesh(geometry, createResultSurfaceMaterial());
+  surface.name = `Solved domain: VTK ${fieldValues.field} exterior surface`;
+
+  // Outline the solved domain's own boundary. `EdgesGeometry` emits unshared
+  // edges plus creases sharper than the threshold, so for the default
+  // one-cell-thick `planar-2d` channel this traces the real extent of the solved
+  // region - the flat slab reads as a measured patch instead of a stray
+  // backdrop - while a curved axisymmetric domain keeps its smooth faceting
+  // undrawn rather than being covered in a mesh wireframe.
+  if (triangles.length <= MAX_OUTLINE_TRIANGLES) {
+    const boundary = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, OUTLINE_CREASE_DEGREES), createResultBoundaryMaterial());
+    boundary.name = "Solved domain boundary";
+    boundary.renderOrder = 2;
+    surface.add(boundary);
+  }
   scene.add(surface);
   return { surface, triangles, bounds, meshScale };
 }
@@ -461,29 +626,19 @@ export function buildCinemaScene(options: {
     orientBetweenPoints(mesh, start, end);
   }
 
-  scene.add(new THREE.AmbientLight(0x87c8ff, 0.58));
-  const keyLight = new THREE.DirectionalLight(0xffffff, 2.25);
-  keyLight.position.set(-3.8, -5.2, 7.2);
-  scene.add(keyLight);
-  const rimLight = new THREE.PointLight(0x20d7ff, 3.8, 14);
-  rimLight.position.set(4, -2, 3.4);
-  scene.add(rimLight);
-  const warmLight = new THREE.PointLight(0xffbe4d, 2.1, 10);
-  warmLight.position.set(0.5, 2.8, 1.4);
-  scene.add(warmLight);
+  const lights = createCinemaLightRig();
+  scene.add(lights.key, lights.fill, lights.rim, lights.ambient);
 
-  const grid = new THREE.GridHelper(12, 24, 0x24465b, 0x132636);
+  // The grid alone carries the ground reference. The dark PlaneGeometry that
+  // used to sit here was a large flat rectangle directly beneath the solved
+  // slab, and the two rectangles read as one washed-out gradient backdrop.
+  const grid = new THREE.GridHelper(12, 24, 0x2b4d63, 0x16293a);
   grid.rotation.x = Math.PI / 2;
-  grid.position.z = -0.42;
+  grid.position.z = -0.62;
+  grid.name = "Schematic ground reference";
   scene.add(grid);
 
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(16, 10),
-    new THREE.MeshBasicMaterial({ color: 0x06121c, transparent: true, opacity: 0.58, side: THREE.DoubleSide })
-  );
-  floor.position.z = -0.45;
-  scene.add(floor);
-
+  const resultWorldSpan = resultWorldSpanForNetwork(project, worldScale);
   const resultSurface = resultDataset
     ? addResultSurfaceMesh(
         scene,
@@ -491,7 +646,8 @@ export function buildCinemaScene(options: {
         project.visualization.overlay,
         resultFieldSelection,
         resultVectorComponent,
-        resultColorMap
+        resultColorMap,
+        resultWorldSpan
       )
     : null;
   const streamlineScene = streamlines && resultSurface
@@ -503,12 +659,14 @@ export function buildCinemaScene(options: {
   if (derivedPresentation) {
     const physicalBounds = resultDataset ? datasetBounds(resultDataset) : null;
     if (physicalBounds) {
-      const meshScale = 5.2 / physicalBounds.span;
+      // Share the solved surface's own scale and lift, so derived overlays stay
+      // registered with the data they were derived from.
+      const meshScale = resultSurface?.meshScale ?? resultWorldSpan / physicalBounds.span;
       derivedPresentation.group.scale.setScalar(meshScale);
       derivedPresentation.group.position.set(
         -physicalBounds.center[0] * meshScale,
         -physicalBounds.center[1] * meshScale,
-        -physicalBounds.center[2] * meshScale + 0.16
+        -physicalBounds.center[2] * meshScale + RESULT_SURFACE_Z_OFFSET
       );
     }
     scene.add(derivedPresentation.group);
@@ -538,34 +696,32 @@ export function buildCinemaScene(options: {
     const color = new THREE.Color(overlayValueColor(metric, maxEdge, project.visualization.overlay));
     const radius = Math.max(0.065, edge.shape.kind === "circular" ? edge.shape.diameter * 0.86 : edge.shape.height * 0.76);
     const active = selectedKind === "edge" && selectedId === edge.id;
-    const glassMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0x68e8ff,
-      transparent: true,
-      opacity: active ? 0.4 : 0.26,
-      roughness: 0.13,
-      metalness: 0.06,
-      transmission: 0.52,
-      thickness: 0.48,
-      emissive: active ? 0x4bd7ff : 0x052f42,
-      emissiveIntensity: active ? 0.9 : 0.34
-    });
-    const coreMaterial = new THREE.MeshStandardMaterial({
-      color,
-      transparent: true,
-      opacity: 0.88,
-      roughness: 0.22,
-      metalness: 0.04,
-      emissive: color,
-      emissiveIntensity: active ? 1.2 : 0.62
-    });
-    const outerPipe = createPipeMesh(start, end, radius * 1.42, glassMaterial);
-    const innerPipe = createPipeMesh(start, end, Math.max(0.034, radius * 0.62), coreMaterial);
+    const { cage: cageMaterial, core: coreMaterial } = createSchematicPipeMaterials(color, active);
+    // A coarse, visibly faceted cage: few enough segments that the wireframe
+    // reads as a drawing rather than as a shaded tube, and sparse enough that it
+    // never stripes the solved surface behind it.
+    const outerPipe = createPipeMesh(start, end, radius * 1.42, cageMaterial, 8);
+    const innerPipe = createPipeMesh(start, end, Math.max(0.034, radius * 0.62), coreMaterial, 16);
+    outerPipe.name = `Schematic pipe cage ${edge.id}`;
+    innerPipe.name = `Schematic pipe core ${edge.id}`;
     registerPickable(outerPipe, { kind: "edge", id: edge.id });
     registerPickable(innerPipe, { kind: "edge", id: edge.id });
     scene.add(outerPipe, innerPipe);
 
     const ringGeometry = new THREE.TorusGeometry(radius * 1.62, 0.015, 10, 42);
-    const ringMaterial = new THREE.MeshStandardMaterial({ color: active ? 0xffd54f : 0xa8d2e2, metalness: 0.82, roughness: 0.2, emissive: active ? 0x5f4200 : 0x06131a });
+    // Matte, not metallic: this scene has no environment map, so the old
+    // metalness of 0.82 rendered near-black except where the removed saturated
+    // point lights happened to strike it.
+    const ringMaterial = new THREE.MeshStandardMaterial({
+      color: active ? 0xffd98a : 0x9fb8c8,
+      metalness: 0.18,
+      roughness: 0.44,
+      transparent: true,
+      opacity: active ? 0.62 : 0.36,
+      depthWrite: false,
+      emissive: 0x0a1620,
+      emissiveIntensity: 0.12
+    });
     const rings: THREE.Mesh[] = [];
     [0.08, 0.92].forEach((t) => {
       const ring = new THREE.Mesh(ringGeometry.clone(), ringMaterial);
@@ -580,23 +736,59 @@ export function buildCinemaScene(options: {
     let throat: THREE.Mesh | undefined;
     let valve: THREE.Mesh | undefined;
     let bend: THREE.Mesh | undefined;
+    // Fittings stay part of the illustration: matte, translucent, and never
+    // self-luminous enough to out-shout the solved surface.
     if (edge.type === "venturi") {
       throat = createPipeMesh(
         start.clone().lerp(end, 0.42),
         start.clone().lerp(end, 0.58),
         Math.max(0.03, radius * 0.35),
-        new THREE.MeshStandardMaterial({ color: 0xffd54f, emissive: 0xff6b35, emissiveIntensity: 1.1, roughness: 0.18 })
+        new THREE.MeshStandardMaterial({
+          color: 0xe8c775,
+          roughness: 0.4,
+          metalness: 0.08,
+          transparent: true,
+          opacity: 0.58,
+          depthWrite: false,
+          emissive: 0x2a1e08,
+          emissiveIntensity: 0.2
+        }),
+        20
       );
       registerPickable(throat, { kind: "edge", id: edge.id });
       scene.add(throat);
     } else if (edge.type === "valve") {
       const midpoint = start.clone().lerp(end, 0.5);
-      valve = new THREE.Mesh(new THREE.OctahedronGeometry(radius * 1.65, 0), new THREE.MeshStandardMaterial({ color: 0xff9f43, metalness: 0.58, roughness: 0.2, emissive: 0x3a1800 }));
+      valve = new THREE.Mesh(
+        new THREE.OctahedronGeometry(radius * 1.65, 0),
+        new THREE.MeshStandardMaterial({
+          color: 0xe0a266,
+          metalness: 0.16,
+          roughness: 0.42,
+          transparent: true,
+          opacity: 0.62,
+          depthWrite: false,
+          emissive: 0x241203,
+          emissiveIntensity: 0.18
+        })
+      );
       valve.position.copy(midpoint).setZ(radius * 1.7);
       registerPickable(valve, { kind: "edge", id: edge.id });
       scene.add(valve);
     } else if (edge.type === "bend") {
-      bend = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.3, 0.02, 8, 40), new THREE.MeshStandardMaterial({ color: 0x66d9ff, emissive: 0x073344, roughness: 0.16 }));
+      bend = new THREE.Mesh(
+        new THREE.TorusGeometry(radius * 1.3, 0.02, 8, 40),
+        new THREE.MeshStandardMaterial({
+          color: 0x8fc6dc,
+          roughness: 0.4,
+          metalness: 0.1,
+          transparent: true,
+          opacity: 0.6,
+          depthWrite: false,
+          emissive: 0x0a1e28,
+          emissiveIntensity: 0.16
+        })
+      );
       bend.position.copy(start.clone().lerp(end, 0.5)).setZ(radius * 1.4);
       registerPickable(bend, { kind: "edge", id: edge.id });
       scene.add(bend);
@@ -628,7 +820,9 @@ export function buildCinemaScene(options: {
       depthWrite: false,
       blending: THREE.AdditiveBlending
     });
-    scene.add(new THREE.Points(particleGeometry, particleMaterial));
+    const particlePoints = new THREE.Points(particleGeometry, particleMaterial);
+    particlePoints.name = "Schematic flow ticks (illustrative)";
+    scene.add(particlePoints);
   }
 
   Object.values(project.nodes).forEach((node) => {
@@ -640,31 +834,57 @@ export function buildCinemaScene(options: {
     let nodeHandleLine: THREE.Line | undefined;
     nodeGroup.position.copy(position);
     nodeGroup.rotation.z = -degreesToRadians(node.rotation ?? 0);
+    nodeGroup.name = `Schematic component ${node.id}`;
+    // Equipment symbols: matte and translucent so they stay part of the drawing.
+    // Metalness is low because there is no environment map for a metal to
+    // reflect - the old high-metalness values only looked right under the
+    // saturated point lights that have been removed.
     const material = new THREE.MeshStandardMaterial({
-      color: active ? 0xffd54f : node.type === "pump" ? 0x73889a : node.type === "mixer" ? 0x1e8a92 : 0x123447,
-      metalness: node.type === "pump" ? 0.76 : 0.42,
-      roughness: 0.22,
-      emissive: active ? 0x4f3700 : 0x041722,
-      emissiveIntensity: active ? 0.9 : 0.28
+      color: active ? 0xf0c563 : node.type === "pump" ? 0x8ba0b1 : node.type === "mixer" ? 0x3f939a : 0x2b556d,
+      metalness: node.type === "pump" ? 0.24 : 0.14,
+      roughness: 0.45,
+      transparent: true,
+      opacity: active ? 0.82 : 0.66,
+      emissive: active ? 0x3a2900 : 0x08161f,
+      emissiveIntensity: active ? 0.4 : 0.14
     });
 
     let body: THREE.Mesh;
     if (node.type === "pump") {
       body = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.3, 40), material);
       body.rotation.x = Math.PI / 2;
-      const impeller = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.03, 14, 42), new THREE.MeshStandardMaterial({ color: 0xb2c7d6, metalness: 0.82, roughness: 0.16, emissive: 0x08131a }));
+      const impeller = new THREE.Mesh(
+        new THREE.TorusGeometry(0.22, 0.03, 14, 42),
+        new THREE.MeshStandardMaterial({ color: 0xc2d3de, metalness: 0.22, roughness: 0.4, transparent: true, opacity: 0.72, emissive: 0x0a141b, emissiveIntensity: 0.12 })
+      );
       impeller.position.z = 0.03;
       nodeGroup.add(impeller);
     } else if (node.type === "source" || node.type === "sink") {
+      // Ghosted vessel. `transmission` needs an environment to refract and this
+      // scene has none, so a plainly translucent matte shell reads better and
+      // behaves identically wherever the vessel sits.
       body = new THREE.Mesh(
         new THREE.CylinderGeometry(0.42, 0.42, 0.66, 48, 1, true),
-        new THREE.MeshPhysicalMaterial({ color: 0x4bd7ff, transparent: true, opacity: 0.32, roughness: 0.08, metalness: 0.02, transmission: 0.34, thickness: 0.3, emissive: 0x06344a })
+        new THREE.MeshStandardMaterial({
+          color: 0x7fc8e0,
+          transparent: true,
+          opacity: 0.24,
+          roughness: 0.4,
+          metalness: 0.04,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          emissive: 0x0a2733,
+          emissiveIntensity: 0.18
+        })
       );
       body.rotation.x = Math.PI / 2;
       body.position.z = 0.14;
     } else if (node.type === "mixer") {
       body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 36, 20), material);
-      const swirl = new THREE.Mesh(new THREE.TorusKnotGeometry(0.22, 0.015, 84, 8), new THREE.MeshBasicMaterial({ color: 0x35cfff, transparent: true, opacity: 0.7 }));
+      const swirl = new THREE.Mesh(
+        new THREE.TorusKnotGeometry(0.22, 0.015, 84, 8),
+        new THREE.MeshBasicMaterial({ color: 0x8ed2e6, transparent: true, opacity: 0.42, depthWrite: false })
+      );
       nodeGroup.add(swirl);
     } else {
       body = new THREE.Mesh(new THREE.SphereGeometry(0.2, 30, 16), material);
@@ -725,7 +945,7 @@ export function buildCinemaScene(options: {
     const physicalPoint: [number, number, number] = [
       hit.point.x / resultSurface.meshScale + resultSurface.bounds.center[0],
       hit.point.y / resultSurface.meshScale + resultSurface.bounds.center[1],
-      (hit.point.z - 0.16) / resultSurface.meshScale + resultSurface.bounds.center[2]
+      (hit.point.z - RESULT_SURFACE_Z_OFFSET) / resultSurface.meshScale + resultSurface.bounds.center[2]
     ];
     const [firstIndex, secondIndex, thirdIndex] = triangle.pointIndices;
     const barycentric = new THREE.Triangle(
