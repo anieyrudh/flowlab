@@ -6,8 +6,10 @@ import {
   MIN_NODE_SEPARATION,
   ROUTE_CLEARANCE,
   SCHEMATIC_GRID_SIZE,
+  SCHEMATIC_PORT_OFFSET,
   axisDirection,
   boxesOverlap,
+  buildSchematicRoutes,
   clampViewportZoom,
   countEdgeCrossings,
   defaultSchematicViewport,
@@ -23,14 +25,20 @@ import {
   polylineObstacleBoxes,
   polylineSegments,
   resetSchematicViewport,
+  roundPolylineCorners,
   routeLaneSpans,
   routeOrthogonalPipe,
+  schematicEdgeRoute,
   schematicNodePositions,
+  schematicNodeRadius,
+  schematicPortDirection,
+  schematicPortPosition,
   screenToWorld,
   segmentCrossing,
   simplifyPolyline,
   snapNodeToFreeCell,
   snapToGrid,
+  tangentOnPolyline,
   tidySchematicLayout,
   tidySchematicRotations,
   visibleGridRange,
@@ -486,5 +494,155 @@ describe("tidy layout", () => {
       }
     };
     expect(countEdgeCrossings(shared, schematicNodePositions(shared))).toBe(0);
+  });
+});
+
+/**
+ * A network the router has to bend: the source feeds a sink two rows down, so no run
+ * between them can be a single straight line.
+ */
+function bentProject(): FluidProject {
+  return {
+    ...venturiPreset,
+    nodes: {
+      source: { ...venturiPreset.nodes.source, position: { x: 120, y: 120 }, rotation: 0 },
+      sink: { ...venturiPreset.nodes.sink, position: { x: 520, y: 400 }, rotation: 0 }
+    },
+    edges: {
+      only: { ...venturiPreset.edges.inlet, id: "only", from: "source", to: "sink" }
+    },
+    sweeps: []
+  };
+}
+
+describe("geometry shared by the schematic and the 3D view", () => {
+  it("puts a port on the component's own edge, facing the way the component is aimed", () => {
+    const node = { ...venturiPreset.nodes.source, position: { x: 100, y: 100 }, rotation: 0 };
+
+    // A source body is 17 units across and the ring stands SCHEMATIC_PORT_OFFSET clear of it.
+    expect(schematicNodeRadius(node)).toBe(17);
+    expect(schematicPortPosition(node, "outlet")).toEqual({ x: 100 + 17 + SCHEMATIC_PORT_OFFSET, y: 100 });
+    expect(schematicPortDirection(node, "outlet").x).toBeCloseTo(1, 9);
+    expect(schematicPortDirection(node, "inlet").x).toBeCloseTo(-1, 9);
+    // Turning the component turns its ports with it.
+    expect(schematicPortPosition({ ...node, rotation: 90 }, "outlet").y).toBeCloseTo(127, 9);
+  });
+
+  it("gives the 3D view the very routes the schematic draws", () => {
+    const project = bentProject();
+    const routes = buildSchematicRoutes(project);
+
+    expect(routes.map((route) => route.id)).toEqual(["only"]);
+    // Rebuilt from the same project, the answer is identical - so two views cannot drift.
+    expect(buildSchematicRoutes(project)).toEqual(routes);
+    // And it is the same polyline the single-edge helper produces.
+    expect(routes[0].points).toEqual(schematicEdgeRoute(project.edges.only, project.nodes));
+    // The route genuinely turns: a straight line would be two points.
+    expect(routes[0].points.length).toBeGreaterThan(2);
+  });
+
+  it("routes each pipe against the lanes the pipes before it already took", () => {
+    const project = crossedProject();
+    const routes = buildSchematicRoutes(project);
+    const lanes = routes.map((route) => verticalLanes(route.points));
+
+    expect(routes).toHaveLength(2);
+    // Two runs sharing a lane would draw one on top of the other.
+    for (const lane of lanes[0]) expect(lanes[1]).not.toContain(lane);
+  });
+
+  it("skips an edge whose components are missing rather than inventing a route", () => {
+    const project = bentProject();
+    const dangling: FluidProject = {
+      ...project,
+      edges: { ...project.edges, ghost: { ...project.edges.only, id: "ghost", from: "source", to: "nowhere" } }
+    };
+
+    expect(schematicEdgeRoute(dangling.edges.ghost, dangling.nodes)).toBeNull();
+    expect(buildSchematicRoutes(dangling).map((route) => route.id)).toEqual(["only"]);
+  });
+
+  it("reports the direction of travel along a route, corner by corner", () => {
+    const route = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 }
+    ];
+
+    expect(tangentOnPolyline(route, 0)).toEqual({ x: 1, y: 0 });
+    expect(tangentOnPolyline(route, 0.9)).toEqual({ x: 0, y: 1 });
+    expect(tangentOnPolyline(route, 1)).toEqual({ x: 0, y: 1 });
+    // Degenerate input still yields a usable direction rather than a NaN.
+    expect(tangentOnPolyline([{ x: 5, y: 5 }], 0.5)).toEqual({ x: 1, y: 0 });
+    expect(tangentOnPolyline([], 0.5)).toEqual({ x: 1, y: 0 });
+  });
+
+  it("turns a right-angle corner into a constant-radius bend", () => {
+    const rounded = roundPolylineCorners(
+      [
+        { x: 0, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 100 }
+      ],
+      20,
+      4
+    );
+
+    // The corner point itself is gone, replaced by an arc that starts and ends on the runs.
+    expect(rounded).not.toContainEqual({ x: 100, y: 0 });
+    expect(rounded[0]).toEqual({ x: 0, y: 0 });
+    expect(rounded.at(-1)).toEqual({ x: 100, y: 100 });
+    // A quarter turn has tan(45) = 1, so the arc radius equals the tangent length.
+    const centre = { x: 80, y: 20 };
+    for (const point of rounded.slice(1, -1)) {
+      expect(Math.hypot(point.x - centre.x, point.y - centre.y)).toBeCloseTo(20, 6);
+    }
+    // The bend stays inside the corner it replaced.
+    for (const point of rounded) {
+      expect(point.x).toBeLessThanOrEqual(100 + 1e-9);
+      expect(point.y).toBeGreaterThanOrEqual(-1e-9);
+    }
+  });
+
+  it("never lets a bend eat more than half of either run it joins", () => {
+    const tight = roundPolylineCorners(
+      [
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 200 }
+      ],
+      100,
+      4
+    );
+
+    // The 30-unit run caps the fillet at 15, so the arc still starts on the first run
+    // rather than doubling back past its start.
+    for (const point of tight) expect(point.x).toBeGreaterThanOrEqual(-1e-9);
+    expect(Math.min(...tight.map((point) => point.x))).toBeCloseTo(0, 9);
+    expect(polylineLength(tight)).toBeGreaterThan(0);
+  });
+
+  it("leaves a straight run, and a route with nothing to round, exactly as it found it", () => {
+    const straight = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 }
+    ];
+
+    expect(roundPolylineCorners(straight, 20)).toEqual(straight);
+    expect(roundPolylineCorners(straight, 0)).toEqual(straight);
+    expect(roundPolylineCorners([{ x: 4, y: 4 }], 20)).toEqual([{ x: 4, y: 4 }]);
+    expect(roundPolylineCorners([], 20)).toEqual([]);
+  });
+
+  it("keeps a rounded route on the lanes the schematic routed it down", () => {
+    const project = bentProject();
+    const route = buildSchematicRoutes(project)[0].points;
+    const rounded = roundPolylineCorners(route, 12, 5);
+
+    expect(rounded[0]).toEqual(route[0]);
+    expect(rounded.at(-1)).toEqual(route.at(-1));
+    // Every rounded point stays on or inside the routed path, so the 3D pipe cannot
+    // wander off the run the schematic drew.
+    for (const point of rounded) expect(distanceToPolyline(point, route)).toBeLessThanOrEqual(12 + 1e-6);
   });
 });
