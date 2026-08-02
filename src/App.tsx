@@ -4169,22 +4169,6 @@ function MeshQualityPanel({
               <span>Failed</span>
               <strong>{formatMeshMetric(metrics?.failedChecks, 0)}</strong>
             </div>
-            <div>
-              <span>Non-ortho</span>
-              <strong>{formatMeshMetric(metrics?.maxNonOrthogonality)}</strong>
-            </div>
-            <div>
-              <span>Skew</span>
-              <strong>{formatMeshMetric(metrics?.maxSkewness)}</strong>
-            </div>
-            <div>
-              <span>Aspect</span>
-              <strong>{formatMeshMetric(metrics?.maxAspectRatio)}</strong>
-            </div>
-            <div>
-              <span>Min vol</span>
-              <strong>{formatMeshMetric(metrics?.minVolume, 2)}</strong>
-            </div>
           </div>
           <div className="mesh-qa-yplus" aria-label="Y plus evidence">
             <span>Y+/wall</span>

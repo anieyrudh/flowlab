@@ -1123,7 +1123,6 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByLabel("Residual summary")).toContainText("p: 9.00e-5");
     await expect(page.getByLabel("Mesh QA panel")).toContainText("Native passed");
     await expect(page.getByLabel("Native mesh command list")).toContainText("snappyHexMesh -overwrite");
-    await expect(page.getByLabel("checkMesh metrics")).toContainText("12.5");
     await expect(page.getByLabel("Y plus evidence")).toContainText("max 42");
     await expect(page.getByLabel("Mesh QA blockers")).toContainText("CAD/B-rep reviewed");
     await expect(page.getByRole("slider", { name: "Result timestep" })).toHaveAttribute(
@@ -1289,7 +1288,6 @@ test.describe("FlowLab editor workspace", () => {
 
     await expect(page.getByLabel("Mesh QA panel")).toContainText("Blocked");
     await expect(page.getByLabel("checkMesh metrics")).toContainText("2");
-    await expect(page.getByLabel("checkMesh metrics")).toContainText("72.5");
     await expect(page.getByLabel("Mesh QA blockers")).toContainText("OpenFOAM checkMesh failed 2 check(s).");
   });
 
