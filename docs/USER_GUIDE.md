@@ -7,13 +7,13 @@ written in ASD-STE100 Simplified Technical English.
 
 FlowLab is a desktop application for fluid systems. It has two solvers.
 
-| Solver | Speed | Use it for |
+| Solver | Speed | Gives you |
 |---|---|---|
 | **Instant 1D** | Immediate | Flow rate, pressure loss, Reynolds number, cavitation risk |
 | **CFD** | Minutes to hours | Full velocity and pressure fields from OpenFOAM |
 
 The instant solver needs nothing but the application. The CFD solver needs
-Docker.
+Docker Desktop.
 
 Your project data stays on your computer. FlowLab does not send it anywhere.
 
@@ -25,18 +25,22 @@ Your project data stays on your computer. FlowLab does not send it anywhere.
 | Windows 11, x64 | The application |
 | Docker Desktop | CFD only. Not needed for instant estimates. |
 
-**Do not install Python.** The application contains its own copy.
+**Do not install Python for the packaged application.** It contains its own
+copy. To build from source, you need Node.js 24 and CPython 3.12. Refer to
+[the installation guide](INSTALLATION.md).
 
 ## 3. Start the application
 
-1. Open the installer you downloaded.
-2. Move FlowLab to your Applications folder.
-3. Open FlowLab.
+**There is no signed installer yet.** The project builds candidate packages
+automatically. It does not sign them. Thus macOS and Windows refuse to open
+them.
 
-The application starts its own local service. Wait some seconds. The **Backend**
-indicator changes to **Online**.
+To get FlowLab now, build it from source. Refer to
+[the installation guide](INSTALLATION.md). This guide gives the installation
+steps when a signed release is available.
 
-If you build from source, refer to [the installation guide](INSTALLATION.md).
+FlowLab starts its own local service when it opens. Wait a few seconds. The
+**Backend** indicator changes to **Online**.
 
 ## 4. The four steps
 
@@ -53,17 +57,16 @@ The bar on the left shows four steps. Do them in this sequence.
 
 FlowLab opens with an example project.
 
-1. Select **01 Define**.
-2. Click a component in the schematic.
-3. The **Inspector** opens on the right. Change a dimension, for example the
-   pipe diameter.
-4. Select **02 Estimate**.
+1. Click **01 Define**.
+2. Click a component in the schematic. The **Inspector** opens on the right.
+3. Change a dimension in the Inspector. For example, change the pipe diameter.
+4. Click **02 Estimate**.
 
 The metrics change immediately. You do not start a solver.
 
 The metrics are:
 
-- **Total flow** in cubic metres each second;
+- **Total flow** in cubic metres per second;
 - **Pressure loss** in kilopascals;
 - **Max Reynolds**, which tells you if the flow is laminar or turbulent;
 - **Cavitation**, which counts the components at risk.
@@ -73,12 +76,12 @@ evidence covers laminar flow only. Refer to section 8.
 
 ## 6. Build your own system
 
-1. Select **01 Define**.
-2. Click a component in the **Components** list to add it. Start with a
-   **Source**.
-3. Add a **Pipe**, then add a **Sink**.
-4. Drag the ends of a pipe to connect the components.
-5. Click each component and set its dimensions in the Inspector.
+1. Click **01 Define**.
+2. Click **Source** in the **Components** list. This adds a source.
+3. Click **Pipe** in the same list.
+4. Click **Sink** in the same list.
+5. Drag the ends of the pipe to connect the components.
+6. Click each component. Then set its dimensions in the Inspector.
 
 The **Warnings** tab shows problems, for example a component that is not
 connected. Correct all warnings before you continue.
@@ -87,32 +90,32 @@ connected. Correct all warnings before you continue.
 
 **You must have Docker Desktop open before you start.**
 
-1. Select **03 CFD**.
+1. Click **03 CFD**.
 2. Open the **Inspector** with the button at the top right.
 3. Find **Advanced solvers**.
-4. Change **Solver** from `Instant 1D` to `OpenFOAM`.
+4. Set **Solver** to `OpenFOAM`. The default is `Instant 1D`.
 5. Set **Mesh mode** for your geometry:
 
-| Mesh mode | Use it for |
-|---|---|
-| Planar 2D | A quick check. It is a flat channel, not a round pipe. |
-| Axisymmetric (3D pipe) | A round, straight pipe |
-| Full 360 O-grid | A round, straight pipe with better wall cells |
-| Canonical 90 degree elbow | The example elbow only |
+   | Mesh mode | Use it for |
+   |---|---|
+   | Planar 2D | A quick check. It is a flat channel, not a round pipe. |
+   | Axisymmetric (3D pipe) | A round, straight pipe |
+   | Full 360 O-grid | A round, straight pipe with better wall cells |
+   | Canonical 90 degree elbow | The example elbow only |
 
 6. Set **Run mode**:
 
-| Run mode | Result |
-|---|---|
-| Transient (quick starter) | A fast check. It does **not** give a converged pressure drop. |
-| Steady (converged) | A converged pressure drop. It takes longer. |
+   | Run mode | Result |
+   |---|---|
+   | Transient (quick starter) | A fast check. It does **not** give a converged pressure drop. |
+   | Steady (converged) | A converged pressure drop. It takes longer. |
 
 7. Click **Generate and queue experimental CFD case**.
 
 **If the button is grey, the Solver is still set to Instant 1D.** Do step 4
 again.
 
-Look at **Run status** for the progress. When the run is complete, select
+Look at **Run status** for the progress. When the run is complete, click
 **04 Inspect**.
 
 ## 8. What FlowLab cannot do
@@ -122,10 +125,11 @@ Read this before you trust a result.
 - **No result is validated against a physical experiment.** All CFD output is
   experimental.
 - The accuracy evidence covers **steady, incompressible, laminar** flow only.
-- FlowLab does not support turbulence, transient flow, multiphase flow, or
-  compressible flow with evidence.
-- Complex geometry is limited. FlowLab **fails closed**: if it cannot make an
-  honest case, it refuses and tells you why. It does not guess.
+- FlowLab has no accuracy evidence for turbulence, transient flow, multiphase
+  flow, or compressible flow.
+- FlowLab supports a limited range of geometry.
+- FlowLab **fails closed**. If it cannot make an honest case, it refuses and
+  tells you why. It does not guess.
 
 Refer to [the benchmark page](BENCHMARKS.md) for the measured accuracy.
 
@@ -145,8 +149,8 @@ a project.
 | Problem | Solution |
 |---|---|
 | **Backend** stays Offline | Close FlowLab and open it again. Then look at the log folder in section 9. |
-| The CFD button is grey | Change **Solver** to OpenFOAM. Refer to section 7. |
+| The CFD button is grey | Set **Solver** to OpenFOAM. Refer to section 7. |
 | OpenFOAM shows as missing | Open Docker Desktop, then start FlowLab again. |
 | A CFD run fails immediately | Read the message. FlowLab fails closed and gives the cause. |
 | No pressure drop after a run | Set **Run mode** to Steady. The transient mode does not converge. |
-| macOS refuses to open the application | The installer is not signed yet. Refer to the release notes. |
+| macOS refuses to open the application | The installer is not signed yet. Refer to [the installation guide](INSTALLATION.md). |
