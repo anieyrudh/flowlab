@@ -185,9 +185,10 @@ export type SolverSettings = {
   runMode?: "transient" | "steady";
   // OpenFOAM mesh topology. "planar-2d" (default) is a one-cell-thick channel
   // strip; "axisymmetric" compiles a circular profile into a 3D wedge; and
-  // "full-ogrid" is the bounded full-360, five-block straight-pipe volume.
-  // "curved-elbow-ogrid" is only the canonical 90-degree Rc/D=3 elbow.
-  meshMode?: "planar-2d" | "axisymmetric" | "full-ogrid" | "curved-elbow-ogrid";
+  // "full-ogrid" is the bounded full-360, five-block straight-pipe volume;
+  // "curved-elbow-ogrid" is only the canonical 90-degree Rc/D=3 elbow; and
+  // "y-junction" is the retained bounded one-inlet/two-branch experiment.
+  meshMode?: "planar-2d" | "axisymmetric" | "full-ogrid" | "curved-elbow-ogrid" | "y-junction";
   axisymmetricBenchmark?: {
     fixtureId: "straight-pipe";
     boundaryCondition: "periodic-pressure-gradient";
@@ -235,6 +236,9 @@ export type SolverSettings = {
     curvedElbowAnnularRadialCells?: number;
     curvedElbowCircumferentialCells?: number;
     curvedElbowCoreCellsPerSide?: number;
+    yJunctionCellSizeM?: number;
+    yJunctionMasterCellSizeM?: number;
+    yJunctionRefinementFactor?: 1 | 2 | 4;
     // Transverse (across-gap) cell distribution. "boundary-layer" (default)
     // clusters cells at the walls for near-wall/turbulent resolution; "uniform"
     // spaces them evenly, which resolves a laminar parabolic core far better and
@@ -399,6 +403,12 @@ export type ResultComponentMap = {
           componentId?: string | null;
           cellStart: number;
           cellCount: number;
+        }>;
+        unownedCellRanges?: Array<{
+          artifactId: string;
+          cellStart: number;
+          cellCount: number;
+          schematicOwner: null;
         }>;
       }
   >;

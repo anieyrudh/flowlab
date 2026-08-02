@@ -765,6 +765,15 @@ describe("FlowLab result visualization", () => {
     });
   });
 
+  it("does not expose the numerically unqualified Y-junction as a selectable mesh mode", async () => {
+    render(<App />);
+
+    await screen.findByLabelText("Solver runtime readiness");
+    const meshMode = screen.getByLabelText("Mesh mode");
+    expect(within(meshMode).queryByRole("option", { name: /Y-junction/i })).toBeNull();
+    expect(screen.queryByLabelText("Y-junction cell size")).toBeNull();
+  });
+
   it("shows parsed solver progress from a queued advanced job", async () => {
     render(<App />);
 

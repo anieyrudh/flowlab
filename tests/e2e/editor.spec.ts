@@ -251,6 +251,14 @@ async function openFresh(
               cellRanges: [
                 { edgeId: "inlet", cellStart: 0, cellCount: 1 },
                 { edgeId: "outlet", cellStart: 2, cellCount: 1 }
+              ],
+              unownedCellRanges: [
+                {
+                  artifactId: "generated:y-junction:junction-core:v1",
+                  cellStart: 1,
+                  cellCount: 1,
+                  schematicOwner: null
+                }
               ]
             }
           ]

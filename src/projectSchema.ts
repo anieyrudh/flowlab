@@ -361,7 +361,7 @@ const projectSchema = z.object({
     turbulence: z.enum(["laminar", "rans-k-epsilon", "rans-sst", "les", "dns"]),
     meshResolution: z.enum(["coarse", "medium", "fine"]),
     runMode: z.enum(["transient", "steady"]).optional(),
-    meshMode: z.enum(["planar-2d", "axisymmetric", "full-ogrid", "curved-elbow-ogrid"]).optional(),
+    meshMode: z.enum(["planar-2d", "axisymmetric", "full-ogrid", "curved-elbow-ogrid", "y-junction"]).optional(),
     axisymmetricBenchmark: z
       .object({
         fixtureId: z.literal("straight-pipe"),
@@ -409,6 +409,9 @@ const projectSchema = z.object({
         curvedElbowAnnularRadialCells: z.number().int().min(2).max(1024).optional(),
         curvedElbowCircumferentialCells: z.number().int().min(16).max(4096).optional(),
         curvedElbowCoreCellsPerSide: z.number().int().min(4).max(1024).optional(),
+        yJunctionCellSizeM: z.number().positive().optional(),
+        yJunctionMasterCellSizeM: z.number().positive().optional(),
+        yJunctionRefinementFactor: z.union([z.literal(1), z.literal(2), z.literal(4)]).optional(),
         transverseDistribution: z.enum(["boundary-layer", "uniform"]).optional(),
         targetYPlus: z.number().positive().optional(),
         refinementRegions: z
@@ -493,6 +496,19 @@ const projectSchema = z.object({
           code: z.ZodIssueCode.custom,
           path: ["meshMode"],
           message: "Full O-grid mode is limited to steady incompressible laminar flow."
+        });
+      }
+    }
+    if (solver.meshMode === "y-junction") {
+      if (
+        solver.advancedMode !== "incompressible-navier-stokes" ||
+        solver.runMode !== "steady" ||
+        solver.turbulence !== "laminar"
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["meshMode"],
+          message: "Y-junction mode is limited to steady incompressible laminar flow."
         });
       }
     }
@@ -831,6 +847,86 @@ function validateCurvedElbowOGrid(project: FluidProject): string | null {
   return null;
 }
 
+function validateYJunction(project: FluidProject): string | null {
+  if (project.solver.meshMode !== "y-junction") return null;
+  const nodes = Object.values(project.nodes);
+  const edges = Object.values(project.edges);
+  const sources = nodes.filter((node) => node.type === "source");
+  const junctions = nodes.filter((node) => node.type === "junction");
+  const sinks = nodes.filter((node) => node.type === "sink");
+  if (nodes.length !== 4 || edges.length !== 3 || sources.length !== 1 || junctions.length !== 1 || sinks.length !== 2) {
+    return "Y-junction mode requires exactly one source, one junction, two sinks, and three pipes.";
+  }
+  const source = sources[0];
+  const junction = junctions[0];
+  const inlet = edges.filter((edge) => edge.from === source.id && edge.to === junction.id);
+  const branches = edges.filter((edge) => edge.from === junction.id && sinks.some((sink) => sink.id === edge.to));
+  if (inlet.length !== 1 || branches.length !== 2) {
+    return "Y-junction edges must be directed source-to-junction and junction-to-each-sink.";
+  }
+  if (edges.some((edge) => edge.type !== "pipe" || edge.shape.kind !== "circular")) {
+    return "Y-junction mode supports only three constant-diameter circular pipes.";
+  }
+  const diameters = edges.map((edge) => edge.shape.kind === "circular" ? edge.shape.diameter : Number.NaN);
+  const diameter = diameters[0];
+  if (
+    edges.some(
+      (edge, index) =>
+        Math.abs(diameters[index] - diameter) > Math.max(1e-15, diameter * 1e-12)
+        || (edge.outletDiameter !== undefined
+          && Math.abs(edge.outletDiameter - diameter) > Math.max(1e-15, diameter * 1e-12))
+    )
+  ) {
+    return "Y-junction inlet and both branches must have one identical constant diameter.";
+  }
+  if (Math.abs(branches[0].length - branches[1].length) > Math.max(1e-15, branches[0].length * 1e-12)) {
+    return "Y-junction branches must have identical physical lengths.";
+  }
+  const branchSinks = branches.map((edge) => project.nodes[edge.to]);
+  if (
+    branchSinks.filter((sink) => sink.position.y > junction.position.y).length !== 1
+    || branchSinks.filter((sink) => sink.position.y < junction.position.y).length !== 1
+  ) {
+    return "Y-junction editor layout must identify one upper and one lower branch.";
+  }
+  const cellSize = project.solver.meshControls?.yJunctionCellSizeM;
+  const masterCellSize = project.solver.meshControls?.yJunctionMasterCellSizeM;
+  const refinementFactor = project.solver.meshControls?.yJunctionRefinementFactor;
+  if ((masterCellSize === undefined) !== (refinementFactor === undefined)) {
+    return "Fixed-master Y-junction mode requires both master cell size and refinement factor.";
+  }
+  if (
+    masterCellSize !== undefined
+    && refinementFactor !== undefined
+    && cellSize !== undefined
+    && Math.abs(cellSize - masterCellSize / refinementFactor)
+      > Math.max(1e-15, cellSize * 1e-12)
+  ) {
+    return "Y-junction cell size must equal master cell size divided by refinement factor.";
+  }
+  if (cellSize !== undefined) {
+    if (diameter / cellSize < 4) return "Y-junction requires at least four cells across the diameter.";
+    for (const [length, label] of [[inlet[0].length, "inlet"], [branches[0].length, "branch"]] as const) {
+      const ratio = length / cellSize;
+      if (Math.abs(ratio - Math.round(ratio)) > 1e-9) {
+        return `Y-junction ${label} length must be an integer multiple of cell size.`;
+      }
+    }
+  }
+  if (masterCellSize !== undefined) {
+    if (diameter / masterCellSize < 4) {
+      return "Y-junction fixed master requires at least four cells across the diameter.";
+    }
+    for (const [length, label] of [[inlet[0].length, "inlet"], [branches[0].length, "branch"]] as const) {
+      const ratio = length / masterCellSize;
+      if (Math.abs(ratio - Math.round(ratio)) > 1e-9) {
+        return `Y-junction ${label} length must be an integer multiple of master cell size.`;
+      }
+    }
+  }
+  return null;
+}
+
 export function parseProject(input: unknown, options: ParseProjectOptions = {}): { ok: true; project: FluidProject } | { ok: false; message: string } {
   const parsed = projectSchema.safeParse(input);
   if (!parsed.success) {
@@ -844,6 +940,8 @@ export function parseProject(input: unknown, options: ParseProjectOptions = {}):
   if (fullOGridError) return { ok: false, message: fullOGridError };
   const curvedElbowError = validateCurvedElbowOGrid(project);
   if (curvedElbowError) return { ok: false, message: curvedElbowError };
+  const yJunctionError = validateYJunction(project);
+  if (yJunctionError) return { ok: false, message: yJunctionError };
   const validationError = validateNetwork(project);
   if (validationError) return { ok: false, message: validationError };
   if (!options.allowTopologyWarnings) {

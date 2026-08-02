@@ -90,6 +90,14 @@ function multiEdgeSolverCase(overrides: Partial<SolverCase> = {}): SolverCase {
           cellRanges: [
             { edgeId: "inlet", cellStart: 0, cellCount: 1 },
             { edgeId: "outlet", cellStart: 2, cellCount: 1 }
+          ],
+          unownedCellRanges: [
+            {
+              artifactId: "generated:y-junction:junction-core:v1",
+              cellStart: 1,
+              cellCount: 1,
+              schematicOwner: null
+            }
           ]
         }
       ]
@@ -127,7 +135,7 @@ describe("verified result component linkage", () => {
     });
     expect(verifiedResultComponentLink(cellSnapshot(), project, multiEdgeSolverCase(), job, 1)).toMatchObject({
       state: "unlinked",
-      message: expect.stringMatching(/no unique verified schematic owner/i)
+      message: expect.stringMatching(/generated junction cell has no schematic edge owner/i)
     });
   });
 

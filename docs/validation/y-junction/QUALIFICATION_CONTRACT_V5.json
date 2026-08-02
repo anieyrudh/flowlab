@@ -1,0 +1,251 @@
+{
+  "schema": "flowlab.y-junction-qualification-contract.v1",
+  "contractId": "bounded-symmetric-y-junction-v5",
+  "frozenOn": "2026-07-31",
+  "status": "prospective-frozen-before-first-openfoam-execution",
+  "supersedesExperimentContract": "bounded-symmetric-y-junction-v4",
+  "changeFromV4": {
+    "reason": "V4 passed every per-case and negative-control gate but failed the unchanged sequence gates with observed order 0.43937081563777536 and fine GCI 16.84937428352456 percent. Its coarse, medium, and fine Cartesian masks did not realize one identical physical volume or inlet area. V5 prospectively freezes the V4 coarse mask as a master and uniformly subdivides every master hexahedron, so the three solution grids share one exact generated staircase geometry.",
+    "changed": [
+      "all levels use one fixed 0.75 mm master mask with refinement factors 1, 2, and 4",
+      "child cell region ownership and boundary patch identity are inherited from the master artifact",
+      "campaign-wide master-geometry, volume, patch-area, parent-provenance, and region-scaling gates are required before execution",
+      "each case must have at least five primary-QoI samples in its final 200 iterations and relative range no greater than 0.1 percent"
+    ],
+    "unchanged": [
+      "uniform refinement ratio r=2",
+      "effective cell sizes of 0.75, 0.375, and 0.1875 mm",
+      "physical dimensions and generated V4 coarse staircase boundary",
+      "flow physics",
+      "solver settings",
+      "probe coordinates and cellPoint interpolation",
+      "every V4 scientific threshold",
+      "explicit edge ownership and unowned junction contract",
+      "claim boundary"
+    ],
+    "priorEvidenceMutable": false,
+    "retainedV4Campaign": "benchmarks/cases/y-junction/campaigns/2026-07-31-v4-r1",
+    "stopCondition": "If V5 cannot satisfy every inherited gate plus the new prospective hierarchy and stability gates, retain the failure and stop rather than changing the frozen contract."
+  },
+  "claim": {
+    "candidate": "Software and numerical qualification of one FlowLab-generated true-3D symmetric Y-junction path under the exact fixed-master generated geometry, uniformly subdivided solution grids, steady incompressible laminar conditions, and OpenFOAM runtime.",
+    "geometry": "one fixed generated Cartesian staircase master for a 27 mm circular inlet and two identical 27 mm circular branches at plus and minus 30 degrees, all nominally 6 mm diameter",
+    "physics": "steady incompressible laminar, nominal inlet Reynolds number 100",
+    "solver": "OpenFOAM 11",
+    "excluded": [
+      "independent empirical validation",
+      "product or benchmark promotion",
+      "arbitrary networks",
+      "arbitrary branch angles or diameters",
+      "CAD-exact wall geometry",
+      "turbulence",
+      "transient flow",
+      "multiphase flow",
+      "compressible flow",
+      "hybrid meshes",
+      "external release"
+    ]
+  },
+  "physicalCase": {
+    "inletLengthM": 0.027,
+    "branchLengthM": 0.027,
+    "diameterM": 0.006,
+    "branchAnglesDegrees": [
+      30.0,
+      -30.0
+    ],
+    "densityKgPerM3": 1000.0,
+    "dynamicViscosityPaS": 0.001,
+    "inletMeanVelocityMPerS": 0.016666666666666666,
+    "nominalCircularInletFlowM3PerS": 4.7123889803846896e-07,
+    "nominalReynoldsNumber": 100.0,
+    "equalOutletKinematicPressureM2PerS2": 0.0,
+    "asymmetricUpperOutletKinematicPressureM2PerS2": 0.0,
+    "asymmetricLowerOutletKinematicPressureM2PerS2": -0.0002,
+    "asymmetricPressureDifferencePa": 0.2
+  },
+  "productRequest": {
+    "solver": "openfoam",
+    "advancedMode": "incompressible-navier-stokes",
+    "meshMode": "y-junction",
+    "runMode": "steady",
+    "turbulence": "laminar",
+    "maxIterations": 2500,
+    "residualControl": {
+      "p": 1e-08,
+      "U": 1e-08
+    }
+  },
+  "fixedMaster": {
+    "cellSizeM": 0.00075,
+    "cellCount": 5328,
+    "regionCellCounts": {
+      "inlet-edge-region": 1560,
+      "upper-branch-edge-region": 1522,
+      "lower-branch-edge-region": 1522,
+      "junction-generated-region": 724
+    },
+    "construction": "Generate and prune the master once using the bounded V4 coarse-mask algorithm. Uniform subdivision may not re-evaluate primitive membership, region ownership, or boundary patch classification."
+  },
+  "levels": [
+    {
+      "id": "coarse",
+      "cellSizeM": 0.00075,
+      "masterCellSizeM": 0.00075,
+      "refinementFactor": 1,
+      "refinementRatioFromPrevious": null,
+      "cellsAcrossDiameter": 8,
+      "expectedCellCount": 5328
+    },
+    {
+      "id": "medium",
+      "cellSizeM": 0.000375,
+      "masterCellSizeM": 0.00075,
+      "refinementFactor": 2,
+      "refinementRatioFromPrevious": 2.0,
+      "cellsAcrossDiameter": 16,
+      "expectedCellCount": 42624
+    },
+    {
+      "id": "fine",
+      "cellSizeM": 0.0001875,
+      "masterCellSizeM": 0.00075,
+      "refinementFactor": 4,
+      "refinementRatioFromPrevious": 2.0,
+      "cellsAcrossDiameter": 32,
+      "expectedCellCount": 340992
+    }
+  ],
+  "probeSampling": {
+    "stationsM": [
+      0.01,
+      0.016,
+      0.022
+    ],
+    "interpolationScheme": "cellPoint",
+    "fixedLocations": true,
+    "zOffsetCellFraction": 0.25
+  },
+  "requiredCases": [
+    "coarse-equal-pressure",
+    "medium-equal-pressure",
+    "fine-equal-pressure",
+    "fine-asymmetric-pressure-negative-control"
+  ],
+  "refinementInterpretation": {
+    "spatialDimension": 3,
+    "uniformCharacteristicCellSizeRatio": 2.0,
+    "cellSizeOperator": "uniform hexahedral subdivision of every fixed master cell",
+    "geometryTreatment": "The V4 coarse Cartesian staircase mask is the fixed physical domain at all levels. Refinement factors 1, 2, and 4 subdivide its cells and faces without changing volume, patch area, region identity, or patch identity.",
+    "geometryErrorMayNotBeCancelled": false,
+    "cadExact": false
+  },
+  "ownershipContract": {
+    "source": "construction-time generated master artifact and explicit parent inheritance only",
+    "requiredEdgeRegions": [
+      "inlet-pipe",
+      "upper-branch",
+      "lower-branch"
+    ],
+    "junctionArtifactIdentity": "generated:y-junction:junction-core:v1",
+    "junctionSchematicOwner": null,
+    "viewerGeometryInferenceAllowed": false,
+    "subdivisionGeometryReclassificationAllowed": false,
+    "overlappingOrMissingEdgeRangesAllowed": false,
+    "junctionCellsInsideEdgeRangesAllowed": false
+  },
+  "observationOperators": {
+    "generationDeterminism": "Materialize every case twice from the same frozen source and compare the complete generated-file SHA-256 map and canonical mesh generationSha256.",
+    "fixedMasterHierarchy": "Require one identical masterGeometrySha256, master cell count, total volume, and patch-area map at all levels. Require one valid parent index per child, exactly factor cubed children per master cell, inherited region counts equal to master counts times factor cubed, and inherited boundary face counts equal to master counts times factor squared.",
+    "meshTopology": "Parse checkMesh -allGeometry -allTopology and constant/polyMesh/boundary; require one fluid region, positive minimum volume, all-hex cells, and exactly inlet, outletUpper, outletLower, and walls with the declared patch types.",
+    "flowRate": "Use surfaceFieldValue sum(phi) on inlet, outletUpper, and outletLower at the final retained time. Orient magnitudes using the inlet as inflow and outlets as outflow.",
+    "massImbalance": "abs(abs(Qin)-abs(Qupper)-abs(Qlower))/abs(Qin).",
+    "equalOutletSplit": "abs(Qupper)/(abs(Qupper)+abs(Qlower)).",
+    "mirroredVelocityError": "At the fixed prospectively paired upper/lower branch coordinates, sample U with OpenFOAM cellPoint interpolation, reflect the lower Uy component across y=0, compute vector difference magnitude, then divide RMS difference by RMS upper speed.",
+    "mirroredPressureError": "At the same fixed coordinates, sample p with OpenFOAM cellPoint interpolation, compute RMS pressure difference, and divide by max(abs(mean inlet-probe pressure minus mean outlet pressure), 1e-12 kinematic-pressure units).",
+    "branchPressureDropDifference": "abs(deltaPupper-deltaPlower)/max(abs(0.5*(deltaPupper+deltaPlower)), 1e-12), where each deltaP uses the same junction probe pressure and its outlet patch-average pressure.",
+    "finiteFields": "Require every retained p and U probe value to parse as finite and the solve log to contain no actual floating-point exception, fatal error, or non-finite marker.",
+    "normalTermination": "Require zero solver exit code and an End marker in the retained solver log.",
+    "iterativeStability": "Intersect inlet, upper-outlet, and lower-outlet patch-pressure sample times in the inclusive final 200-iteration window. Convert each pressure-drop sample to Pa. Require at least five finite samples and (maximum minus minimum)/max(abs(final sample), 1e-12 Pa) no greater than 0.001.",
+    "primaryQoi": "Equal-pressure inlet patch-average p minus the arithmetic mean of outletUpper and outletLower patch-average p, multiplied by densityKgPerM3.",
+    "observedOrderAndGci": "Use the three equal-pressure primary-QoI values, uniform r=2, p=ln(abs((Qcoarse-Qmedium)/(Qmedium-Qfine)))/ln(r), and fine GCI=1.25*abs((Qfine-Qmedium)/Qfine)/(r^p-1)*100. A non-monotone, degenerate, non-finite, or out-of-range result fails."
+  },
+  "gates": {
+    "determinism": {
+      "duplicateGenerationHashesMatch": true
+    },
+    "fixedMasterHierarchy": {
+      "masterGeometrySha256IdenticalAcrossLevels": true,
+      "masterCellCount": 5328,
+      "totalVolumeIdenticalAcrossLevels": true,
+      "patchAreasIdenticalAcrossLevels": true,
+      "parentProvenanceComplete": true,
+      "childrenPerMasterCellExactlyFactorCubed": true,
+      "regionCountsExactlyMasterCountsTimesFactorCubed": true,
+      "boundaryFaceCountsExactlyMasterCountsTimesFactorSquared": true,
+      "geometryDerivedRegionOrPatchIdentityAllowed": false
+    },
+    "ownership": {
+      "allThreeEdgeRangesPresentExactlyOnce": true,
+      "junctionCellsExplicitlyOutsideEveryEdgeRange": true,
+      "junctionGeneratedArtifactIdentityRequired": true,
+      "geometryDerivedOwnershipAllowed": false
+    },
+    "meshPerCase": {
+      "checkMeshExitCode": 0,
+      "meshOk": true,
+      "connectedFluidRegions": 1,
+      "allCellsHex": true,
+      "minimumCellVolumeM3ExclusiveLowerBound": 0.0,
+      "requiredPatches": {
+        "inlet": "patch",
+        "outletUpper": "patch",
+        "outletLower": "patch",
+        "walls": "wall"
+      },
+      "unexpectedBoundaryPatchesAllowed": false
+    },
+    "solverPerCase": {
+      "exitCode": 0,
+      "normalTerminationRequired": true,
+      "finitePressureAndVelocityRequired": true,
+      "iterativeStability": {
+        "finalWindowIterations": 200,
+        "minimumCommonPressureSamples": 5,
+        "maximumPrimaryQoiRelativeRange": 0.001
+      }
+    },
+    "equalPressurePerLevel": {
+      "maximumRelativeMassImbalance": 0.001,
+      "outletUpperFlowFractionMinimum": 0.49,
+      "outletUpperFlowFractionMaximum": 0.51,
+      "maximumMirroredPressureError": 0.02,
+      "maximumMirroredVelocityError": 0.02,
+      "maximumBranchPressureDropDifference": 0.01
+    },
+    "sequence": {
+      "minimumObservedOrder": 0.5,
+      "maximumObservedOrder": 4.0,
+      "maximumFinePrimaryQoiGciPercent": 5.0,
+      "mathematicallyInvalidGciPasses": false
+    },
+    "negativeControl": {
+      "lowerPressureOutletMustHaveGreaterOutflow": true
+    }
+  },
+  "retention": {
+    "rawCampaignLocation": "ignored benchmarks/cases/y-junction/campaigns tree",
+    "overwriteAllowed": false,
+    "editRetainedEvidenceInPlaceAllowed": false,
+    "freezeImmutablePackageReadOnly": true,
+    "gitAdmission": "Only separately reviewed compact artifacts explicitly allowlisted in benchmarks/tracked-evidence.txt may be force-added."
+  },
+  "review": {
+    "controlledIndependentReviewRequiredForAnyPromotion": true,
+    "reviewMustBindExactPackageDigest": true,
+    "validationStateChangeAuthorized": false,
+    "productClaimChangeAuthorized": false,
+    "registryMutationAuthorized": false
+  },
+  "promotionAuthorized": false
+}

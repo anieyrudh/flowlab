@@ -93,6 +93,15 @@ class ResultComponentCellRange(BaseModel):
     cellCount: int = Field(gt=0)
 
 
+class ResultComponentUnownedCellRange(BaseModel):
+    """A generated artifact range that intentionally owns no schematic edge."""
+
+    artifactId: str
+    cellStart: int = Field(ge=0)
+    cellCount: int = Field(gt=0)
+    schematicOwner: None = None
+
+
 class ResultComponentCellBinding(BaseModel):
     """A generated result family whose source-cell ordering is explicitly edge-bound."""
 
@@ -103,6 +112,7 @@ class ResultComponentCellBinding(BaseModel):
     identityField: Literal["flowlabSourceCellId"]
     identityContractSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     cellRanges: list[ResultComponentCellRange] = Field(default_factory=list)
+    unownedCellRanges: list[ResultComponentUnownedCellRange] = Field(default_factory=list)
 
 
 class ResultComponentMap(BaseModel):

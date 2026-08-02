@@ -843,8 +843,30 @@ export function verifiedResultComponentLink(
       && sourceCellIndex >= candidate.cellStart
       && sourceCellIndex < candidate.cellStart + candidate.cellCount
   );
+  const generatedUnowned = (binding.unownedCellRanges ?? []).filter(
+    (candidate) =>
+      typeof candidate.artifactId === "string"
+      && candidate.artifactId.length > 0
+      && candidate.schematicOwner === null
+      && Number.isInteger(candidate.cellStart)
+      && Number.isInteger(candidate.cellCount)
+      && candidate.cellStart >= 0
+      && candidate.cellCount > 0
+      && candidate.cellStart + candidate.cellCount <= binding.sourceCellCount
+      && sourceCellIndex >= candidate.cellStart
+      && sourceCellIndex < candidate.cellStart + candidate.cellCount
+  );
+  if (owners.length === 0 && generatedUnowned.length === 1) {
+    return {
+      state: "unlinked",
+      message: "Verified generated junction cell has no schematic edge owner — probe only."
+    };
+  }
   if (owners.length !== 1) {
     return { state: "unlinked", message: "Probed result cell has no unique verified schematic owner — probe only." };
+  }
+  if (generatedUnowned.length !== 0) {
+    return { state: "unlinked", message: "Result provenance overlaps owned and unowned generated ranges — probe only." };
   }
   const edge = currentProject.edges[owners[0].edgeId];
   const component = owners[0].componentId ? ` / ${owners[0].componentId}` : "";

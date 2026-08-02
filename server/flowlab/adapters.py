@@ -53,6 +53,16 @@ from .result_identity import (
     source_cell_identity_contract,
 )
 from .validated_benchmark import experimental_capability
+from .y_junction import (
+    JUNCTION_ARTIFACT_ID,
+    Y_JUNCTION_PROFILE_SCHEMA,
+    Y_JUNCTION_REPRESENTATION,
+    YJunctionSpec,
+    generate_fixed_master_mesh as generate_fixed_master_y_junction_mesh,
+    generate_mesh as generate_y_junction_mesh,
+    mesh_to_openfoam_polymesh as y_junction_to_openfoam_polymesh,
+    public_mesh as public_y_junction_mesh,
+)
 
 CASE_MANIFEST_PATH = "flowlab_case_manifest.json"
 EVIDENCE_CAPABILITY_PATH = "evidence/capability.json"
@@ -315,6 +325,57 @@ def _mesh_edge_cell_ranges(
     return len(cells), ranges
 
 
+def _mesh_unowned_cell_ranges(mesh_snapshot: str | None) -> list[dict[str, Any]]:
+    """Read dedicated generated ranges that intentionally have no edge owner."""
+
+    if not isinstance(mesh_snapshot, str):
+        return []
+    try:
+        mesh = json.loads(mesh_snapshot)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    cells = mesh.get("cells")
+    regions = mesh.get("regions")
+    if not isinstance(cells, list) or not isinstance(regions, list):
+        return []
+    ranges: list[dict[str, Any]] = []
+    for region in regions:
+        if not isinstance(region, dict) or region.get("role") != "junction":
+            continue
+        identity = (
+            region.get("artifactIdentity")
+            if isinstance(region.get("artifactIdentity"), dict)
+            else {}
+        )
+        artifact_id = identity.get("artifactId")
+        cell_start = region.get("cellStart")
+        cell_count = region.get("cellCount")
+        if (
+            identity.get("generated") is not True
+            or identity.get("schematicOwner") is not None
+            or not isinstance(artifact_id, str)
+            or not artifact_id
+            or not isinstance(cell_start, int)
+            or isinstance(cell_start, bool)
+            or not isinstance(cell_count, int)
+            or isinstance(cell_count, bool)
+            or cell_start < 0
+            or cell_count <= 0
+            or cell_start + cell_count > len(cells)
+        ):
+            return []
+        ranges.append(
+            {
+                "artifactId": artifact_id,
+                "cellStart": cell_start,
+                "cellCount": cell_count,
+                "schematicOwner": None,
+            }
+        )
+    ranges.sort(key=lambda item: (int(item["cellStart"]), str(item["artifactId"])))
+    return ranges
+
+
 def _result_component_map(
     project: dict[str, Any],
     project_snapshot: str | None = None,
@@ -383,6 +444,7 @@ def _result_component_map(
     identity_contract_sha256 = hashlib.sha256(
         identity_contract_snapshot.encode("utf-8")
     ).hexdigest()
+    unowned_cell_ranges = _mesh_unowned_cell_ranges(mesh_snapshot)
     return ResultComponentMap(
         version=2,
         projectSha256=project_sha256,
@@ -395,6 +457,7 @@ def _result_component_map(
                 "identityField": SOURCE_CELL_ID_FIELD,
                 "identityContractSha256": identity_contract_sha256,
                 "cellRanges": cell_ranges,
+                "unownedCellRanges": unowned_cell_ranges,
             }
         ],
     )
@@ -593,6 +656,110 @@ boundaryField
         type            zeroGradient;
     }}
 {far}
+}}
+"""
+    )
+
+
+def _openfoam_y_junction_vector_field(profile: dict[str, Any]) -> str:
+    velocity = float(profile["flow"]["inletMeanVelocityMPerS"])
+    return (
+        _foam_header("volVectorField", "U")
+        + f"""dimensions      [0 1 -1 0 0 0 0];
+
+internalField   uniform ({velocity:.17g} 0 0);
+
+boundaryField
+{{
+    inlet
+    {{
+        type            fixedValue;
+        value           uniform ({velocity:.17g} 0 0);
+    }}
+    outletUpper
+    {{
+        type            pressureInletOutletVelocity;
+        value           uniform (0 0 0);
+    }}
+    outletLower
+    {{
+        type            pressureInletOutletVelocity;
+        value           uniform (0 0 0);
+    }}
+    walls
+    {{
+        type            noSlip;
+    }}
+}}
+"""
+    )
+
+
+def _openfoam_y_junction_scalar_field(
+    object_name: str,
+    *,
+    dimensions: str,
+    internal: float,
+    upper_outlet: float,
+    lower_outlet: float,
+) -> str:
+    return (
+        _foam_header("volScalarField", object_name)
+        + f"""dimensions      {dimensions};
+
+internalField   uniform {internal:.17g};
+
+boundaryField
+{{
+    inlet
+    {{
+        type            zeroGradient;
+    }}
+    outletUpper
+    {{
+        type            fixedValue;
+        value           uniform {upper_outlet:.17g};
+    }}
+    outletLower
+    {{
+        type            fixedValue;
+        value           uniform {lower_outlet:.17g};
+    }}
+    walls
+    {{
+        type            zeroGradient;
+    }}
+}}
+"""
+    )
+
+
+def _openfoam_y_junction_temperature_field(temperature: float) -> str:
+    return (
+        _foam_header("volScalarField", "T")
+        + f"""dimensions      [0 0 0 1 0 0 0];
+
+internalField   uniform {temperature:.17g};
+
+boundaryField
+{{
+    inlet
+    {{
+        type            fixedValue;
+        value           uniform {temperature:.17g};
+    }}
+    outletUpper
+    {{
+        type            zeroGradient;
+    }}
+    outletLower
+    {{
+        type            zeroGradient;
+    }}
+    walls
+    {{
+        type            zeroGradient;
+    }}
 }}
 """
     )
@@ -2042,6 +2209,311 @@ def _curved_elbow_spec_from_profile(profile: dict[str, Any]) -> CurvedElbowSpec:
     )
 
 
+def _openfoam_y_junction_mode_requested(project: dict[str, Any] | None) -> bool:
+    solver = project.get("solver") if isinstance(project, dict) and isinstance(project.get("solver"), dict) else {}
+    return str(solver.get("meshMode", "planar-2d")).strip().lower() == "y-junction"
+
+
+def _openfoam_y_junction_profile(
+    project: dict[str, Any],
+    advanced_mode: str,
+) -> dict[str, Any] | None:
+    """Compile exactly one source-junction-two-sink graph into the bounded path."""
+
+    if not _openfoam_y_junction_mode_requested(project):
+        return None
+    solver = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    if advanced_mode != "incompressible-navier-stokes":
+        raise ValueError("Y-junction mesh mode supports only incompressible Navier-Stokes.")
+    if str(solver.get("runMode", "")).strip().lower() != "steady":
+        raise ValueError("Y-junction mesh mode requires a steady solver.")
+    if str(solver.get("turbulence", "")).strip().lower() != "laminar":
+        raise ValueError("Y-junction mesh mode requires laminar flow.")
+
+    nodes = _project_nodes(project)
+    edges = _project_edges(project)
+    if len(nodes) != 4 or len(edges) != 3:
+        raise ValueError(
+            "Y-junction mesh mode requires exactly one source, one junction, two sinks, and three pipes."
+        )
+    nodes_by_id = {str(node.get("id") or ""): node for node in nodes}
+    if "" in nodes_by_id or len(nodes_by_id) != 4:
+        raise ValueError("Y-junction nodes require unique non-empty IDs.")
+    sources = [node for node in nodes if node.get("type") == "source"]
+    junctions = [node for node in nodes if node.get("type") == "junction"]
+    sinks = [node for node in nodes if node.get("type") == "sink"]
+    if len(sources) != 1 or len(junctions) != 1 or len(sinks) != 2:
+        raise ValueError("Y-junction topology must contain one source, one junction, and two sinks.")
+    source = sources[0]
+    junction = junctions[0]
+    source_id = str(source["id"])
+    junction_id = str(junction["id"])
+
+    inlet_edges = [
+        edge
+        for edge in edges
+        if edge.get("from") == source_id and edge.get("to") == junction_id
+    ]
+    branch_edges = [
+        edge
+        for edge in edges
+        if edge.get("from") == junction_id and edge.get("to") in {sink.get("id") for sink in sinks}
+    ]
+    if len(inlet_edges) != 1 or len(branch_edges) != 2:
+        raise ValueError("Y-junction edges must be directed source-to-junction and junction-to-each-sink.")
+    if any(edge.get("type") != "pipe" for edge in edges):
+        raise ValueError("Y-junction mesh mode supports only three pipe edges.")
+    shapes = [
+        edge.get("shape") if isinstance(edge.get("shape"), dict) else {}
+        for edge in edges
+    ]
+    if any(shape.get("kind") != "circular" for shape in shapes):
+        raise ValueError("Y-junction mesh mode requires circular inlet and branch sections.")
+    diameters = [
+        _full_ogrid_positive_number(shape.get("diameter"), "Y-junction diameter")
+        for shape in shapes
+    ]
+    diameter = diameters[0]
+    if any(
+        not math.isclose(value, diameter, rel_tol=1.0e-12, abs_tol=1.0e-15)
+        for value in diameters[1:]
+    ):
+        raise ValueError("Y-junction inlet and both branches must have one identical diameter.")
+    for edge in edges:
+        outlet_diameter = _full_ogrid_positive_number(
+            edge.get("outletDiameter", diameter),
+            "Y-junction outlet diameter",
+        )
+        if not math.isclose(outlet_diameter, diameter, rel_tol=1.0e-12, abs_tol=1.0e-15):
+            raise ValueError("Y-junction pipes must have constant diameter.")
+
+    inlet_length = _full_ogrid_positive_number(inlet_edges[0].get("length"), "Y-junction inlet length")
+    branch_lengths = [
+        _full_ogrid_positive_number(edge.get("length"), "Y-junction branch length")
+        for edge in branch_edges
+    ]
+    if not math.isclose(branch_lengths[0], branch_lengths[1], rel_tol=1.0e-12, abs_tol=1.0e-15):
+        raise ValueError("Y-junction branches must have identical physical lengths.")
+
+    junction_position = _node_position(junction)
+    upper_candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    lower_candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for edge in branch_edges:
+        sink = nodes_by_id[str(edge["to"])]
+        sink_position = _node_position(sink)
+        if sink_position[1] > junction_position[1]:
+            upper_candidates.append((edge, sink))
+        elif sink_position[1] < junction_position[1]:
+            lower_candidates.append((edge, sink))
+    if len(upper_candidates) != 1 or len(lower_candidates) != 1:
+        raise ValueError("Y-junction editor layout must identify one upper and one lower branch.")
+    upper_edge, upper_sink = upper_candidates[0]
+    lower_edge, lower_sink = lower_candidates[0]
+
+    controls = solver.get("meshControls") if isinstance(solver.get("meshControls"), dict) else {}
+    raw_cell_size = controls.get("yJunctionCellSizeM")
+    raw_master_cell_size = controls.get("yJunctionMasterCellSizeM")
+    raw_refinement_factor = controls.get("yJunctionRefinementFactor")
+    fixed_master_requested = raw_master_cell_size is not None or raw_refinement_factor is not None
+    if fixed_master_requested and (
+        raw_master_cell_size is None or raw_refinement_factor is None
+    ):
+        raise ValueError(
+            "Fixed-master Y-junction mode requires both master cell size and refinement factor."
+        )
+    if fixed_master_requested:
+        master_cell_size = _full_ogrid_positive_number(
+            raw_master_cell_size,
+            "Y-junction master cell size",
+        )
+        if (
+            isinstance(raw_refinement_factor, bool)
+            or not isinstance(raw_refinement_factor, int)
+            or raw_refinement_factor not in {1, 2, 4}
+        ):
+            raise ValueError("Y-junction refinement factor must be one of 1, 2, or 4.")
+        refinement_factor = int(raw_refinement_factor)
+        cell_size = master_cell_size / refinement_factor
+        if raw_cell_size is not None and not math.isclose(
+            _full_ogrid_positive_number(raw_cell_size, "Y-junction cell size"),
+            cell_size,
+            rel_tol=1.0e-12,
+            abs_tol=1.0e-15,
+        ):
+            raise ValueError(
+                "Y-junction cell size must equal master cell size divided by refinement factor."
+            )
+    elif raw_cell_size is None:
+        cells_across = {"coarse": 6.0, "medium": 8.0, "fine": 12.0}.get(
+            str(solver.get("meshResolution", "coarse")).strip().lower()
+        )
+        if cells_across is None:
+            raise ValueError("Y-junction mesh resolution must be coarse, medium, or fine.")
+        cell_size = diameter / cells_across
+    else:
+        cell_size = _full_ogrid_positive_number(raw_cell_size, "Y-junction cell size")
+    spec = YJunctionSpec(
+        inlet_length_m=inlet_length,
+        branch_length_m=branch_lengths[0],
+        diameter_m=diameter,
+        cell_size_m=cell_size,
+    )
+    if fixed_master_requested:
+        master_spec = YJunctionSpec(
+            inlet_length_m=inlet_length,
+            branch_length_m=branch_lengths[0],
+            diameter_m=diameter,
+            cell_size_m=master_cell_size,
+        )
+        mesh = generate_fixed_master_y_junction_mesh(
+            master_spec,
+            refinement_factor=refinement_factor,
+            inlet_edge_id=str(inlet_edges[0]["id"]),
+            upper_edge_id=str(upper_edge["id"]),
+            lower_edge_id=str(lower_edge["id"]),
+        )
+    else:
+        mesh = generate_y_junction_mesh(
+            spec,
+            inlet_edge_id=str(inlet_edges[0]["id"]),
+            upper_edge_id=str(upper_edge["id"]),
+            lower_edge_id=str(lower_edge["id"]),
+        )
+    fluid = project.get("fluid") if isinstance(project.get("fluid"), dict) else {}
+    density = _safe_positive(fluid.get("density"), 998.2)
+    viscosity = _safe_positive(fluid.get("dynamicViscosity"), 0.001002)
+    area = math.pi * (diameter / 2.0) ** 2
+    demanded_flow = sum(
+        max(0.0, float(sink.get("flowDemand", 0.0)))
+        for sink in sinks
+        if isinstance(sink.get("flowDemand", 0.0), int | float)
+    )
+    inlet_velocity = demanded_flow / area if demanded_flow > 0.0 else 100.0 * viscosity / (density * diameter)
+
+    def outlet_kinematic_pressure(sink: dict[str, Any]) -> float:
+        pressure_pa = float(sink.get("pressure", 101325.0))
+        if not math.isfinite(pressure_pa):
+            raise ValueError("Y-junction outlet pressures must be finite.")
+        return (pressure_pa - 101325.0) / density
+
+    raw_probe_sampling = solver.get("yJunctionProbeSampling")
+    if raw_probe_sampling is not None and not isinstance(raw_probe_sampling, dict):
+        raise ValueError("Y-junction probe sampling must be an object.")
+    probe_sampling = raw_probe_sampling or {}
+    raw_pair_stations = probe_sampling.get("stationsM", [0.010, 0.016, 0.022])
+    if (
+        not isinstance(raw_pair_stations, list)
+        or len(raw_pair_stations) != 3
+        or any(
+            not isinstance(value, int | float)
+            or isinstance(value, bool)
+            or not math.isfinite(float(value))
+            or float(value) <= 0.0
+            or float(value) >= spec.branch_length_m
+            for value in raw_pair_stations
+        )
+    ):
+        raise ValueError("Y-junction probe stations must be three finite positions inside each branch.")
+    pair_stations = tuple(float(value) for value in raw_pair_stations)
+    if any(left >= right for left, right in zip(pair_stations, pair_stations[1:])):
+        raise ValueError("Y-junction probe stations must be strictly ordered.")
+    interpolation_scheme = str(probe_sampling.get("interpolationScheme", "cell")).strip()
+    if interpolation_scheme not in {"cell", "cellPoint"}:
+        raise ValueError("Y-junction probe interpolation must be `cell` or `cellPoint`.")
+    z_offset_fraction = float(probe_sampling.get("zOffsetCellFraction", 0.25))
+    if not math.isfinite(z_offset_fraction) or not 0.0 < z_offset_fraction < 0.5:
+        raise ValueError("Y-junction probe z offset must be between zero and half a cell.")
+    probe_pairs = [
+        {
+            "stationM": station,
+            "upper": [
+                station * spec.upper_direction[0],
+                station * spec.upper_direction[1],
+                z_offset_fraction * cell_size,
+            ],
+            "lower": [
+                station * spec.lower_direction[0],
+                station * spec.lower_direction[1],
+                z_offset_fraction * cell_size,
+            ],
+        }
+        for station in pair_stations
+        if station < spec.branch_length_m
+    ]
+    return {
+        "schema": Y_JUNCTION_PROFILE_SCHEMA,
+        "requestedMeshMode": "y-junction",
+        "effectiveMeshMode": Y_JUNCTION_REPRESENTATION,
+        "coordinateSystem": "physical-x-y-z-si",
+        "units": {"length": "m", "angle": "deg", "pressure": "m^2/s^2"},
+        "sourceNodeId": source_id,
+        "junctionNodeId": junction_id,
+        "upperSinkNodeId": str(upper_sink["id"]),
+        "lowerSinkNodeId": str(lower_sink["id"]),
+        "pathEdgeIds": [
+            str(inlet_edges[0]["id"]),
+            str(upper_edge["id"]),
+            str(lower_edge["id"]),
+        ],
+        "edgeRoles": {
+            "inlet": str(inlet_edges[0]["id"]),
+            "upperBranch": str(upper_edge["id"]),
+            "lowerBranch": str(lower_edge["id"]),
+        },
+        "geometry": mesh["geometry"],
+        "mesh": {
+            "generationSha256": mesh["generationSha256"],
+            "cellCount": len(mesh["cells"]),
+            "patches": mesh["patches"],
+            "regions": mesh["regions"],
+            **(
+                {
+                    "geometryInvariants": mesh["geometryInvariants"],
+                    "refinement": mesh["refinement"],
+                }
+                if "geometryInvariants" in mesh
+                else {}
+            ),
+        },
+        "flow": {
+            "densityKgPerM3": density,
+            "dynamicViscosityPaS": viscosity,
+            "inletMeanVelocityMPerS": inlet_velocity,
+            "nominalReynoldsNumber": density * inlet_velocity * diameter / viscosity,
+            "outletUpperKinematicPressureM2PerS2": outlet_kinematic_pressure(upper_sink),
+            "outletLowerKinematicPressureM2PerS2": outlet_kinematic_pressure(lower_sink),
+        },
+        "probePairs": probe_pairs,
+        "probeSampling": {
+            "stationsM": list(pair_stations),
+            "interpolationScheme": interpolation_scheme,
+            "fixedLocations": True,
+            "zOffsetCellFraction": z_offset_fraction,
+        },
+        "junctionArtifactIdentity": JUNCTION_ARTIFACT_ID,
+        "ownership": {
+            "source": "generated-region-artifact",
+            "geometryInferenceAllowed": False,
+            "junctionSchematicOwner": None,
+        },
+        "scope": {
+            "flow": "steady-incompressible-laminar",
+            "geometry": "one-inlet-two-identical-plus-minus-30-degree-circular-branches",
+            "unsupported": [
+                "arbitrary-networks",
+                "arbitrary-branch-angles",
+                "unequal-branch-diameters",
+                "turbulence",
+                "transient",
+                "multiphase",
+                "compressible",
+                "promotion",
+            ],
+        },
+        "_mesh": mesh,
+    }
+
+
 def _full_ogrid_spec_from_profile(profile: dict[str, Any]) -> FullOGridSpec:
     topology = profile.get("topology") if isinstance(profile.get("topology"), dict) else {}
     resolution = topology.get("resolution") if isinstance(topology.get("resolution"), dict) else {}
@@ -2963,6 +3435,13 @@ def _openfoam_project_probe_locations(project: dict[str, Any]) -> list[tuple[flo
 
 
 def _openfoam_metric_patch_plan(project: dict[str, Any]) -> dict[str, list[str]]:
+    if _openfoam_y_junction_mode_requested(project):
+        return {
+            "inlet": ["inlet"],
+            "outlet": ["outletUpper", "outletLower"],
+            "wall": ["walls"],
+            "flow": ["inlet", "outletUpper", "outletLower"],
+        }
     reviewed_patches = _reviewed_surface_bc_patches(project)
     if reviewed_patches:
         inlet = [patch["patchName"] for patch in reviewed_patches if patch["role"] == "inlet"]
@@ -3363,6 +3842,151 @@ functions
     }
 }
 """
+
+
+def _openfoam_y_junction_function_object_entries(profile: dict[str, Any]) -> str:
+    locations: list[list[float]] = [[-0.002, 0.0, 0.25 * float(profile["geometry"]["cellSizeM"])]]
+    for pair in profile["probePairs"]:
+        locations.extend([pair["upper"], pair["lower"]])
+    probe_locations = "\n".join(
+        f"            ({point[0]:.17g} {point[1]:.17g} {point[2]:.17g})"
+        for point in locations
+    )
+    surface_objects: list[str] = []
+    for object_name, patch, operation, fields in (
+        ("inletFlow", "inlet", "sum", "(phi)"),
+        ("upperFlow", "outletUpper", "sum", "(phi)"),
+        ("lowerFlow", "outletLower", "sum", "(phi)"),
+        ("inletPressure", "inlet", "areaAverage", "(p)"),
+        ("upperPressure", "outletUpper", "areaAverage", "(p)"),
+        ("lowerPressure", "outletLower", "areaAverage", "(p)"),
+    ):
+        surface_objects.append(
+            f"""
+    {object_name}
+    {{
+        type            surfaceFieldValue;
+        libs            ("libfieldFunctionObjects.so");
+        writeControl    timeStep;
+        writeInterval   25;
+        log             false;
+        writeFields     false;
+        regionType      patch;
+        name            {patch};
+        operation       {operation};
+        fields          {fields};
+    }}
+"""
+        )
+    return f"""
+    residuals
+    {{
+        type            residuals;
+        libs            ("libutilityFunctionObjects.so");
+        writeControl    timeStep;
+        writeInterval   25;
+        fields          (U p);
+    }}
+
+    yJunctionMirroredProbes
+    {{
+        type            probes;
+        libs            ("libsampling.so");
+        fixedLocations  true;
+        interpolationScheme {profile["probeSampling"]["interpolationScheme"]};
+        writeControl    timeStep;
+        writeInterval   25;
+        fields          (p U);
+        probeLocations
+        (
+{probe_locations}
+        );
+    }}
+
+    wallForces
+    {{
+        type            forces;
+        libs            ("libforces.so");
+        writeControl    writeTime;
+        patches         (walls);
+        rho             rhoInf;
+        rhoInf          {float(profile["flow"]["densityKgPerM3"]):.17g};
+        CofR            (0 0 0);
+        pName           p;
+        UName           U;
+    }}
+
+    patchFlowRate
+    {{
+        type            patchFlowRate;
+        libs            ("libfieldFunctionObjects.so");
+        writeControl    writeTime;
+        patches         (inlet outletUpper outletLower);
+        phi             phi;
+    }}
+
+    patchAverage
+    {{
+        type            surfaceFieldValue;
+        libs            ("libfieldFunctionObjects.so");
+        writeControl    writeTime;
+        log             false;
+        writeFields     false;
+        regionType      patch;
+        name            (inlet outletUpper outletLower);
+        operation       areaAverage;
+        fields          (p);
+    }}
+
+    wallShearStress
+    {{
+        type            wallShearStress;
+        libs            ("libfieldFunctionObjects.so");
+        writeControl    writeTime;
+        patches         (walls);
+    }}
+{''.join(surface_objects)}
+"""
+
+
+def _openfoam_y_junction_function_objects(profile: dict[str, Any]) -> str:
+    return (
+        "\nfunctions\n{\n"
+        + _openfoam_y_junction_function_object_entries(profile)
+        + "}\n"
+    )
+
+
+def _openfoam_y_junction_control_dict(
+    solver: str,
+    project: dict[str, Any],
+    profile: dict[str, Any],
+) -> str:
+    solver_settings = project.get("solver") if isinstance(project.get("solver"), dict) else {}
+    max_iterations = solver_settings.get("maxIterations", 2500)
+    if not isinstance(max_iterations, int) or isinstance(max_iterations, bool) or max_iterations <= 0:
+        raise ValueError("Y-junction maxIterations must be a positive integer.")
+    return (
+        _foam_header("dictionary", "controlDict")
+        + f"""application     foamRun;
+solver          {solver};
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         {max_iterations};
+deltaT          1;
+writeControl    timeStep;
+writeInterval   {max_iterations};
+purgeWrite      0;
+writeFormat     ascii;
+writePrecision  12;
+writeCompression off;
+timeFormat      general;
+timePrecision   8;
+runTimeModifiable false;
+"""
+        + _openfoam_y_junction_function_objects(profile)
+    )
 
 
 STEADY_RUN_CAPABLE_MODES = frozenset({"incompressible-navier-stokes"})
@@ -6926,6 +7550,7 @@ class OpenFOAMAdapter(SolverAdapter):
         axisymmetric_requested = _openfoam_axisymmetric_mode_requested(request.project)
         full_ogrid_requested = _openfoam_full_ogrid_mode_requested(request.project)
         curved_elbow_requested = _openfoam_curved_elbow_mode_requested(request.project)
+        y_junction_requested = _openfoam_y_junction_mode_requested(request.project)
         # Full O-grid scope is independent of the planar source-strip mesh and
         # must fail closed on its own geometry contract first.
         full_ogrid_profile = _openfoam_full_ogrid_profile(request.project, request.advancedMode)
@@ -6933,6 +7558,7 @@ class OpenFOAMAdapter(SolverAdapter):
             request.project,
             request.advancedMode,
         )
+        y_junction_profile = _openfoam_y_junction_profile(request.project, request.advancedMode)
         parallel_settings = _openfoam_parallel_settings(request.project, request.advancedMode)
         parallel_plan = _openfoam_parallel_plan(parallel_settings)
         parallel_readme = (
@@ -6976,8 +7602,14 @@ class OpenFOAMAdapter(SolverAdapter):
                     else {}
                 )
             except ValueError as exc:
-                if axisymmetric_requested or full_ogrid_requested:
-                    mode = "Axisymmetric" if axisymmetric_requested else "Full O-grid"
+                if axisymmetric_requested or full_ogrid_requested or y_junction_requested:
+                    mode = (
+                        "Axisymmetric"
+                        if axisymmetric_requested
+                        else "Full O-grid"
+                        if full_ogrid_requested
+                        else "Y-junction"
+                    )
                     raise ValueError(f"{mode} case generation failed closed: {exc}") from exc
                 mesh_files = {
                     "mesh/README.md": (
@@ -6994,6 +7626,7 @@ class OpenFOAMAdapter(SolverAdapter):
         axisymmetric = axisymmetric_profile is not None
         full_ogrid = full_ogrid_profile is not None
         curved_elbow = curved_elbow_profile is not None
+        y_junction = y_junction_profile is not None
         full_ogrid_verification = (
             full_ogrid_profile.get("verificationContract")
             if isinstance(full_ogrid_profile, dict)
@@ -7110,6 +7743,41 @@ class OpenFOAMAdapter(SolverAdapter):
                 "Curved-elbow inspection VTK/VTU is the true three-dimensional, full-volume, 15-block all-hex geometry.",
                 "Inlet-leg, elbow, and outlet-leg source-cell ranges are explicit; the original editor strip is retained separately and is not solver-result geometry.",
             ]
+        if y_junction_profile is not None:
+            generated_mesh = y_junction_profile.pop("_mesh")
+            source_strip_paths = {
+                "mesh/flowlab_mesh.json": "mesh/flowlab_source_strip.json",
+                "mesh/flowlab_mesh.vtk": "mesh/flowlab_source_strip.vtk",
+                "mesh/flowlab_mesh.vtu": "mesh/flowlab_source_strip.vtu",
+            }
+            for source_path, retained_path in source_strip_paths.items():
+                if source_path in mesh_files:
+                    mesh_files[retained_path] = mesh_files[source_path]
+            public_mesh = public_y_junction_mesh(generated_mesh)
+            mesh = public_mesh
+            openfoam_mesh_files = y_junction_to_openfoam_polymesh(generated_mesh)
+            mesh_files["mesh/flowlab_mesh.json"] = json.dumps(public_mesh, indent=2, sort_keys=True) + "\n"
+            mesh_files["mesh/flowlab_mesh.vtk"] = mesh_to_legacy_vtk(
+                public_mesh,
+                "FlowLab bounded symmetric true-3D Y-junction",
+            )
+            mesh_files["mesh/flowlab_mesh.vtu"] = mesh_to_vtu(public_mesh)
+            mesh_files["mesh/y_junction_region_artifacts.json"] = json.dumps(
+                {
+                    "schema": "flowlab.y-junction-region-artifacts.v1",
+                    "generationSha256": public_mesh["generationSha256"],
+                    "regions": public_mesh["regions"],
+                    "ownershipInference": "forbidden",
+                },
+                indent=2,
+                sort_keys=True,
+            ) + "\n"
+            mesh_provenance = [
+                *mesh_provenance,
+                "The Y-junction solver polyMesh and 3D inspection VTK/VTU share the exact generated source-cell ordering.",
+                "Three edge ranges are construction-time generated artifacts; junction cells carry a dedicated generated identity and no schematic owner.",
+                "Result ownership must not be reconstructed from displayed geometry or cell coordinates.",
+            ]
         identity_contract_files: dict[str, str] = {}
         try:
             generated_mesh_manifest = json.loads(
@@ -7143,7 +7811,7 @@ class OpenFOAMAdapter(SolverAdapter):
             _WEDGE_FAR_FIELD_PATCHES
             if axisymmetric
             else ""
-            if full_ogrid or curved_elbow
+            if full_ogrid or curved_elbow or y_junction
             else None
         )
         mode_files, mode_provenance = _openfoam_mode_files(request.advancedMode, conditions, request.project)
@@ -7197,22 +7865,36 @@ class OpenFOAMAdapter(SolverAdapter):
                     _curved_elbow_spec_from_profile(curved_elbow_profile)
                 )
                 if curved_elbow_profile is not None
+                else (
+                    _foam_header("dictionary", "blockMeshDict")
+                    + "// The bounded Y-junction owns a generated constant/polyMesh.\n"
+                    + "// Required patches: inlet outletUpper outletLower walls.\n"
+                )
+                if y_junction_profile is not None
                 else _openfoam_block_mesh_dict(mesh)
             ),
-            "system/controlDict": _openfoam_control_dict(
-                solver,
-                mesh,
-                request.advancedMode,
-                request.project,
-                axisymmetric_profile,
-                volume_ogrid_profile,
+            "system/controlDict": (
+                _openfoam_y_junction_control_dict(solver, request.project, y_junction_profile)
+                if y_junction_profile is not None
+                else _openfoam_control_dict(
+                    solver,
+                    mesh,
+                    request.advancedMode,
+                    request.project,
+                    axisymmetric_profile,
+                    volume_ogrid_profile,
+                )
             ),
-            "system/functions": _openfoam_function_object_entries(
-                mesh,
-                request.advancedMode,
-                request.project,
-                axisymmetric_profile,
-                volume_ogrid_profile,
+            "system/functions": (
+                _openfoam_y_junction_function_object_entries(y_junction_profile)
+                if y_junction_profile is not None
+                else _openfoam_function_object_entries(
+                    mesh,
+                    request.advancedMode,
+                    request.project,
+                    axisymmetric_profile,
+                    volume_ogrid_profile,
+                )
             ),
             "system/fvSchemes": (
                 _openfoam_axisymmetric_benchmark_fv_schemes()
@@ -7225,6 +7907,7 @@ class OpenFOAMAdapter(SolverAdapter):
                 strict_verification=(
                     full_ogrid_flow_contract is not None
                     or curved_elbow_verification is not None
+                    or y_junction_profile is not None
                 ),
             ),
             "0/U": (
@@ -7232,6 +7915,8 @@ class OpenFOAMAdapter(SolverAdapter):
                     f"({float(axisymmetric_benchmark['meanVelocityTargetMPerS']):.17g} 0 0)"
                 )
                 if axisymmetric_benchmark is not None
+                else _openfoam_y_junction_vector_field(y_junction_profile)
+                if y_junction_profile is not None
                 else _openfoam_full_ogrid_parabolic_vector_field(
                     full_ogrid_profile,
                     full_ogrid_flow_contract,
@@ -7253,6 +7938,18 @@ class OpenFOAMAdapter(SolverAdapter):
             "0/p": (
                 _openfoam_axisymmetric_periodic_scalar_field("p", pressure_dimensions, "0")
                 if axisymmetric_benchmark is not None
+                else _openfoam_y_junction_scalar_field(
+                    "p",
+                    dimensions=pressure_dimensions,
+                    internal=0.5
+                    * (
+                        float(y_junction_profile["flow"]["outletUpperKinematicPressureM2PerS2"])
+                        + float(y_junction_profile["flow"]["outletLowerKinematicPressureM2PerS2"])
+                    ),
+                    upper_outlet=float(y_junction_profile["flow"]["outletUpperKinematicPressureM2PerS2"]),
+                    lower_outlet=float(y_junction_profile["flow"]["outletLowerKinematicPressureM2PerS2"]),
+                )
+                if y_junction_profile is not None
                 else _openfoam_pressure_field(
                     "p",
                     pressure_dimensions,
@@ -7264,6 +7961,18 @@ class OpenFOAMAdapter(SolverAdapter):
             "0/p_rgh": (
                 _openfoam_axisymmetric_periodic_scalar_field("p_rgh", pressure_dimensions, "0")
                 if axisymmetric_benchmark is not None
+                else _openfoam_y_junction_scalar_field(
+                    "p_rgh",
+                    dimensions=pressure_dimensions,
+                    internal=0.5
+                    * (
+                        float(y_junction_profile["flow"]["outletUpperKinematicPressureM2PerS2"])
+                        + float(y_junction_profile["flow"]["outletLowerKinematicPressureM2PerS2"])
+                    ),
+                    upper_outlet=float(y_junction_profile["flow"]["outletUpperKinematicPressureM2PerS2"]),
+                    lower_outlet=float(y_junction_profile["flow"]["outletLowerKinematicPressureM2PerS2"]),
+                )
+                if y_junction_profile is not None
                 else _openfoam_pressure_field(
                     "p_rgh",
                     pressure_dimensions,
@@ -7279,6 +7988,8 @@ class OpenFOAMAdapter(SolverAdapter):
                     f"{conditions.temperature:.6g}",
                 )
                 if axisymmetric_benchmark is not None
+                else _openfoam_y_junction_temperature_field(conditions.temperature)
+                if y_junction_profile is not None
                 else _openfoam_temperature_field(conditions.temperature, far_patches=far_patches)
             ),
             "constant/transportProperties": _openfoam_transport_properties(request.advancedMode, conditions),
@@ -7351,6 +8062,18 @@ class OpenFOAMAdapter(SolverAdapter):
             ),
             **(
                 {
+                    "constant/flowlab_y_junction_profile.json": json.dumps(
+                        y_junction_profile,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + "\n"
+                }
+                if y_junction_profile is not None
+                else {}
+            ),
+            **(
+                {
                     "system/fvConstraints": _openfoam_axisymmetric_benchmark_fv_constraints(
                         axisymmetric_profile
                     )
@@ -7407,6 +8130,12 @@ class OpenFOAMAdapter(SolverAdapter):
                 "The pre-solve VTK/VTU is the full-volume curved geometry and carries explicit source-cell component ranges; solver-produced VTK remains authoritative after execution.",
             ]
             if curved_elbow
+            else [
+                "FlowLab compiled exactly one source-junction-two-sink graph into the bounded symmetric true-3D Y-junction contract.",
+                "The generated Cartesian all-hex polyMesh realizes one circular inlet and two identical +/-30-degree circular branches.",
+                "Explicit generated source-cell ranges own the three pipe edges; the dedicated generated junction artifact has no schematic owner.",
+            ]
+            if y_junction
             else [
                 "FlowLab v1 OpenFOAM volume mesh extrudes the port-aware FlowLab quad strip into one hexahedral layer with inlet, outlet, walls, and empty front/back patches."
             ]
