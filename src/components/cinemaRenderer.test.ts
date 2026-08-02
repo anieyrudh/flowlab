@@ -2,16 +2,26 @@ import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import type { FluidProject, Vec2, VtkResultDataset } from "../types";
 import {
+  CINEMA_VIEW_HEIGHT,
   DEFAULT_RESULT_WORLD_SPAN,
   RESULT_SURFACE_Z_OFFSET,
-  createCinemaLightRig,
+  applyCinemaCamera,
+  buildSweptTubeGeometry,
+  cinemaFitZoom,
+  cinemaOrthographicFrustum,
+  clampCinemaZoom,
+  createCinemaAmbientLight,
+  createCinemaCamera,
+  createConstantOutlineMaterial,
+  createConstantSurfaceMaterial,
   createResultBoundaryMaterial,
   createResultSurfaceMaterial,
   createSchematicPipeMaterials,
   exteriorTriangleCount,
   extractExteriorCellFaces,
   resultSurfaceTriangles,
-  resultWorldSpanForNetwork
+  resultWorldSpanForNetwork,
+  steppedTone
 } from "./cinemaRenderer";
 
 function dataset(
@@ -176,42 +186,175 @@ function channelSpread(color: THREE.Color) {
   return Math.max(color.r, color.g, color.b) - Math.min(color.r, color.g, color.b);
 }
 
-describe("Cinema light rig", () => {
-  const rig = createCinemaLightRig();
-  const lights = Object.values(rig);
+describe("Constant shading", () => {
+  it("lights the scene with one omnidirectional source, so no shading can depend on orientation", () => {
+    const ambient = createCinemaAmbientLight();
 
-  it("uses no positional lights, so shading never depends on where a surface sits", () => {
-    expect(lights.some((light) => light instanceof THREE.PointLight)).toBe(false);
-    expect(lights.some((light) => light instanceof THREE.SpotLight)).toBe(false);
-    const positional = lights.filter((light) => light instanceof THREE.DirectionalLight);
-    expect(positional).toHaveLength(3);
-    expect(rig.ambient).toBeInstanceOf(THREE.HemisphereLight);
+    expect(ambient).toBeInstanceOf(THREE.AmbientLight);
+    expect(ambient).not.toBeInstanceOf(THREE.DirectionalLight);
+    expect(ambient).not.toBeInstanceOf(THREE.HemisphereLight);
+    expect(ambient.intensity).toBeGreaterThan(0);
   });
 
-  it("keeps every light neutral so hue stays in the materials", () => {
-    lights.forEach((light) => {
-      expect(channelSpread(light.color)).toBeLessThanOrEqual(0.08);
-    });
-    expect(channelSpread(rig.ambient.groundColor)).toBeLessThanOrEqual(0.08);
-    [rig.key, rig.fill, rig.rim].forEach((light) => {
-      expect(light.color.getHex()).toBe(0xffffff);
-    });
+  it("keeps the light neutral so hue stays in the materials", () => {
+    const ambient = createCinemaAmbientLight();
+
+    expect(channelSpread(ambient.color)).toBe(0);
+    expect(ambient.color.getHex()).toBe(0xffffff);
   });
 
-  it("reads as a key plus softer fill and rim", () => {
-    expect(rig.key.intensity).toBeGreaterThan(rig.fill.intensity);
-    expect(rig.fill.intensity).toBeGreaterThan(rig.rim.intensity);
-    expect(rig.rim.intensity).toBeGreaterThan(0);
-    expect(rig.ambient.intensity).toBeGreaterThan(0);
+  it("draws network surfaces unlit and un-fogged, so a pixel depends only on its material", () => {
+    const material = createConstantSurfaceMaterial({ color: 0x3f939a, opacity: 0.5 });
+
+    expect(material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect(material.fog).toBe(false);
+    expect(material.transparent).toBe(true);
+    expect(createConstantSurfaceMaterial({ color: 0x3f939a }).transparent).toBe(false);
+    expect(createConstantOutlineMaterial(0xffffff, 0.5).fog).toBe(false);
   });
 
-  it("lights the XY network plane from above, with the hemisphere axis on +Z", () => {
-    expect(rig.key.position.z).toBeGreaterThan(0);
-    expect(rig.fill.position.z).toBeGreaterThan(0);
-    expect(rig.key.position.z).toBeGreaterThan(Math.abs(rig.key.position.x));
-    // The key and fill straddle the network in X so form is described from both sides.
-    expect(Math.sign(rig.key.position.x)).toBe(-Math.sign(rig.fill.position.x));
-    expect(rig.ambient.position.clone().normalize().z).toBeCloseTo(1, 6);
+  it("steps tone by a fixed factor rather than by where a surface faces", () => {
+    const base = steppedTone(0x808080, "base");
+    const shadow = steppedTone(0x808080, "shadow");
+    const raised = steppedTone(0x808080, "raised");
+
+    expect(base.getHex()).toBe(0x808080);
+    expect(shadow.r).toBeLessThan(base.r);
+    expect(raised.r).toBeGreaterThan(base.r);
+    // Deterministic: the same colour and step always give the same value.
+    expect(steppedTone(0x808080, "shadow").getHex()).toBe(shadow.getHex());
+    // A step never blows past white, so the ladder stays a ladder.
+    expect(steppedTone(0xffffff, "raised").getHex()).toBe(0xffffff);
+  });
+});
+
+describe("Orthographic framing", () => {
+  it("frames a fixed world height, so a diameter measures the same wherever it sits", () => {
+    const wide = cinemaOrthographicFrustum(1200, 600, 1);
+
+    expect(wide.top - wide.bottom).toBeCloseTo(CINEMA_VIEW_HEIGHT, 6);
+    // Only the width follows the canvas; the framed height is the same at any aspect.
+    expect(wide.right - wide.left).toBeCloseTo(CINEMA_VIEW_HEIGHT * 2, 6);
+    const tall = cinemaOrthographicFrustum(600, 1200, 1);
+    expect(tall.top - tall.bottom).toBeCloseTo(CINEMA_VIEW_HEIGHT, 6);
+    expect(tall.right - tall.left).toBeCloseTo(CINEMA_VIEW_HEIGHT / 2, 6);
+  });
+
+  it("shows less world as zoom goes up, and clamps at the ends of the range", () => {
+    const near = cinemaOrthographicFrustum(800, 600, 1.5);
+    const far = cinemaOrthographicFrustum(800, 600, 0.6);
+
+    expect(near.top).toBeLessThan(far.top);
+    expect(cinemaOrthographicFrustum(800, 600, 99).top).toBeCloseTo(
+      cinemaOrthographicFrustum(800, 600, clampCinemaZoom(99)).top,
+      9
+    );
+  });
+
+  it("fits a bigger network at a smaller zoom, and never magnifies a sketch past the floor", () => {
+    expect(cinemaFitZoom(8)).toBeLessThan(cinemaFitZoom(2));
+    expect(cinemaFitZoom(0)).toBe(2);
+    expect(cinemaFitZoom(1e6)).toBe(0.25);
+    // Whatever it returns has to keep the network inside the frame it asked for.
+    const span = 4;
+    expect(CINEMA_VIEW_HEIGHT / cinemaFitZoom(span)).toBeGreaterThanOrEqual(span);
+  });
+
+  it("builds an orthographic camera whose up axis matches the scene's +Z", () => {
+    const camera = createCinemaCamera(900, 600, { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } });
+
+    expect(camera).toBeInstanceOf(THREE.OrthographicCamera);
+    expect(camera.up.z).toBe(1);
+  });
+
+  it("keeps parallel pipes parallel: equal world lengths project to equal screen lengths", () => {
+    const camera = createCinemaCamera(800, 800, { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } });
+    camera.updateMatrixWorld();
+    const spanAt = (y: number) =>
+      new THREE.Vector3(1, y, 0).project(camera).distanceTo(new THREE.Vector3(-1, y, 0).project(camera));
+
+    // Under perspective the nearer run would measure wider; under orthographic it cannot.
+    expect(spanAt(-2)).toBeCloseTo(spanAt(2), 9);
+  });
+
+  it("re-derives the frustum on resize instead of stretching the projection", () => {
+    const settings = { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } };
+    const camera = createCinemaCamera(800, 600, settings);
+    applyCinemaCamera(camera, settings, 1600, 600);
+
+    expect(camera.top - camera.bottom).toBeCloseTo(CINEMA_VIEW_HEIGHT, 6);
+    expect(camera.right - camera.left).toBeCloseTo((CINEMA_VIEW_HEIGHT * 1600) / 600, 6);
+  });
+
+  it("holds the network inside the near and far planes across the whole pitch range", () => {
+    const settings = { yaw: 40, pitch: 78, zoom: 1, pan: { x: 0, y: 0 } };
+    const camera = createCinemaCamera(800, 600, settings);
+    camera.updateMatrixWorld();
+    const depth = new THREE.Vector3(0, 0, 0).applyMatrix4(camera.matrixWorldInverse).z;
+
+    expect(-depth).toBeGreaterThan(camera.near);
+    expect(-depth).toBeLessThan(camera.far);
+  });
+});
+
+describe("Swept pipe geometry", () => {
+  const straight = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(2, 0, 0)];
+
+  it("sweeps a constant-radius section along every point of the path", () => {
+    const geometry = buildSweptTubeGeometry(straight, 0.25, 8);
+    const position = geometry.getAttribute("position");
+
+    expect(position.count).toBe(2 * 8);
+    for (let index = 0; index < position.count; index += 1) {
+      const radius = Math.hypot(position.getY(index), position.getZ(index));
+      expect(radius).toBeCloseTo(0.25, 6);
+    }
+  });
+
+  it("follows a bent path rather than cutting the corner", () => {
+    const bent = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(2, 0, 0), new THREE.Vector3(2, 2, 0)];
+    const geometry = buildSweptTubeGeometry(bent, 0.1, 6);
+    const position = geometry.getAttribute("position");
+    const nearest = (target: THREE.Vector3) => {
+      let closest = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < position.count; index += 1) {
+        closest = Math.min(closest, target.distanceTo(new THREE.Vector3().fromBufferAttribute(position, index)));
+      }
+      return closest;
+    };
+
+    // The tube reaches the corner the route turns at ...
+    expect(nearest(new THREE.Vector3(2, 0, 0))).toBeLessThanOrEqual(0.1 + 1e-6);
+    // ... and stays off the chord a straight tube between the two ends would have taken.
+    expect(nearest(new THREE.Vector3(1, 1, 0))).toBeGreaterThan(0.5);
+  });
+
+  it("gives two identically shaped pipes identical geometry wherever they point", () => {
+    const east = buildSweptTubeGeometry([new THREE.Vector3(0, 0, 0), new THREE.Vector3(3, 0, 0)], 0.2, 10);
+    const north = buildSweptTubeGeometry([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 3, 0)], 0.2, 10);
+    const sectionRadius = (geometry: THREE.BufferGeometry, axis: "x" | "y") => {
+      const position = geometry.getAttribute("position");
+      const offsets: number[] = [];
+      for (let index = 0; index < position.count; index += 1) {
+        offsets.push(
+          axis === "x"
+            ? Math.hypot(position.getY(index), position.getZ(index))
+            : Math.hypot(position.getX(index), position.getZ(index))
+        );
+      }
+      return offsets;
+    };
+
+    expect(east.getAttribute("position").count).toBe(north.getAttribute("position").count);
+    sectionRadius(east, "x").forEach((radius) => expect(radius).toBeCloseTo(0.2, 6));
+    sectionRadius(north, "y").forEach((radius) => expect(radius).toBeCloseTo(0.2, 6));
+  });
+
+  it("survives a degenerate path without emitting geometry", () => {
+    expect(buildSweptTubeGeometry([], 0.2, 8).getAttribute("position")).toBeUndefined();
+    expect(
+      buildSweptTubeGeometry([new THREE.Vector3(1, 1, 0), new THREE.Vector3(1, 1, 0)], 0.2, 8).getAttribute("position")
+    ).toBeUndefined();
   });
 });
 
@@ -259,18 +402,36 @@ describe("Schematic network presentation", () => {
     { name: "idle", active: false },
     { name: "selected", active: true }
   ])("never lets the $name illustration read as solidly as solver output", ({ active }) => {
-    const { cage, core } = createSchematicPipeMaterials(new THREE.Color(0x00ff00), active);
+    const { cage, core, outline } = createSchematicPipeMaterials(new THREE.Color(0x00ff00), active);
 
     expect(cage.opacity).toBeLessThan(solved.opacity);
     expect(core.opacity).toBeLessThan(solved.opacity);
-    // Emissive would let the illustration glow past the unlit solved surface.
-    expect(core.emissiveIntensity).toBeLessThan(1);
+    expect(outline.opacity).toBeLessThan(solved.opacity);
+    // Unlit and non-emissive by construction, so the illustration has no way to
+    // glow past the opaque solved surface however the scene is lit.
+    expect(core).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect("emissive" in core).toBe(false);
   });
 
-  it("keeps the drawn pipe core on the network overlay colour", () => {
+  it.each([
+    { name: "idle", active: false },
+    { name: "selected", active: true }
+  ])("shades the $name pipe by material alone, never by orientation or distance", ({ active }) => {
+    const { cage, core } = createSchematicPipeMaterials(new THREE.Color(0x00ff00), active);
+
+    [cage, core].forEach((material) => {
+      expect(material).toBeInstanceOf(THREE.MeshBasicMaterial);
+      expect(material.fog).toBe(false);
+    });
+  });
+
+  it("keeps the drawn pipe core on the network overlay colour, one tone step down when idle", () => {
     const overlay = new THREE.Color(0x0ad7ff);
 
-    expect(createSchematicPipeMaterials(overlay, false).core.color.getHex()).toBe(overlay.getHex());
+    expect(createSchematicPipeMaterials(overlay, true).core.color.getHex()).toBe(overlay.getHex());
+    expect(createSchematicPipeMaterials(overlay, false).core.color.getHex()).toBe(
+      steppedTone(overlay, "shadow").getHex()
+    );
   });
 });
 

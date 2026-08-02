@@ -1,4 +1,4 @@
-import type { FluidEdge, FluidNode, FluidProject, Vec2 } from "../types";
+import type { FluidEdge, FluidNode, FluidProject, PipePortId, Vec2 } from "../types";
 
 export const MIN_VIEWPORT_ZOOM = 0.25;
 export const MAX_VIEWPORT_ZOOM = 4;
@@ -1015,6 +1015,176 @@ export function tidySchematicLayout(project: FluidProject, options: TidyLayoutOp
     });
   });
   return positions;
+}
+
+/* ------------------------------------------------------------------------------------ *
+ * One model, two views
+ *
+ * The schematic and the 3D view are supposed to be the same network seen two ways, so the
+ * route a pipe follows has to be computed once and consumed twice. Everything below is the
+ * geometry the two views share: where a component's ports sit, which way they face, and the
+ * ordered set of routes the whole project draws. It is all pure, so the 3D view can be held
+ * to the same routes the schematic draws without either view owning the other.
+ * ------------------------------------------------------------------------------------ */
+
+/** Extra distance a port ring sits outside the component body it belongs to. */
+export const SCHEMATIC_PORT_OFFSET = 10;
+
+function toRadians(degrees: number): number {
+  return (degrees * Math.PI) / 180;
+}
+
+/** Drawn radius of a component body, in world units. */
+export function schematicNodeRadius(node: FluidNode): number {
+  if (node.type === "source" || node.type === "sink") return 17;
+  if (node.type === "pump") return 19;
+  return 14;
+}
+
+/** Compass bearing of one port, in degrees, once the component's own rotation is applied. */
+export function schematicPortAngle(node: FluidNode, port: PipePortId): number {
+  const base = node.rotation ?? 0;
+  if (port === "outlet") return base;
+  if (port === "inlet") return base + 180;
+  if (port === "north") return base - 90;
+  return base + 90;
+}
+
+/** Where a pipe attaches to a component. */
+export function schematicPortPosition(node: FluidNode, port: PipePortId): Vec2 {
+  const radius = schematicNodeRadius(node) + SCHEMATIC_PORT_OFFSET;
+  const angle = toRadians(schematicPortAngle(node, port));
+  return {
+    x: node.position.x + Math.cos(angle) * radius,
+    y: node.position.y + Math.sin(angle) * radius
+  };
+}
+
+/** Outward normal of a port: the direction a pipe has to leave along. */
+export function schematicPortDirection(node: FluidNode, port: PipePortId): Vec2 {
+  const angle = toRadians(schematicPortAngle(node, port));
+  return { x: Math.cos(angle), y: Math.sin(angle) };
+}
+
+/** Component centres, in the shape `routeOrthogonalPipe` wants for `obstacles`. */
+export function schematicComponentCentres(nodes: Record<string, FluidNode>): Vec2[] {
+  return Object.values(nodes).map((node) => node.position);
+}
+
+/** The orthogonal polyline one pipe is drawn along, in world coordinates. */
+export function schematicEdgeRoute(
+  edge: FluidEdge,
+  nodes: Record<string, FluidNode>,
+  obstacles?: readonly Vec2[],
+  occupiedLanes?: readonly LaneSpan[]
+): Vec2[] | null {
+  const from = nodes[edge.from];
+  const to = nodes[edge.to];
+  if (!from || !to) return null;
+  const fromPort = edge.fromPort ?? "outlet";
+  const toPort = edge.toPort ?? "inlet";
+  return routeOrthogonalPipe(
+    schematicPortPosition(from, fromPort),
+    schematicPortDirection(from, fromPort),
+    schematicPortPosition(to, toPort),
+    schematicPortDirection(to, toPort),
+    { obstacles: obstacles ?? schematicComponentCentres(nodes), occupiedLanes: occupiedLanes ?? [] }
+  );
+}
+
+/**
+ * Routes every drawable pipe in the project.
+ *
+ * Pipes are routed one after another and each one hands its runs to the next, so a second
+ * pipe picks a different lane instead of being drawn on top of the first. Edge order is the
+ * project's own, so the picture is stable frame to frame - and, because this is the only
+ * routing pass either view runs, a bend on the schematic is the same bend in 3D.
+ */
+export function buildSchematicRoutes(project: FluidProject): WireRoute[] {
+  const obstacles = schematicComponentCentres(project.nodes);
+  const occupiedLanes: LaneSpan[] = [];
+  const routes: WireRoute[] = [];
+  for (const edge of Object.values(project.edges)) {
+    const points = schematicEdgeRoute(edge, project.nodes, obstacles, occupiedLanes);
+    if (!points || points.length < 2) continue;
+    occupiedLanes.push(...routeLaneSpans(points));
+    routes.push({ id: edge.id, points });
+  }
+  return routes;
+}
+
+/** Unit direction of travel a fraction `t` along a polyline; pairs with `pointOnPolyline`. */
+export function tangentOnPolyline(points: readonly Vec2[], t: number): Vec2 {
+  const segments = polylineSegments(points).filter(
+    (segment) => Math.hypot(segment.to.x - segment.from.x, segment.to.y - segment.from.y) > GEOMETRY_EPSILON
+  );
+  if (segments.length === 0) return { x: 1, y: 0 };
+  const total = segments.reduce(
+    (sum, segment) => sum + Math.hypot(segment.to.x - segment.from.x, segment.to.y - segment.from.y),
+    0
+  );
+  let remaining = Math.max(0, Math.min(1, t)) * total;
+  for (const segment of segments) {
+    const length = Math.hypot(segment.to.x - segment.from.x, segment.to.y - segment.from.y);
+    if (remaining <= length) {
+      return { x: (segment.to.x - segment.from.x) / length, y: (segment.to.y - segment.from.y) / length };
+    }
+    remaining -= length;
+  }
+  const last = segments[segments.length - 1];
+  const length = Math.hypot(last.to.x - last.from.x, last.to.y - last.from.y);
+  return { x: (last.to.x - last.from.x) / length, y: (last.to.y - last.from.y) / length };
+}
+
+/**
+ * Replaces every corner of a polyline with a circular fillet of the given radius.
+ *
+ * A pipe has to turn through a bend, not a knife edge, so the swept 3D geometry is built on
+ * this rather than on the raw route. The radius is capped at half of either adjoining run,
+ * which is what stops two corners on a short run from eating into each other and inverting
+ * the geometry between them. The straight runs either side are untouched, so the rounded
+ * path still visits the same lanes the schematic drew.
+ */
+export function roundPolylineCorners(points: readonly Vec2[], radius: number, segments = 4): Vec2[] {
+  const source = simplifyPolyline(points);
+  if (source.length < 3 || radius <= GEOMETRY_EPSILON) return source;
+  const steps = Math.max(1, Math.round(segments));
+  const rounded: Vec2[] = [{ ...source[0] }];
+  for (let index = 1; index < source.length - 1; index += 1) {
+    const previous = source[index - 1];
+    const corner = source[index];
+    const next = source[index + 1];
+    const inLength = Math.hypot(corner.x - previous.x, corner.y - previous.y);
+    const outLength = Math.hypot(next.x - corner.x, next.y - corner.y);
+    const tangentLength = Math.min(radius, inLength / 2, outLength / 2);
+    if (tangentLength <= GEOMETRY_EPSILON) {
+      rounded.push({ ...corner });
+      continue;
+    }
+    const into = { x: (corner.x - previous.x) / inLength, y: (corner.y - previous.y) / inLength };
+    const outOf = { x: (next.x - corner.x) / outLength, y: (next.y - corner.y) / outLength };
+    const turn = into.x * outOf.y - into.y * outOf.x;
+    if (Math.abs(turn) <= GEOMETRY_EPSILON) {
+      // Doubling straight back on itself has no inside to turn towards.
+      rounded.push({ ...corner });
+      continue;
+    }
+    const start = { x: corner.x - into.x * tangentLength, y: corner.y - into.y * tangentLength };
+    const sweep = Math.atan2(turn, into.x * outOf.x + into.y * outOf.y);
+    const arcRadius = tangentLength / Math.tan(Math.abs(sweep) / 2);
+    const side = Math.sign(turn);
+    const centre = {
+      x: start.x - into.y * arcRadius * side,
+      y: start.y + into.x * arcRadius * side
+    };
+    const startAngle = Math.atan2(start.y - centre.y, start.x - centre.x);
+    for (let step = 0; step <= steps; step += 1) {
+      const angle = startAngle + (sweep * step) / steps;
+      rounded.push({ x: centre.x + Math.cos(angle) * arcRadius, y: centre.y + Math.sin(angle) * arcRadius });
+    }
+  }
+  rounded.push({ ...source[source.length - 1] });
+  return rounded;
 }
 
 /** Nearest quarter turn in whole degrees, so every port lands on a horizontal or vertical axis. */

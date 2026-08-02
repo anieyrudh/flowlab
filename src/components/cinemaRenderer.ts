@@ -2,7 +2,6 @@ import * as THREE from "three";
 import type { DecodedDerivedVisualization } from "../results/derived";
 import { fieldValuesForOverlay, fieldValuesForSelection, type ResultFieldSelection, type ResultVectorComponent } from "../results/vtk";
 import type {
-  FluidEdge,
   FluidNode,
   FluidProject,
   OverlayMode,
@@ -12,7 +11,15 @@ import type {
   Vec2,
   VtkResultDataset
 } from "../types";
-import type { CinemaCameraState } from "./viewportModel";
+import {
+  buildSchematicRoutes,
+  pointOnPolyline,
+  roundPolylineCorners,
+  schematicPortPosition,
+  tangentOnPolyline,
+  type CinemaCameraState,
+  type WireRoute
+} from "./viewportModel";
 import { recordEditorMetric } from "../performance/editorProfiler";
 import { addStreamlineScene } from "../streamlines/render";
 import type { StreamlineDisplayOptions, StreamlineResult } from "../streamlines/types";
@@ -145,41 +152,102 @@ function resultValueColor(value: number, max: number, colorMap: ResultColorMap):
   return valueColor(value, max, resultColorPalettes[colorMap]);
 }
 
-export type CinemaLightRig = {
-  key: THREE.DirectionalLight;
-  fill: THREE.DirectionalLight;
-  rim: THREE.DirectionalLight;
-  ambient: THREE.HemisphereLight;
-};
+/* --- Constant shading ---------------------------------------------------------
+ *
+ * This view is a diagram of a geometry, not a photograph of one, and every
+ * lighting model that describes form by orientation lies about that geometry:
+ * two identical pipes pointing different ways pick up different amounts of key
+ * light, so they read as different pipes. A directional/hemispherical rig makes
+ * the hue consistent but keeps that orientation dependence; only constant
+ * shading removes it.
+ *
+ * So: the drawn network is unlit throughout, and the one lit material in the
+ * scene that this module does not own - the presentation-only derived iso
+ * surface built by `derivedRenderer` - is lit by a single ambient light. Ambient
+ * irradiance has no direction, so even a `MeshStandardMaterial` under this rig
+ * shades uniformly across every face. Depth is carried instead by outlines,
+ * wireframe edges and the discrete tone ladder below.
+ */
 
 /**
- * Neutral three-point rig.
+ * Ambient intensity that renders a lit material at its own albedo.
  *
- * Every light here is directional or hemispherical, so the light a surface
- * receives depends only on its normal - never on where it happens to sit in the
- * scene. The rig this replaces added two saturated short-range PointLights
- * (cyan at x=+4, warm orange at y=+2.8), which tinted one identical material
- * cyan on one side of the network and orange on the other; that positional hue
- * shift was the inconsistency. Keeping all four lights white or near-white
- * leaves hue to the materials and puts the lighting to work describing form.
- *
- * Scene convention: the network lies in the XY plane and +Z is up, so the key
- * is high on +Z rather than the +Y a Y-up scene would use.
+ * three.js feeds ambient light straight through as irradiance and the physical
+ * BRDF divides diffuse by PI, so PI is the intensity at which a surface comes
+ * back the colour it was authored as - no brighter, no dimmer, and the same on
+ * every face.
  */
-export function createCinemaLightRig(): CinemaLightRig {
-  const key = new THREE.DirectionalLight(0xffffff, 2.85);
-  key.position.set(-3.6, -4.6, 7.4); // high, and over the viewer's left shoulder
-  key.name = "Cinema key light";
-  const fill = new THREE.DirectionalLight(0xffffff, 1.05);
-  fill.position.set(4.9, -3.2, 2.1); // opposite the key, opens up the shadow side
-  fill.name = "Cinema fill light";
-  const rim = new THREE.DirectionalLight(0xffffff, 0.7);
-  rim.position.set(0.7, 5.4, 3.1); // from behind, separates silhouettes from the background
-  rim.name = "Cinema rim light";
-  const ambient = new THREE.HemisphereLight(0xeef2f6, 0x1b2026, 0.85);
-  ambient.position.set(0, 0, 1); // hemisphere axis follows the scene's +Z up
-  ambient.name = "Cinema ambient";
-  return { key, fill, rim, ambient };
+export const CINEMA_AMBIENT_INTENSITY = Math.PI;
+
+/**
+ * The scene's whole lighting model: one omnidirectional light, so no surface's
+ * colour can depend on which way it faces or where it sits.
+ */
+export function createCinemaAmbientLight(): THREE.AmbientLight {
+  const ambient = new THREE.AmbientLight(0xffffff, CINEMA_AMBIENT_INTENSITY);
+  ambient.name = "Cinema constant light";
+  return ambient;
+}
+
+/**
+ * The tone ladder that replaces specular falloff.
+ *
+ * Depth in a constant-shaded drawing comes from deliberate, quantised value
+ * differences between *parts* - a casing against its core, a body against its
+ * trim - never from where a part happens to be pointing. Four steps is enough
+ * to separate near from far without anyone mistaking a step for a measurement.
+ */
+export const CINEMA_TONE_STEPS = { recessed: 0.52, shadow: 0.74, base: 1, raised: 1.28 } as const;
+
+export type CinemaToneStep = keyof typeof CINEMA_TONE_STEPS;
+
+/**
+ * A colour moved one rung up or down the ladder. Pure and position-free: the
+ * same input colour and step always produce the same output, which is what lets
+ * two identical pipes be drawn identically wherever they sit.
+ */
+export function steppedTone(color: THREE.ColorRepresentation, step: CinemaToneStep): THREE.Color {
+  const factor = CINEMA_TONE_STEPS[step];
+  const shaded = new THREE.Color(color);
+  return shaded.setRGB(
+    Math.min(1, shaded.r * factor),
+    Math.min(1, shaded.g * factor),
+    Math.min(1, shaded.b * factor)
+  );
+}
+
+/**
+ * Base for any surface of the drawn network.
+ *
+ * Unlit and un-fogged, so the pixel depends only on the material - not on the
+ * surface normal, not on distance from the camera, not on where in the scene
+ * the object was placed.
+ */
+export function createConstantSurfaceMaterial(options: {
+  color: THREE.ColorRepresentation;
+  opacity?: number;
+  depthWrite?: boolean;
+  side?: THREE.Side;
+  wireframe?: boolean;
+}): THREE.MeshBasicMaterial {
+  const opacity = options.opacity ?? 1;
+  const material = new THREE.MeshBasicMaterial({
+    color: options.color,
+    wireframe: options.wireframe ?? false,
+    transparent: opacity < 1,
+    opacity,
+    side: options.side ?? THREE.FrontSide,
+    depthWrite: options.depthWrite ?? false
+  });
+  material.fog = false;
+  return material;
+}
+
+/** Outline stroke: the drawing's own way of saying where a solid stops. */
+export function createConstantOutlineMaterial(color: THREE.ColorRepresentation, opacity: number): THREE.LineBasicMaterial {
+  const material = new THREE.LineBasicMaterial({ color, transparent: opacity < 1, opacity, depthWrite: false });
+  material.fog = false;
+  return material;
 }
 
 /**
@@ -212,36 +280,36 @@ export function createResultBoundaryMaterial(): THREE.LineBasicMaterial {
 
 export type SchematicPipeMaterials = {
   cage: THREE.MeshBasicMaterial;
-  core: THREE.MeshStandardMaterial;
+  core: THREE.MeshBasicMaterial;
+  outline: THREE.LineBasicMaterial;
 };
 
 /**
  * Materials for one drawn pipe.
  *
- * The outer surface becomes a ghosted wireframe cage - a treatment no solver
- * ever outputs - so the drawn network reads as a diagram at a glance. The core
- * still carries the network overlay colour but stays translucent, so it can
- * never look more authoritative than the opaque solved surface beneath it.
+ * The outer surface is a ghosted wireframe cage - a treatment no solver ever
+ * outputs - so the drawn network reads as a diagram at a glance. The core
+ * carries the network overlay colour but stays translucent, so it can never look
+ * more authoritative than the opaque solved surface beneath it.
+ *
+ * All three are unlit. The core used to be a `MeshStandardMaterial`, which meant
+ * a pipe running north picked up a different amount of key light than an
+ * identical pipe running east and the two read as different diameters. Cage and
+ * core sit one tone step apart so the tube still has an inside and an outside
+ * without any of that depending on which way it points.
  */
 export function createSchematicPipeMaterials(color: THREE.Color, active: boolean): SchematicPipeMaterials {
-  const cage = new THREE.MeshBasicMaterial({
+  const cage = createConstantSurfaceMaterial({
     color: active ? 0xffd98a : 0x7ea8c2,
     wireframe: true,
-    transparent: true,
-    opacity: active ? 0.36 : 0.2,
-    depthWrite: false
+    opacity: active ? 0.36 : 0.2
   });
-  const core = new THREE.MeshStandardMaterial({
-    color,
-    transparent: true,
-    opacity: active ? 0.5 : 0.34,
-    roughness: 0.36,
-    metalness: 0.02,
-    emissive: color,
-    emissiveIntensity: active ? 0.42 : 0.16,
-    depthWrite: false
+  const core = createConstantSurfaceMaterial({
+    color: steppedTone(color, active ? "base" : "shadow"),
+    opacity: active ? 0.5 : 0.34
   });
-  return { cage, core };
+  const outline = createConstantOutlineMaterial(steppedTone(color, "raised"), active ? 0.7 : 0.44);
+  return { cage, core, outline };
 }
 
 /**
@@ -264,41 +332,12 @@ function degreesToRadians(degrees: number) {
   return (degrees * Math.PI) / 180;
 }
 
-function nodeRadius(node: FluidNode) {
-  if (node.type === "source" || node.type === "sink") return 17;
-  if (node.type === "pump") return 19;
-  return 14;
-}
-
-function portAngle(node: FluidNode, port: PipePortId) {
-  const base = node.rotation ?? 0;
-  if (port === "outlet") return base;
-  if (port === "inlet") return base + 180;
-  if (port === "north") return base - 90;
-  return base + 90;
-}
-
-function portPosition(node: FluidNode, port: PipePortId): Vec2 {
-  const radius = nodeRadius(node) + 10;
-  const angle = degreesToRadians(portAngle(node, port));
-  return {
-    x: node.position.x + Math.cos(angle) * radius,
-    y: node.position.y + Math.sin(angle) * radius
-  };
-}
-
 function aimHandlePosition(node: FluidNode): Vec2 {
   const angle = degreesToRadians(node.rotation ?? 0);
   return {
     x: node.position.x + Math.cos(angle) * 46,
     y: node.position.y + Math.sin(angle) * 46
   };
-}
-
-function endpointPoint(edge: FluidEdge, endpoint: "from" | "to", nodes: Record<string, FluidNode>) {
-  const node = nodes[endpoint === "from" ? edge.from : edge.to];
-  if (!node) return null;
-  return portPosition(node, endpoint === "from" ? (edge.fromPort ?? "outlet") : (edge.toPort ?? "inlet"));
 }
 
 function projectCenter(project: FluidProject): Vec2 {
@@ -322,14 +361,119 @@ function networkFromWorld(point: THREE.Vector3, center: Vec2, worldScale: number
   };
 }
 
-function edgeWorldEndpoints(edge: FluidEdge, project: FluidProject, center: Vec2, worldScale: number) {
-  const from = endpointPoint(edge, "from", project.nodes) ?? project.nodes[edge.from]?.position;
-  const to = endpointPoint(edge, "to", project.nodes) ?? project.nodes[edge.to]?.position;
-  if (!from || !to) return null;
-  return {
-    start: worldFromNetwork(from, center, worldScale, 0),
-    end: worldFromNetwork(to, center, worldScale, 0)
-  };
+/* --- One route, drawn twice --------------------------------------------------
+ *
+ * `buildSchematicRoutes` is the schematic's own router. Running it here, rather
+ * than drawing a straight tube between the two port positions, is the whole
+ * point: a pipe that turns two corners on the schematic turns the same two
+ * corners in 3D, because both views are reading the same polyline.
+ */
+
+/** Corner radius of a bend, as a multiple of the pipe's own radius. */
+export const PIPE_BEND_RADIUS_SCALE = 2.6;
+/** Points sampled around each bend. Enough that a right angle reads as a swept elbow. */
+const PIPE_BEND_SEGMENTS = 6;
+
+/** Every pipe route in the project, keyed by edge id, exactly as the schematic draws them. */
+function routesByEdge(project: FluidProject): Map<string, Vec2[]> {
+  return new Map(buildSchematicRoutes(project).map((route: WireRoute) => [route.id, route.points]));
+}
+
+/**
+ * The routed polyline lifted into world space, with its corners filleted so the
+ * swept tube turns through a bend instead of a knife edge. `worldFromNetwork`
+ * mirrors y, which is a reflection, so the fillets stay circular.
+ */
+function routeWorldPath(
+  routePoints: readonly Vec2[],
+  pipeRadius: number,
+  center: Vec2,
+  worldScale: number
+): THREE.Vector3[] {
+  const bendRadius = pipeRadius * PIPE_BEND_RADIUS_SCALE * worldScale;
+  return roundPolylineCorners(routePoints, bendRadius, PIPE_BEND_SEGMENTS).map((point) =>
+    worldFromNetwork(point, center, worldScale, 0)
+  );
+}
+
+/**
+ * Sweeps a circular section along an open path.
+ *
+ * Frames are parallel-transported from a seed normal rather than taken from the
+ * Frenet frame, so a straight run has a defined cross-section instead of an
+ * undefined one, and the tube does not twist as it turns. The network lies in a
+ * plane, so seeding with the plane normal gives every pipe in the scene the same
+ * facet orientation - part of why two identical pipes read as identical however
+ * they are pointing.
+ *
+ * Kept free of any renderer state so it can be unit-tested without WebGL.
+ */
+export function buildSweptTubeGeometry(
+  path: readonly THREE.Vector3[],
+  radius: number,
+  radialSegments = 12
+): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  const points: THREE.Vector3[] = [];
+  for (const point of path) {
+    const previous = points[points.length - 1];
+    if (previous && previous.distanceToSquared(point) <= 1e-14) continue;
+    points.push(point.clone());
+  }
+  if (points.length < 2) return geometry;
+
+  const sides = Math.max(3, Math.round(radialSegments));
+  const tangents = points.map((point, index) => {
+    const before = points[Math.max(0, index - 1)];
+    const after = points[Math.min(points.length - 1, index + 1)];
+    const tangent = after.clone().sub(before);
+    return tangent.lengthSq() <= 1e-20 ? new THREE.Vector3(1, 0, 0) : tangent.normalize();
+  });
+
+  // Seed off the network plane's own normal; fall back only if a run is somehow
+  // perpendicular to the plane, which an orthogonal 2D route never is.
+  let normal = new THREE.Vector3(0, 0, 1);
+  if (Math.abs(normal.dot(tangents[0])) > 0.99) normal = new THREE.Vector3(0, 1, 0);
+
+  const positions: number[] = [];
+  const vertexNormals: number[] = [];
+  points.forEach((point, index) => {
+    const tangent = tangents[index];
+    // Parallel transport: keep as much of the previous frame as this tangent allows.
+    normal = normal.clone().sub(tangent.clone().multiplyScalar(normal.dot(tangent)));
+    if (normal.lengthSq() <= 1e-12) {
+      normal = new THREE.Vector3(0, 0, 1).sub(tangent.clone().multiplyScalar(tangent.z));
+      if (normal.lengthSq() <= 1e-12) normal = new THREE.Vector3(0, 1, 0);
+    }
+    normal.normalize();
+    const binormal = tangent.clone().cross(normal).normalize();
+    for (let side = 0; side < sides; side += 1) {
+      const angle = (side / sides) * Math.PI * 2;
+      const offset = normal
+        .clone()
+        .multiplyScalar(Math.cos(angle))
+        .add(binormal.clone().multiplyScalar(Math.sin(angle)));
+      positions.push(point.x + offset.x * radius, point.y + offset.y * radius, point.z + offset.z * radius);
+      vertexNormals.push(offset.x, offset.y, offset.z);
+    }
+  });
+
+  const indices: number[] = [];
+  for (let ring = 0; ring < points.length - 1; ring += 1) {
+    for (let side = 0; side < sides; side += 1) {
+      const nextSide = (side + 1) % sides;
+      const a = ring * sides + side;
+      const b = ring * sides + nextSide;
+      const c = (ring + 1) * sides + side;
+      const d = (ring + 1) * sides + nextSide;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(vertexNormals, 3));
+  geometry.setIndex(indices);
+  return geometry;
 }
 
 function orientBetweenPoints(object: THREE.Object3D, start: THREE.Vector3, end: THREE.Vector3) {
@@ -529,14 +673,82 @@ function projectedNodePositions(project: FluidProject, center: Vec2, worldScale:
   );
 }
 
-function applyCamera(camera: THREE.PerspectiveCamera, settings: CinemaCameraState) {
+/* --- Orthographic projection -------------------------------------------------
+ *
+ * A perspective camera makes parallel pipes converge and draws the near half of
+ * a run wider than the far half, so two pipes of equal diameter measure
+ * differently on screen purely because of where they sit. On a view whose job is
+ * to show geometry that is not a stylistic preference, it is wrong. Orthographic
+ * projection keeps a diameter a diameter and parallel runs parallel.
+ */
+
+/** World-space height the camera frames at zoom 1: the extent the old 40-degree lens saw. */
+export const CINEMA_VIEW_HEIGHT = 6.48;
+/**
+ * How far back the camera sits. Orthographic scale is independent of distance,
+ * so this only has to clear the scene; zoom drives the frustum instead.
+ */
+export const CINEMA_CAMERA_DISTANCE = 16;
+
+/** Usable zoom range. Unchanged from the perspective rig, so the controls still feel the same. */
+export function clampCinemaZoom(zoom: number): number {
+  return Math.max(0.45, Math.min(1.8, zoom));
+}
+
+/** Half-extents of the orthographic frustum for a canvas of this size at this zoom. */
+export function cinemaOrthographicFrustum(width: number, height: number, zoom: number) {
+  const aspect = Math.max(width, 1) / Math.max(height, 1);
+  const halfHeight = CINEMA_VIEW_HEIGHT / (2 * clampCinemaZoom(zoom));
+  const halfWidth = halfHeight * aspect;
+  return { left: -halfWidth, right: halfWidth, top: halfHeight, bottom: -halfHeight };
+}
+
+/**
+ * Zoom that frames a network of this world extent.
+ *
+ * Under perspective this was a distance calculation against the field of view;
+ * under orthographic it is the ratio of what the camera frames to what has to
+ * fit, which is the same question with the lens taken out of it. The floor keeps
+ * a two-component sketch from being magnified until one pipe fills the panel.
+ */
+export function cinemaFitZoom(worldSpan: number): number {
+  const required = Math.max(CINEMA_VIEW_HEIGHT / 2, Math.max(worldSpan, 0) * 1.3);
+  return Math.max(0.25, Math.min(4, CINEMA_VIEW_HEIGHT / required));
+}
+
+export function createCinemaCamera(width: number, height: number, settings: CinemaCameraState): THREE.OrthographicCamera {
+  const frustum = cinemaOrthographicFrustum(width, height, settings.zoom);
+  const camera = new THREE.OrthographicCamera(frustum.left, frustum.right, frustum.top, frustum.bottom, 0.1, 60);
+  // The network lies in the XY plane with +Z up, so the camera's own up axis is
+  // +Z. Under the old +Y up, a pitch of zero put the view direction along the up
+  // axis and the framing was whatever `lookAt` fell back to.
+  camera.up.set(0, 0, 1);
+  applyCinemaCamera(camera, settings, width, height);
+  return camera;
+}
+
+export function applyCinemaCamera(
+  camera: THREE.OrthographicCamera,
+  settings: CinemaCameraState,
+  width: number,
+  height: number
+) {
   const yaw = degreesToRadians(settings.yaw);
   const pitch = degreesToRadians(Math.max(-12, Math.min(78, settings.pitch)));
-  const distance = 8.9 / Math.max(0.45, Math.min(1.8, settings.zoom));
-  const horizontal = Math.cos(pitch) * distance;
+  const horizontal = Math.cos(pitch) * CINEMA_CAMERA_DISTANCE;
   const target = new THREE.Vector3(settings.pan.x, settings.pan.y, 0);
-  camera.position.set(target.x + Math.sin(yaw) * horizontal, target.y - Math.cos(yaw) * horizontal, target.z + Math.sin(pitch) * distance);
+  camera.position.set(
+    target.x + Math.sin(yaw) * horizontal,
+    target.y - Math.cos(yaw) * horizontal,
+    target.z + Math.sin(pitch) * CINEMA_CAMERA_DISTANCE
+  );
   camera.lookAt(target);
+  const frustum = cinemaOrthographicFrustum(width, height, settings.zoom);
+  camera.left = frustum.left;
+  camera.right = frustum.right;
+  camera.top = frustum.top;
+  camera.bottom = frustum.bottom;
+  camera.updateProjectionMatrix();
 }
 
 export function buildCinemaScene(options: {
@@ -588,13 +800,16 @@ export function buildCinemaScene(options: {
   renderer.setClearColor(0x02070d, 1);
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0x02070d, 6.5, 15);
-  const camera = new THREE.PerspectiveCamera(40, width / Math.max(height, 1), 0.1, 80);
-  applyCamera(camera, cinemaCamera);
+  // No fog. Distance fog is another way of making a surface's colour depend on
+  // where it sits rather than on what it is, which is exactly what constant
+  // shading is here to remove; the solved surface already opted out of it.
+  const camera = createCinemaCamera(width, height, cinemaCamera);
   camera.updateMatrixWorld();
-  camera.updateProjectionMatrix();
 
   let currentProject = project;
+  let currentCamera = cinemaCamera;
+  let viewWidth = width;
+  let viewHeight = height;
   let center = projectCenter(project);
   const worldScale = 74;
   const pickables: THREE.Object3D[] = [];
@@ -606,13 +821,20 @@ export function buildCinemaScene(options: {
     {
       outerPipe: THREE.Mesh;
       innerPipe: THREE.Mesh;
+      outline: THREE.Line;
       rings: THREE.Mesh[];
+      collars: THREE.Mesh[];
+      collarGeometry: THREE.BufferGeometry;
+      collarMaterial: THREE.Material;
       throat?: THREE.Mesh;
       valve?: THREE.Mesh;
       bend?: THREE.Mesh;
       particleStart: number;
       particleCount: number;
       coreMaterial: THREE.Material;
+      radius: number;
+      /** The route this pipe was last built from, so an unchanged route is never rebuilt. */
+      routeKey: string;
     }
   >();
   const nodeVisuals = new Map<string, { group: THREE.Group; ports: Map<PipePortId, THREE.Mesh>; handle?: THREE.Mesh; handleLine?: THREE.Line }>();
@@ -626,8 +848,28 @@ export function buildCinemaScene(options: {
     orientBetweenPoints(mesh, start, end);
   }
 
-  const lights = createCinemaLightRig();
-  scene.add(lights.key, lights.fill, lights.rim, lights.ambient);
+  /** Cheap identity for a route, so `updateModel` only rebuilds tubes that actually moved. */
+  function routeKeyOf(points: readonly Vec2[]): string {
+    return points.map((point) => `${Math.round(point.x * 100)},${Math.round(point.y * 100)}`).join(";");
+  }
+
+  function routeWorldPoint(points: readonly Vec2[], t: number, z: number): THREE.Vector3 {
+    return worldFromNetwork(pointOnPolyline(points, t), center, worldScale, z);
+  }
+
+  /** Direction of travel a fraction along a route, in world space. */
+  function routeWorldTangent(points: readonly Vec2[], t: number): THREE.Vector3 {
+    const tangent = tangentOnPolyline(points, t);
+    // `worldFromNetwork` mirrors y, so the direction has to be mirrored with it.
+    return new THREE.Vector3(tangent.x, -tangent.y, 0).normalize();
+  }
+
+  /** Where a pipe's interior corners land in world space: one collar per bend. */
+  function routeWorldCorners(points: readonly Vec2[], z: number): THREE.Vector3[] {
+    return points.slice(1, -1).map((point) => worldFromNetwork(point, center, worldScale, z));
+  }
+
+  scene.add(createCinemaAmbientLight());
 
   // The grid alone carries the ground reference. The dark PlaneGeometry that
   // used to sit here was a large flat rectangle directly beneath the solved
@@ -687,109 +929,101 @@ export function buildCinemaScene(options: {
     pickables.push(object);
   }
 
+  const initialRoutes = routesByEdge(project);
+
   Object.values(project.edges).forEach((edge) => {
-    const endpoints = edgeWorldEndpoints(edge, project, center, worldScale);
+    const route = initialRoutes.get(edge.id);
     const solved = result.edgeResults[edge.id];
-    if (!endpoints || !solved) return;
-    const { start, end } = endpoints;
+    if (!route || !solved) return;
     const metric = project.visualization.overlay === "pressure" ? solved.pressureDrop : project.visualization.overlay === "reynolds" ? solved.reynolds : solved.velocity;
     const color = new THREE.Color(overlayValueColor(metric, maxEdge, project.visualization.overlay));
     const radius = Math.max(0.065, edge.shape.kind === "circular" ? edge.shape.diameter * 0.86 : edge.shape.height * 0.76);
     const active = selectedKind === "edge" && selectedId === edge.id;
-    const { cage: cageMaterial, core: coreMaterial } = createSchematicPipeMaterials(color, active);
+    const { cage: cageMaterial, core: coreMaterial, outline: outlineMaterial } = createSchematicPipeMaterials(color, active);
     // A coarse, visibly faceted cage: few enough segments that the wireframe
     // reads as a drawing rather than as a shaded tube, and sparse enough that it
     // never stripes the solved surface behind it.
-    const outerPipe = createPipeMesh(start, end, radius * 1.42, cageMaterial, 8);
-    const innerPipe = createPipeMesh(start, end, Math.max(0.034, radius * 0.62), coreMaterial, 16);
+    const cageRadius = radius * 1.42;
+    const coreRadius = Math.max(0.034, radius * 0.62);
+    const outerPipe = new THREE.Mesh(buildSweptTubeGeometry(routeWorldPath(route, cageRadius, center, worldScale), cageRadius, 8), cageMaterial);
+    const innerPipe = new THREE.Mesh(buildSweptTubeGeometry(routeWorldPath(route, coreRadius, center, worldScale), coreRadius, 16), coreMaterial);
     outerPipe.name = `Schematic pipe cage ${edge.id}`;
     innerPipe.name = `Schematic pipe core ${edge.id}`;
     registerPickable(outerPipe, { kind: "edge", id: edge.id });
     registerPickable(innerPipe, { kind: "edge", id: edge.id });
     scene.add(outerPipe, innerPipe);
 
+    // The centre line is the drawing's outline: it traces the routed path itself,
+    // so where the pipe turns is legible without asking a highlight to say so.
+    const outline = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(routeWorldPath(route, coreRadius, center, worldScale)),
+      outlineMaterial
+    );
+    outline.name = `Schematic pipe centre line ${edge.id}`;
+    scene.add(outline);
+
     const ringGeometry = new THREE.TorusGeometry(radius * 1.62, 0.015, 10, 42);
-    // Matte, not metallic: this scene has no environment map, so the old
-    // metalness of 0.82 rendered near-black except where the removed saturated
-    // point lights happened to strike it.
-    const ringMaterial = new THREE.MeshStandardMaterial({
-      color: active ? 0xffd98a : 0x9fb8c8,
-      metalness: 0.18,
-      roughness: 0.44,
-      transparent: true,
-      opacity: active ? 0.62 : 0.36,
-      depthWrite: false,
-      emissive: 0x0a1620,
-      emissiveIntensity: 0.12
+    // Unlit like everything else in the drawing, so an end ring is the same
+    // brightness whichever way its pipe happens to run.
+    const ringMaterial = createConstantSurfaceMaterial({
+      color: steppedTone(active ? 0xffd98a : 0x9fb8c8, "base"),
+      opacity: active ? 0.62 : 0.36
     });
     const rings: THREE.Mesh[] = [];
     [0.08, 0.92].forEach((t) => {
       const ring = new THREE.Mesh(ringGeometry.clone(), ringMaterial);
-      const point = start.clone().lerp(end, t);
-      ring.position.copy(point);
-      ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), end.clone().sub(start).normalize());
+      ring.position.copy(routeWorldPoint(route, t, 0));
+      ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), routeWorldTangent(route, t));
       registerPickable(ring, { kind: "edge", id: edge.id });
       scene.add(ring);
       rings.push(ring);
     });
 
+    // A collar on every bend. Corners are the thing the 3D view used to drop, so
+    // they get a marker that says "the pipe turns here" at any viewing angle.
+    const collarGeometry = new THREE.SphereGeometry(cageRadius * 1.12, 14, 10);
+    const collarMaterial = createConstantSurfaceMaterial({
+      color: steppedTone(active ? 0xffd98a : 0x9fb8c8, "shadow"),
+      opacity: active ? 0.5 : 0.3
+    });
+    const collars: THREE.Mesh[] = routeWorldCorners(route, 0).map((corner) => {
+      const collar = new THREE.Mesh(collarGeometry, collarMaterial);
+      collar.position.copy(corner);
+      collar.name = `Schematic pipe bend ${edge.id}`;
+      registerPickable(collar, { kind: "edge", id: edge.id });
+      scene.add(collar);
+      return collar;
+    });
+
     let throat: THREE.Mesh | undefined;
     let valve: THREE.Mesh | undefined;
     let bend: THREE.Mesh | undefined;
-    // Fittings stay part of the illustration: matte, translucent, and never
-    // self-luminous enough to out-shout the solved surface.
+    // Fittings stay part of the illustration: flat, translucent, and never
+    // brighter than the opaque solved surface.
     if (edge.type === "venturi") {
       throat = createPipeMesh(
-        start.clone().lerp(end, 0.42),
-        start.clone().lerp(end, 0.58),
+        routeWorldPoint(route, 0.42, 0),
+        routeWorldPoint(route, 0.58, 0),
         Math.max(0.03, radius * 0.35),
-        new THREE.MeshStandardMaterial({
-          color: 0xe8c775,
-          roughness: 0.4,
-          metalness: 0.08,
-          transparent: true,
-          opacity: 0.58,
-          depthWrite: false,
-          emissive: 0x2a1e08,
-          emissiveIntensity: 0.2
-        }),
+        createConstantSurfaceMaterial({ color: steppedTone(0xe8c775, "base"), opacity: 0.58 }),
         20
       );
       registerPickable(throat, { kind: "edge", id: edge.id });
       scene.add(throat);
     } else if (edge.type === "valve") {
-      const midpoint = start.clone().lerp(end, 0.5);
       valve = new THREE.Mesh(
         new THREE.OctahedronGeometry(radius * 1.65, 0),
-        new THREE.MeshStandardMaterial({
-          color: 0xe0a266,
-          metalness: 0.16,
-          roughness: 0.42,
-          transparent: true,
-          opacity: 0.62,
-          depthWrite: false,
-          emissive: 0x241203,
-          emissiveIntensity: 0.18
-        })
+        createConstantSurfaceMaterial({ color: steppedTone(0xe0a266, "base"), opacity: 0.62 })
       );
-      valve.position.copy(midpoint).setZ(radius * 1.7);
+      valve.position.copy(routeWorldPoint(route, 0.5, 0)).setZ(radius * 1.7);
       registerPickable(valve, { kind: "edge", id: edge.id });
       scene.add(valve);
     } else if (edge.type === "bend") {
       bend = new THREE.Mesh(
         new THREE.TorusGeometry(radius * 1.3, 0.02, 8, 40),
-        new THREE.MeshStandardMaterial({
-          color: 0x8fc6dc,
-          roughness: 0.4,
-          metalness: 0.1,
-          transparent: true,
-          opacity: 0.6,
-          depthWrite: false,
-          emissive: 0x0a1e28,
-          emissiveIntensity: 0.16
-        })
+        createConstantSurfaceMaterial({ color: steppedTone(0x8fc6dc, "base"), opacity: 0.6 })
       );
-      bend.position.copy(start.clone().lerp(end, 0.5)).setZ(radius * 1.4);
+      bend.position.copy(routeWorldPoint(route, 0.5, 0)).setZ(radius * 1.4);
       registerPickable(bend, { kind: "edge", id: edge.id });
       scene.add(bend);
     }
@@ -798,13 +1032,29 @@ export function buildCinemaScene(options: {
     const particleCount = Math.max(16, Math.min(56, Math.round(Math.abs(solved.velocity) * 9)));
     for (let index = 0; index < particleCount; index += 1) {
       const t = index / particleCount;
-      const point = start.clone().lerp(end, t);
+      const point = routeWorldPoint(route, t, 0);
       particlePositions.push(point.x, point.y, point.z + 0.07 + (index % 4) * 0.014);
       particleColors.push(color.r, color.g, color.b);
       particlePhases.push(t + edge.id.length * 0.07);
     }
     particleRanges.push({ edgeId: edge.id, start: particleStart, count: particleCount });
-    edgeVisuals.set(edge.id, { outerPipe, innerPipe, rings, throat, valve, bend, particleStart, particleCount, coreMaterial });
+    edgeVisuals.set(edge.id, {
+      outerPipe,
+      innerPipe,
+      outline,
+      rings,
+      collars,
+      collarGeometry,
+      collarMaterial,
+      throat,
+      valve,
+      bend,
+      particleStart,
+      particleCount,
+      coreMaterial,
+      radius,
+      routeKey: routeKeyOf(route)
+    });
   });
 
   if (particlePositions.length > 0 && project.visualization.particles) {
@@ -835,18 +1085,14 @@ export function buildCinemaScene(options: {
     nodeGroup.position.copy(position);
     nodeGroup.rotation.z = -degreesToRadians(node.rotation ?? 0);
     nodeGroup.name = `Schematic component ${node.id}`;
-    // Equipment symbols: matte and translucent so they stay part of the drawing.
-    // Metalness is low because there is no environment map for a metal to
-    // reflect - the old high-metalness values only looked right under the
-    // saturated point lights that have been removed.
-    const material = new THREE.MeshStandardMaterial({
-      color: active ? 0xf0c563 : node.type === "pump" ? 0x8ba0b1 : node.type === "mixer" ? 0x3f939a : 0x2b556d,
-      metalness: node.type === "pump" ? 0.24 : 0.14,
-      roughness: 0.45,
-      transparent: true,
+    // Equipment symbols: flat and translucent so they stay part of the drawing.
+    // Unlit, so a component reads the same whether it faces the camera or away
+    // from it - form is carried by the outline added below and by the tone step
+    // between a body and its trim, not by a highlight rolling across a curve.
+    const material = createConstantSurfaceMaterial({
+      color: steppedTone(active ? 0xf0c563 : node.type === "pump" ? 0x8ba0b1 : node.type === "mixer" ? 0x3f939a : 0x2b556d, "base"),
       opacity: active ? 0.82 : 0.66,
-      emissive: active ? 0x3a2900 : 0x08161f,
-      emissiveIntensity: active ? 0.4 : 0.14
+      depthWrite: true
     });
 
     let body: THREE.Mesh;
@@ -855,26 +1101,19 @@ export function buildCinemaScene(options: {
       body.rotation.x = Math.PI / 2;
       const impeller = new THREE.Mesh(
         new THREE.TorusGeometry(0.22, 0.03, 14, 42),
-        new THREE.MeshStandardMaterial({ color: 0xc2d3de, metalness: 0.22, roughness: 0.4, transparent: true, opacity: 0.72, emissive: 0x0a141b, emissiveIntensity: 0.12 })
+        createConstantSurfaceMaterial({ color: steppedTone(0xc2d3de, "raised"), opacity: 0.72 })
       );
       impeller.position.z = 0.03;
       nodeGroup.add(impeller);
     } else if (node.type === "source" || node.type === "sink") {
-      // Ghosted vessel. `transmission` needs an environment to refract and this
-      // scene has none, so a plainly translucent matte shell reads better and
-      // behaves identically wherever the vessel sits.
+      // Ghosted vessel: a plainly translucent shell that behaves identically
+      // wherever the vessel sits.
       body = new THREE.Mesh(
         new THREE.CylinderGeometry(0.42, 0.42, 0.66, 48, 1, true),
-        new THREE.MeshStandardMaterial({
-          color: 0x7fc8e0,
-          transparent: true,
+        createConstantSurfaceMaterial({
+          color: steppedTone(0x7fc8e0, "base"),
           opacity: 0.24,
-          roughness: 0.4,
-          metalness: 0.04,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          emissive: 0x0a2733,
-          emissiveIntensity: 0.18
+          side: THREE.DoubleSide
         })
       );
       body.rotation.x = Math.PI / 2;
@@ -883,7 +1122,7 @@ export function buildCinemaScene(options: {
       body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 36, 20), material);
       const swirl = new THREE.Mesh(
         new THREE.TorusKnotGeometry(0.22, 0.015, 84, 8),
-        new THREE.MeshBasicMaterial({ color: 0x8ed2e6, transparent: true, opacity: 0.42, depthWrite: false })
+        createConstantSurfaceMaterial({ color: steppedTone(0x8ed2e6, "raised"), opacity: 0.42 })
       );
       nodeGroup.add(swirl);
     } else {
@@ -891,6 +1130,15 @@ export function buildCinemaScene(options: {
     }
     registerPickable(body, { kind: "node", id: node.id });
     nodeGroup.add(body);
+
+    // Outline the body's own silhouette and creases. On a constant-shaded
+    // drawing this is what tells one solid from the one behind it.
+    const bodyOutline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(body.geometry, 24),
+      createConstantOutlineMaterial(steppedTone(active ? 0xffe3a1 : 0xa8c4d8, "raised"), active ? 0.85 : 0.5)
+    );
+    bodyOutline.name = `Schematic component outline ${node.id}`;
+    body.add(bodyOutline);
     const pickVolume = new THREE.Mesh(
       new THREE.SphereGeometry(node.type === "source" || node.type === "sink" ? 0.28 : 0.24, 16, 10),
       new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.001, depthWrite: false })
@@ -899,10 +1147,10 @@ export function buildCinemaScene(options: {
     nodeGroup.add(pickVolume);
 
     ports.forEach((port) => {
-      const portPoint = worldFromNetwork(portPosition(node, port), center, worldScale, 0.1);
+      const portPoint = worldFromNetwork(schematicPortPosition(node, port), center, worldScale, 0.1);
       const portMesh = new THREE.Mesh(new THREE.SphereGeometry(port === "inlet" || port === "outlet" ? 0.064 : 0.048, 18, 12), new THREE.MeshBasicMaterial({ color: port === "inlet" || port === "outlet" ? 0x9dfbd7 : 0x8aa0b8 }));
       portMesh.position.copy(portPoint);
-      registerPickable(portMesh, { kind: "port", nodeId: node.id, port, point: portPosition(node, port) });
+      registerPickable(portMesh, { kind: "port", nodeId: node.id, port, point: schematicPortPosition(node, port) });
       scene.add(portMesh);
       nodePortMeshes.set(port, portMesh);
     });
@@ -993,12 +1241,47 @@ export function buildCinemaScene(options: {
     const minY = Math.min(...nodes.map((node) => node.position.y));
     const maxY = Math.max(...nodes.map((node) => node.position.y));
     const worldSpan = Math.max(maxX - minX, maxY - minY, 1) / worldScale;
-    const requiredDistance = Math.max(4.45, (worldSpan * 1.3) / (2 * Math.tan(degreesToRadians(camera.fov / 2))));
-    return {
-      ...settings,
-      zoom: Math.max(0.25, Math.min(4, 8.9 / requiredDistance)),
-      pan: { x: 0, y: 0 }
-    };
+    return { ...settings, zoom: cinemaFitZoom(worldSpan), pan: { x: 0, y: 0 } };
+  }
+
+  /**
+   * Re-sweeps one pipe along its current route.
+   *
+   * A route can gain or lose corners when a component moves, so the tube has to
+   * be rebuilt rather than stretched - which is precisely the thing the old
+   * fixed-length cylinder could not do, and why bends never reached this view.
+   */
+  function rebuildPipeGeometry(visual: NonNullable<ReturnType<typeof edgeVisuals.get>>, route: readonly Vec2[]) {
+    const cageRadius = visual.radius * 1.42;
+    const coreRadius = Math.max(0.034, visual.radius * 0.62);
+    const cagePath = routeWorldPath(route, cageRadius, center, worldScale);
+    const corePath = routeWorldPath(route, coreRadius, center, worldScale);
+    visual.outerPipe.geometry.dispose();
+    visual.outerPipe.geometry = buildSweptTubeGeometry(cagePath, cageRadius, 8);
+    visual.innerPipe.geometry.dispose();
+    visual.innerPipe.geometry = buildSweptTubeGeometry(corePath, coreRadius, 16);
+    visual.outline.geometry.dispose();
+    visual.outline.geometry = new THREE.BufferGeometry().setFromPoints(corePath);
+
+    // One collar per corner, so a route that gains a bend gains a marker for it.
+    const corners = routeWorldCorners(route, 0);
+    while (visual.collars.length > corners.length) {
+      const collar = visual.collars.pop();
+      if (!collar) continue;
+      scene.remove(collar);
+      // Off the drawing means off the pick list, or a click would still land on
+      // a bend that is no longer there.
+      const picked = pickables.indexOf(collar);
+      if (picked >= 0) pickables.splice(picked, 1);
+    }
+    while (visual.collars.length < corners.length) {
+      const collar = new THREE.Mesh(visual.collarGeometry, visual.collarMaterial);
+      collar.userData = { ...visual.outerPipe.userData };
+      pickables.push(collar);
+      scene.add(collar);
+      visual.collars.push(collar);
+    }
+    visual.collars.forEach((collar, index) => collar.position.copy(corners[index]));
   }
 
   function updateModel(nextProject: FluidProject, nextResult: SimulationResult) {
@@ -1006,6 +1289,7 @@ export function buildCinemaScene(options: {
     const nextCenter = projectCenter(nextProject);
     center.x = nextCenter.x;
     center.y = nextCenter.y;
+    const routes = routesByEdge(nextProject);
     Object.values(nextProject.nodes).forEach((node) => {
       const visual = nodeVisuals.get(node.id);
       if (!visual) return;
@@ -1013,7 +1297,7 @@ export function buildCinemaScene(options: {
       visual.group.rotation.z = -degreesToRadians(node.rotation ?? 0);
       ports.forEach((port) => {
         const portMesh = visual.ports.get(port);
-        if (portMesh) portMesh.position.copy(worldFromNetwork(portPosition(node, port), center, worldScale, 0.1));
+        if (portMesh) portMesh.position.copy(worldFromNetwork(schematicPortPosition(node, port), center, worldScale, 0.1));
       });
       if (visual.handle) visual.handle.position.copy(worldFromNetwork(aimHandlePosition(node), center, worldScale, 0.16));
       if (visual.handleLine) {
@@ -1026,28 +1310,30 @@ export function buildCinemaScene(options: {
 
     Object.values(nextProject.edges).forEach((edge) => {
       const visual = edgeVisuals.get(edge.id);
-      const endpoints = edgeWorldEndpoints(edge, nextProject, center, worldScale);
-      if (!visual || !endpoints) return;
-      updatePipeMesh(visual.outerPipe, endpoints.start, endpoints.end);
-      updatePipeMesh(visual.innerPipe, endpoints.start, endpoints.end);
+      const route = routes.get(edge.id);
+      if (!visual || !route) return;
+      const routeKey = routeKeyOf(route);
+      if (routeKey !== visual.routeKey) {
+        rebuildPipeGeometry(visual, route);
+        visual.routeKey = routeKey;
+      }
       visual.rings.forEach((ring, index) => {
-        const point = endpoints.start.clone().lerp(endpoints.end, index === 0 ? 0.08 : 0.92);
-        ring.position.copy(point);
-        ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), endpoints.end.clone().sub(endpoints.start).normalize());
+        const t = index === 0 ? 0.08 : 0.92;
+        ring.position.copy(routeWorldPoint(route, t, 0));
+        ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), routeWorldTangent(route, t));
       });
-      if (visual.throat) updatePipeMesh(visual.throat, endpoints.start.clone().lerp(endpoints.end, 0.42), endpoints.start.clone().lerp(endpoints.end, 0.58));
-      if (visual.valve) visual.valve.position.copy(endpoints.start.clone().lerp(endpoints.end, 0.5)).setZ(0.12);
-      if (visual.bend) visual.bend.position.copy(endpoints.start.clone().lerp(endpoints.end, 0.5)).setZ(0.1);
+      if (visual.throat) updatePipeMesh(visual.throat, routeWorldPoint(route, 0.42, 0), routeWorldPoint(route, 0.58, 0));
+      if (visual.valve) visual.valve.position.copy(routeWorldPoint(route, 0.5, 0)).setZ(0.12);
+      if (visual.bend) visual.bend.position.copy(routeWorldPoint(route, 0.5, 0)).setZ(0.1);
     });
 
     const particlePosition = particleGeometry?.getAttribute("position") as THREE.BufferAttribute | undefined;
     if (particlePosition) {
       particleRanges.forEach(({ edgeId, start, count }) => {
-        const edge = nextProject.edges[edgeId];
-        const endpoints = edge ? edgeWorldEndpoints(edge, nextProject, center, worldScale) : null;
-        if (!endpoints) return;
+        const route = routes.get(edgeId);
+        if (!route) return;
         for (let index = 0; index < count; index += 1) {
-          const point = endpoints.start.clone().lerp(endpoints.end, index / count);
+          const point = routeWorldPoint(route, index / count, 0);
           particlePosition.setXYZ(start + index, point.x, point.y, point.z + 0.07 + (index % 4) * 0.014);
         }
       });
@@ -1055,19 +1341,20 @@ export function buildCinemaScene(options: {
     }
 
     camera.updateMatrixWorld();
-    Object.assign(projectedPositions, projectedNodePositions(nextProject, center, worldScale, camera, width, height));
+    Object.assign(projectedPositions, projectedNodePositions(nextProject, center, worldScale, camera, viewWidth, viewHeight));
     renderer.render(scene, camera);
     void nextResult;
   }
 
   function resize() {
     const nextRect = canvas.getBoundingClientRect();
-    const nextWidth = Math.max(1, nextRect.width);
-    const nextHeight = Math.max(1, nextRect.height);
+    viewWidth = Math.max(1, nextRect.width);
+    viewHeight = Math.max(1, nextRect.height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(nextWidth, nextHeight, false);
-    camera.aspect = nextWidth / nextHeight;
-    camera.updateProjectionMatrix();
+    renderer.setSize(viewWidth, viewHeight, false);
+    // Orthographic scale lives in the frustum, so a resize has to re-derive it
+    // from the current zoom rather than just changing an aspect ratio.
+    applyCinemaCamera(camera, currentCamera, viewWidth, viewHeight);
     camera.updateMatrixWorld();
   }
 
@@ -1083,7 +1370,7 @@ export function buildCinemaScene(options: {
     renderer.dispose();
   }
 
-  const projectedPositions = projectedNodePositions(project, center, worldScale, camera, width, height);
+  const projectedPositions = projectedNodePositions(project, center, worldScale, camera, viewWidth, viewHeight);
   const runtime: CinemaRuntime = {
     center,
     worldScale,
@@ -1100,9 +1387,10 @@ export function buildCinemaScene(options: {
     updateModel,
     fitCamera,
     updateCamera(settings: CinemaCameraState) {
-      applyCamera(camera, settings);
+      currentCamera = settings;
+      applyCinemaCamera(camera, settings, viewWidth, viewHeight);
       camera.updateMatrixWorld();
-      Object.assign(projectedPositions, projectedNodePositions(currentProject, center, worldScale, camera, width, height));
+      Object.assign(projectedPositions, projectedNodePositions(currentProject, center, worldScale, camera, viewWidth, viewHeight));
       renderer.render(scene, camera);
     },
     resize,
