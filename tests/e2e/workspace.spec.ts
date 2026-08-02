@@ -1,5 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
 
+/**
+ * These shell tests encode the venturi topology, and the application now opens
+ * on the two-node laminar starter. Below 1100 px the inspector is a closed
+ * overlay, so the preset control has to be revealed before it can be used.
+ */
+async function usePresetFixture(page: Page) {
+  const presetSelect = page.getByLabel("Preset");
+  const toggle = page.getByRole("button", { name: "Inspector" }).first();
+  const opened = !(await presetSelect.isVisible());
+  if (opened) await toggle.click();
+  await presetSelect.selectOption("Venturi Cavitation Lab");
+  // Leave the inspector as it was found, so a test that drives the toggle
+  // itself still starts from the closed state it expects.
+  if (opened) await toggle.click();
+}
+
+
 const generatedScreenshotMesh = `# vtk DataFile Version 3.0
 FlowLab generated-case volume mesh
 ASCII
@@ -69,11 +86,14 @@ test.describe("FlowLab workspace shell", () => {
   test("keeps each stage's controls contained and its dock aligned", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
+    await usePresetFixture(page);
     await expect(page.getByText("FlowLab", { exact: true })).toBeVisible();
     await expect(page.getByText("Components")).toBeVisible();
-    await expect(page.getByText("Project")).toBeVisible();
+    // The guided panel's copy also contains "project", and getByText is a
+    // case-insensitive substring match, so this must name the heading exactly.
+    await expect(page.getByText("Project", { exact: true })).toBeVisible();
     await expect(page.getByText("Layers")).toBeVisible();
-    await expect(page.locator("#inspector-panel").getByText("Inspector")).toBeVisible();
+    await expect(page.locator("#inspector-panel").getByText("Inspector", { exact: true })).toBeVisible();
     const stages = page.getByRole("navigation", { name: "FlowLab workflow stages" });
     await expect(stages.getByRole("button", { name: /Define/ })).toBeVisible();
     await expect(stages.getByRole("button", { name: /Estimate/ })).toBeVisible();
@@ -142,6 +162,7 @@ test.describe("FlowLab workspace shell", () => {
   test("keeps the schematic painted after selection, result loading, and a resize", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
+    await usePresetFixture(page);
 
     const schematic = page.getByTestId("schematic-canvas");
     async function expectPainted() {
@@ -169,6 +190,7 @@ test.describe("FlowLab workspace shell", () => {
   test("uses an inspector overlay and a one-pane fallback before either view is compressed", async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.goto("/");
+    await usePresetFixture(page);
 
     const inspectorToggle = page.getByRole("button", { name: "Inspector" });
     await expect(inspectorToggle).toBeVisible();
@@ -239,6 +261,7 @@ test.describe("FlowLab workspace shell", () => {
     });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
+    await usePresetFixture(page);
     const stages = page.getByRole("navigation", { name: "FlowLab workflow stages" });
 
     const define = stages.getByRole("button", { name: /Define/ });

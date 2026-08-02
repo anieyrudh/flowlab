@@ -15,7 +15,7 @@ import type {
   SweepConfig,
   WorkspaceMode
 } from "../types";
-import { venturiPreset } from "../data/presets";
+import { defaultPreset } from "../data/presets";
 import { solveHydraulicNetwork } from "../physics/hydraulics";
 import { runSweep, type SweepRun } from "../physics/sweeps";
 import { normalizeProject } from "../projectSchema";
@@ -148,10 +148,10 @@ export const useFlowStore = create<FlowStore>((set, get) => {
   };
 
   return ({
-  project: normalizeProject(structuredClone(venturiPreset)),
-  result: recalc(normalizeProject(structuredClone(venturiPreset))),
+  project: normalizeProject(structuredClone(defaultPreset)),
+  result: recalc(normalizeProject(structuredClone(defaultPreset))),
   sweepRuns: [],
-  selectedId: "inlet",
+  selectedId: Object.keys(defaultPreset.edges)[0] ?? null,
   selectedKind: "edge",
   backendOnline: false,
   past: [],

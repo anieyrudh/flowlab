@@ -70,8 +70,9 @@ describe("the laminar starter preset", () => {
     const edge = starterResult.edgeResults.tube;
     expect(edge.regime).toBe("laminar");
     expect(edge.reynolds).toBeLessThan(2300);
-    expect(edge.reynolds).toBeCloseTo(200.02, 2);
-    expect(edge.velocity).toBeCloseTo(1.0001, 4);
+    // Exactly the design point now the solve is self-consistent.
+    expect(edge.reynolds).toBeCloseTo(200, 6);
+    expect(edge.velocity).toBeCloseTo(1, 6);
     expect(starterResult.stable).toBe(true);
     expect(starterResult.warnings).toEqual([]);
   });

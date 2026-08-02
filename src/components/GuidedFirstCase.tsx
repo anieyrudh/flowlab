@@ -156,13 +156,18 @@ function readCfdPressureDrop(project: FluidProject, patchMetrics: PatchMetrics |
   const drop = patchMetrics?.pressureDrops?.[0];
   if (!drop || !Number.isFinite(drop.deltaP)) return null;
   // OpenFOAM incompressible cases solve for kinematic pressure p/rho in m2/s2.
-  // FlowLab labels the patch metric Pa but does not scale it, so scale it here.
-  const convertedFromKinematic = project.solver.advancedMode === "incompressible-navier-stokes";
+  // The service converts that at its own boundary and stamps the record, so
+  // trust the stamp. Converting again here would multiply by density twice.
   const density = project.fluid.density > 0 ? project.fluid.density : 1;
+  const serviceConverted = drop.convertedFromKinematic === true;
+  const convertHere = !serviceConverted && project.solver.advancedMode === "incompressible-navier-stokes";
+  const serviceDensity = Number.isFinite(drop.densityKgPerM3) && (drop.densityKgPerM3 ?? 0) > 0
+    ? (drop.densityKgPerM3 as number)
+    : density;
   return {
-    pressureDropPa: convertedFromKinematic ? drop.deltaP * density : drop.deltaP,
-    rawValue: drop.deltaP,
-    convertedFromKinematic,
+    pressureDropPa: convertHere ? drop.deltaP * density : drop.deltaP,
+    rawValue: serviceConverted ? drop.deltaP / serviceDensity : drop.deltaP,
+    convertedFromKinematic: serviceConverted || convertHere,
     fromPatch: drop.fromPatch,
     toPatch: drop.toPatch
   };

@@ -71,7 +71,7 @@ The metrics are:
 - **Max Reynolds**, which tells you if the flow is laminar or turbulent;
 - **Cavitation**, which counts the components at risk.
 
-**Max Reynolds** shows 200.02 for this example. A Reynolds number below 2300 is
+**Max Reynolds** shows 200 for this example. A Reynolds number below 2300 is
 laminar.
 
 Now change the example:

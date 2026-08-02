@@ -55,13 +55,16 @@ const lightMineralOil20C = {
 // its inlet velocity from flowDemand / area. Instant-1D and CFD therefore run
 // the same operating point.
 //
-// Source pressure. The instant-1D solver sizes the flow from the boundary
-// pressures with a turbulent friction guess, f(Re=1e5) = 0.0183099 for this
-// tube. Its port-to-port length is 1.8 m, so
-//   resistance = 0.0183099 * (1.8/0.02) = 1.6478873
-//   dp         = U^2 * rho * resistance / 2 = 1.0 * 870 * 1.6478873 / 2
-//              = 716.83 Pa
-// Rounding to 717 Pa gives U = 1.00012 m/s and Re = 200.02.
+// Source pressure. The instant-1D solve iterates until the flow agrees with
+// its own friction factor, so at convergence the driving pressure equals the
+// laminar loss over the 1.8 m port-to-port length:
+//   dp = 32*mu*U*L_eff/D^2 = 32 * 0.087 * 1.0 * 1.8 / 0.02^2 = 12 528 Pa
+// giving U = 1 m/s and Re = 200.
+//
+// An earlier version of this preset used 717 Pa. That came from the solver's
+// old single pass, which sized the flow with a turbulent guess at Re = 100 000
+// and was 17.5 times off in laminar flow. The pressure below is the physical
+// one; the earlier value only produced 1 m/s because the solver was wrong.
 //
 // Analytic pressure loss at this design point:
 //   round pipe   (Hagen-Poiseuille) dp = 32*mu*U*L/D^2 = 13 920 Pa
@@ -113,7 +116,7 @@ export const laminarStarterPreset: FluidProject = {
       // centreline, so the estimate adds no port-misalignment minor loss.
       rotation: 0,
       elevation: 0,
-      pressure: 102_042,
+      pressure: 113_853,
       boundary: "pressure"
     },
     tank: {

@@ -479,6 +479,15 @@ async function openFresh(
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.evaluate(() => window.localStorage.clear());
   await page.goto("/", { waitUntil: "domcontentloaded" });
+  // The application now opens on the laminar starter. These 25 tests encode the
+  // venturi topology (node ids, generated ids, grid positions), so pin the
+  // fixture here rather than restating every expectation.
+  const presetSelect = page.getByLabel("Preset");
+  if (!(await presetSelect.isVisible())) {
+    // Below 1100 px the inspector is a closed overlay, so open it first.
+    await page.getByRole("button", { name: "Inspector" }).first().click();
+  }
+  await presetSelect.selectOption("Venturi Cavitation Lab");
   await expect(page.getByTestId("schematic-canvas")).toBeVisible();
   await expect(page.getByTestId("cinema-canvas")).toBeVisible();
   await page.getByRole("navigation", { name: "FlowLab workflow stages" }).getByRole("button", { name: /Define/ }).click();

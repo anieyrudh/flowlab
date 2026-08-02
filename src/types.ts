@@ -678,6 +678,9 @@ export type PatchMetrics = {
     inletPressure: number;
     outletPressure: number;
     deltaP: number;
+    /** Set by the service when it converted kinematic pressure to pascals. */
+    convertedFromKinematic?: boolean;
+    densityKgPerM3?: number;
     unit: string;
   }>;
   forces: PatchForceMetric[];

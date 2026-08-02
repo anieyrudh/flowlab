@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { SimulationCanvas } from "./components/SimulationCanvas";
 import { DualViewWorkspace } from "./components/DualViewWorkspace";
+import { GuidedFirstCase } from "./components/GuidedFirstCase";
 import { presets } from "./data/presets";
 import {
   datasetFromPreview,
@@ -2591,6 +2592,7 @@ export default function App() {
           </select>
         </label>
         {projectMessage ? <p className={projectMessage.startsWith("Invalid") ? "import-message error" : "import-message"}>{projectMessage}</p> : null}
+        <GuidedFirstCase project={project} result={result} patchMetrics={patchMetrics} />
         {project.visualization.mode === "design" && selectedEdge ? (
           <EdgeInspector
             edge={selectedEdge}
