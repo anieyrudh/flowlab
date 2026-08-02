@@ -2,47 +2,42 @@
 
 [![Desktop Electron candidate](https://github.com/anieyrudh/flowlab/actions/workflows/desktop-electron-candidate.yml/badge.svg)](https://github.com/anieyrudh/flowlab/actions/workflows/desktop-electron-candidate.yml)
 
-FlowLab is a local desktop workstation for building fluid systems, running
-fast hydraulic estimates, generating CFD cases, and inspecting results without
-sending project data to a hosted service.
+FlowLab is a desktop application for fluid systems. You draw a system of pipes
+and components, get an immediate hydraulic estimate, then run a full CFD case
+on the same model.
 
-## What it does
+Your project data stays on your computer.
 
-- Provides a visual pipe-and-component editor with instant 1D hydraulics.
-- Generates deterministic cases for OpenFOAM, SU2, Code_Saturne, and MuJoCo,
-  with clear dependency checks before execution.
-- Supports a bounded full-360 O-grid path for steady, incompressible, laminar
-  flow through a straight circular pipe.
-- Supports one fail-closed experimental true-3D OpenFOAM path for a canonical
-  90-degree circular elbow at Rc/D=3, 10D inlet/outlet legs, and Re=100.
-- Loads VTK/VTU results into a true 3D viewer with XYZ surface probing and
-  [solver-derived steady streamlines](docs/solver-derived-streamlines.md).
-- Fails closed when geometry, topology, physics, or a solver runtime is not
-  supported.
+## Two solvers
 
-## Current status
+| Solver | Speed | Gives you |
+|---|---|---|
+| **Instant 1D** | Immediate | Flow rate, pressure loss, Reynolds number, cavitation risk |
+| **CFD** | Minutes to hours | Velocity and pressure fields from OpenFOAM |
 
-Electron candidates build and pass automated checks on macOS 13+ Apple Silicon
-and Windows 11 x64. Signed public installers have not been released yet; see
-the [installation guide](docs/INSTALLATION.md) for source setup and candidate
-build instructions.
+The instant solver needs nothing but the application. The CFD solver needs
+Docker Desktop.
 
-The full O-grid straight-pipe campaign passed its prospective three-level
-numerical-verification gates. It remains a verification candidate awaiting
-controlled independent review, not a general CFD validation or promotion.
-The canonical curved-elbow V2 campaign passed its own prospective
-coarse/medium/fine numerical-qualification gates through an immutable,
-content-addressed recovery assessment. It remains a bounded candidate awaiting
-independent review, with validation and promotion explicitly false; it does not
-inherit the straight-pipe or axisymmetric validation state.
-Ordinary generated CFD cases remain experimental. See
-[benchmarks and verification status](docs/BENCHMARKS.md) for the measured
-results and exact claim boundary.
+## Get FlowLab
+
+**Signed installers are not released yet.** Automated candidate builds pass on
+macOS 13+ Apple Silicon and on Windows 11 x64, but they are not signed, so your
+operating system will refuse to open them.
+
+Until a signed release exists, build FlowLab from source. Refer to
+[the installation guide](docs/INSTALLATION.md).
+
+## Start using it
+
+Read [the user guide](docs/USER_GUIDE.md). It shows you how to build a system,
+read an estimate, and run a CFD case.
+
+The application has four steps: **Define**, **Estimate**, **CFD**, **Inspect**.
+Do them in that sequence.
 
 ## Run from source
 
-Prerequisites are Node.js 24, npm, and CPython 3.12. Docker Desktop is needed
-only for OpenFOAM execution.
+You need Node.js 24, npm, and CPython 3.12.
 
 ```bash
 git clone https://github.com/anieyrudh/flowlab.git
@@ -65,20 +60,33 @@ In a second terminal, start the editor:
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. Windows commands, Electron packaging, solver
-dependencies, data locations, and troubleshooting are covered in the
-[installation guide](docs/INSTALLATION.md).
+Open `http://127.0.0.1:5173`.
+
+To build the desktop application, refer to
+[the installation guide](docs/INSTALLATION.md#building-the-electron-application).
+
+## What FlowLab will not do
+
+FlowLab **fails closed**. If it cannot make an honest case, it refuses and
+gives the reason. It does not guess.
+
+**No result is validated against a physical experiment.** All CFD output is
+experimental. The accuracy evidence covers steady, incompressible, laminar flow
+only. It does not cover turbulence, transient flow, multiphase flow, or
+compressible flow.
+
+Refer to [benchmarks and verification status](docs/BENCHMARKS.md) for the
+measured results and the exact limit of each claim.
 
 ## Documentation
 
-- [Installation and desktop packaging](docs/INSTALLATION.md)
-- [Benchmarks and verification status](docs/BENCHMARKS.md)
-- [Derived volume and pathline visualization contract](docs/derived-visualization-contract.md)
-- [Electron distribution status](docs/desktop-electron-distribution-status-2026-07-24.md)
-- [Full O-grid contract and review packet](docs/validation/full-ogrid-straight-pipe/REVIEW_HANDOFF_V2_2026-07-24.md)
-- [Canonical curved-elbow qualification contract](docs/validation/curved-elbow-re100/QUALIFICATION_CONTRACT_V2.json)
-- [Canonical curved-elbow V2 R2 assessment](docs/validation/curved-elbow-re100/QUALIFICATION_ASSESSMENT_V2_R2.md)
-- [Evidence retention and Git boundaries](docs/evidence-retention-and-git-boundary.md)
+| Page | Content |
+|---|---|
+| [User guide](docs/USER_GUIDE.md) | How to use the application |
+| [Installation](docs/INSTALLATION.md) | Install, build, and package |
+| [Benchmarks](docs/BENCHMARKS.md) | Measured accuracy and claim limits |
+| [Streamlines](docs/solver-derived-streamlines.md) | How derived flow lines work |
+| [Evidence rules](docs/evidence-retention-and-git-boundary.md) | How results are retained |
 
 ## Verify a checkout
 
@@ -88,5 +96,6 @@ npm test -- --run
 npm run lint
 ```
 
-The complete build, E2E, and Electron verification commands are listed in the
-[installation guide](docs/INSTALLATION.md#verify-a-source-checkout).
+Seven tests fail if the local evidence archives are absent. That is expected.
+The complete command list is in
+[the installation guide](docs/INSTALLATION.md#verify-a-source-checkout).
