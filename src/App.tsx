@@ -73,9 +73,19 @@ import {
   fetchRuntimeDiagnostics,
   fetchSolvers,
   generateSolverCase,
+  createJobDerivedVisualization,
+  jobDerivedBlobUrl,
   queueJob,
   runValidatedPreset
 } from "./services/backend";
+import {
+  decodeDerivedVisualization,
+  DERIVED_REQUEST_SCHEMA,
+  type DecodedDerivedVisualization,
+  type DerivedFieldRequest,
+  type DerivedVisualizationRequest,
+  type DerivedVisualizationManifest
+} from "./results/derived";
 import { parseProject } from "./projectSchema";
 import {
   selectPreviewAuthority,
@@ -955,6 +965,14 @@ export default function App() {
   const [activeResultField, setActiveResultField] = useState<ResultFieldSelection | null>(null);
   const [activeVectorComponent, setActiveVectorComponent] = useState<ResultVectorComponent>("magnitude");
   const [resultColorMap, setResultColorMap] = useState<ResultColorMap>("turbo");
+  const [derivedVisualization, setDerivedVisualization] = useState<DecodedDerivedVisualization | null>(null);
+  const [derivedManifest, setDerivedManifest] = useState<DerivedVisualizationManifest | null>(null);
+  const [derivedBusy, setDerivedBusy] = useState(false);
+  const [derivedError, setDerivedError] = useState<string | null>(null);
+  const [derivedGridDimension, setDerivedGridDimension] = useState<64 | 96>(64);
+  const [derivedDeclaredUnit, setDerivedDeclaredUnit] = useState("");
+  const [derivedCutPlane, setDerivedCutPlane] = useState<{ axis: 0 | 1 | 2; index: number } | null>(null);
+  const [derivedIsoValue, setDerivedIsoValue] = useState<number | null>(null);
   const [cinemaCamera, setCinemaCamera] = useState<CinemaCameraState>(defaultCinemaCamera);
   const [cinemaRenderBackend, setCinemaRenderBackend] = useState<"pending" | "webgl" | "2d">("pending");
   const [use2dProjection, setUse2dProjection] = useState(false);
@@ -1031,6 +1049,17 @@ export default function App() {
     showSprites: project.visualization.particles,
     reducedMotion
   }), [project.visualization.particles, project.visualization.streamlines, reducedMotion, resultColorMap, streamlineColorField]);
+  const derivedPresentationOptions = useMemo(
+    () => ({
+      fieldIndex: 0,
+      opacity: 0.32,
+      cutPlane: derivedCutPlane,
+      isoValue: derivedIsoValue,
+      showVolume: true,
+      showParticles: true
+    }),
+    [derivedCutPlane, derivedIsoValue]
+  );
   const currentOpenBoundaryCampaign = validatedBenchmarks.find(
     (benchmark) => benchmark.id === "laminar-open-boundary-all-hex-v1"
   ) ?? null;
@@ -1053,6 +1082,29 @@ export default function App() {
     && activeSnapshot?.provenance?.kind === "case-artifact"
     && caseRecord?.solver !== "su2"
     && verifiedStreamlineCellOrder;
+  const derivedAuthorityAllowed = streamlineAuthorityAllowed;
+  const pathlineAuthorityAllowed = useMemo(
+    () => resultSnapshots.length >= 2
+      && caseRecord?.solver !== "su2"
+      && resultSnapshots.every((snapshot) => {
+        if (
+          snapshot.preview
+          || snapshot.provenance?.kind !== "case-artifact"
+          || snapshot.provenance.caseId !== caseRecord?.id
+          || snapshot.provenance.jobId !== jobRecord?.id
+          || verifiedResultComponentLink(snapshot, project, caseRecord, jobRecord).state !== "linked"
+        ) {
+          return false;
+        }
+        const artifactName = snapshot.provenance.artifactName;
+        return caseRecord.resultComponentMap?.artifactBindings.some(
+          (binding) => binding.scope === "cell-ranges"
+            && artifactNameMatches(binding.artifactName, artifactName)
+            && binding.sourceCellCount === snapshot.dataset.sourceCellCount
+        ) === true;
+      }),
+    [caseRecord, jobRecord, project, resultSnapshots]
+  );
 
   useEffect(() => {
     setActiveDockPanel(defaultDockPanelByMode[project.visualization.mode]);
@@ -1069,6 +1121,14 @@ export default function App() {
     setStreamlineBusy(false);
     setStreamlineMessage(activeSnapshot?.preview ? "Full result required. A backend derivation may use the complete artifact." : null);
   }, [activeSnapshot?.id, activeSnapshot?.preview]);
+  useEffect(() => () => derivedVisualization?.dispose(), [derivedVisualization]);
+  useEffect(() => {
+    setDerivedVisualization(null);
+    setDerivedManifest(null);
+    setDerivedError(null);
+    setDerivedCutPlane(null);
+    setDerivedIsoValue(null);
+  }, [activeSnapshot?.id]);
   const loadedFieldInventory = useMemo(() => listResultFields(loadedResult), [loadedResult]);
   const filteredFieldInventory = useMemo(() => {
     const query = resultFieldFilter.trim().toLowerCase();
@@ -1085,6 +1145,10 @@ export default function App() {
     () => selectedFieldValues ?? (activeResultField ? null : fieldValuesForOverlay(loadedResult, project.visualization.overlay)),
     [activeResultField, loadedResult, project.visualization.overlay, selectedFieldValues]
   );
+  useEffect(() => {
+    const unit = activeFieldValues?.unit.symbol ?? "";
+    setDerivedDeclaredUnit(unit === "solver units" ? "" : unit);
+  }, [activeFieldValues?.field, activeFieldValues?.location, activeFieldValues?.unit.symbol]);
   const fieldStats = useMemo(() => {
     if (activeFieldValues?.values.length) {
       const stats = fieldDescriptiveStats(activeFieldValues.values);
@@ -1791,6 +1855,215 @@ export default function App() {
     }
   }
 
+  function derivedFieldForDataset(dataset: VtkResultDataset): DerivedFieldRequest | null {
+    const active = activeFieldValues;
+    if (!active) return null;
+    const inventory = listResultFields(dataset).find(
+      (field) => field.field === active.field && field.location === active.location
+    );
+    if (!inventory) return null;
+    let unit = derivedDeclaredUnit.trim();
+    const normalized = inventory.field.toLowerCase();
+    if (caseRecord && activeSnapshot?.provenance?.kind === "case-artifact") {
+      if (["u", "velocity", "vel"].includes(normalized)) unit = "m/s";
+      else if (["t", "temperature", "temp"].includes(normalized)) unit = "K";
+      else if (normalized.startsWith("alpha") || normalized.includes("fraction")) unit = "1";
+      else if (["rho", "density"].includes(normalized)) unit = "kg/m3";
+      else if (
+        ["p", "p_rgh"].includes(normalized)
+        && caseRecord.solver === "openfoam"
+        && caseRecord.advancedMode === "incompressible-navier-stokes"
+      ) unit = "m2/s2";
+      else if (["p", "p_rgh", "pressure", "static_pressure", "total_pressure"].includes(normalized)) unit = "Pa";
+    }
+    if (!unit || unit === "solver units") return null;
+    return {
+      name: inventory.field,
+      location: inventory.location,
+      kind: inventory.kind,
+      unit
+    };
+  }
+
+  async function decodeDerivedManifest(
+    manifest: DerivedVisualizationManifest,
+    source: { kind: "job"; jobId: string }
+  ) {
+    const decoded = await decodeDerivedVisualization(
+      manifest,
+      (name) => jobDerivedBlobUrl(source.jobId, manifest.requestSha256, name)
+    );
+    setDerivedVisualization(decoded);
+    setDerivedManifest(manifest);
+    return decoded;
+  }
+
+  async function submitDerivedRequest(
+    request: DerivedVisualizationRequest,
+    snapshots: ResultSnapshot[]
+  ) {
+    const provenances = snapshots.map((snapshot) => snapshot.provenance);
+    const jobArtifacts = provenances.every(
+      (provenance) =>
+        provenance?.kind === "case-artifact"
+        && jobRecord
+        && provenance.jobId === jobRecord.id
+        && provenance.caseId === jobRecord.caseId
+    );
+    const authoritative = jobArtifacts
+      && jobRecord
+      && caseRecord?.solver !== "su2"
+      && snapshots.every(
+        (snapshot) => verifiedResultComponentLink(snapshot, project, caseRecord, jobRecord).state === "linked"
+      );
+    if (authoritative && jobRecord) {
+      const manifest = await createJobDerivedVisualization(jobRecord.id, request);
+      return decodeDerivedManifest(manifest, { kind: "job", jobId: jobRecord.id });
+    }
+    throw new Error(
+      "Derived volume, iso, voxel, and pathline products require full job artifacts with explicit resultComponentMap authority."
+    );
+  }
+
+  async function buildDerivedVolume() {
+    if (!activeSnapshot || !loadedResult) return;
+    if (!derivedAuthorityAllowed) {
+      setDerivedError("Derived volume, voxel, and iso controls require explicit resultComponentMap authority.");
+      return;
+    }
+    if (activeSnapshot.preview) {
+      setDerivedError("Sparse result previews cannot feed volume derivation. Load the complete artifact first.");
+      return;
+    }
+    const field = derivedFieldForDataset(loadedResult);
+    if (!field) {
+      setDerivedError("Choose a field and provide an explicit verified unit before deriving a volume.");
+      return;
+    }
+    const normalized = field.name.toLowerCase();
+    const gradients: Array<"pressure" | "speed"> = [];
+    if (["p", "p_rgh", "pressure", "static_pressure", "total_pressure"].includes(normalized) && field.kind === "scalar") {
+      gradients.push("pressure");
+    }
+    if (["u", "velocity", "vel"].includes(normalized) && field.kind === "vector") {
+      gradients.push("speed");
+    }
+    const artifactPath =
+      activeSnapshot.provenance?.kind === "case-artifact"
+        ? activeSnapshot.provenance.artifactName
+        : activeSnapshot.label;
+    const request: DerivedVisualizationRequest = {
+      schema: DERIVED_REQUEST_SCHEMA,
+      operation: "volume",
+      artifacts: [{ path: artifactPath, time: activeSnapshot.time }],
+      fields: [field],
+      grid: {
+        dimensions: [derivedGridDimension, derivedGridDimension, derivedGridDimension],
+        gradients
+      }
+    };
+    setDerivedBusy(true);
+    setDerivedError(null);
+    try {
+      const decoded = await submitDerivedRequest(request, [activeSnapshot]);
+      const depth = decoded.manifest.grid?.dimensions[2];
+      setDerivedCutPlane(
+        depth && Number.isInteger(depth)
+          ? { axis: 2, index: Math.floor(depth / 2) }
+          : null
+      );
+      setDerivedIsoValue(null);
+    } catch (error) {
+      setDerivedError(error instanceof Error ? error.message : "Could not derive a provenance-preserving volume.");
+    } finally {
+      setDerivedBusy(false);
+    }
+  }
+
+  async function buildTransientPathlines() {
+    const snapshots = [...resultSnapshots].sort((left, right) => left.time - right.time || left.label.localeCompare(right.label));
+    if (snapshots.length < 2) {
+      setDerivedError("Transient pathlines require at least two full result frames.");
+      return;
+    }
+    if (!pathlineAuthorityAllowed) {
+      setDerivedError("Transient pathlines require every full frame to share explicit resultComponentMap authority.");
+      return;
+    }
+    if (snapshots.some((snapshot) => snapshot.preview)) {
+      setDerivedError("Sparse result previews cannot feed transient pathlines. Load every complete artifact first.");
+      return;
+    }
+    if (snapshots.some((snapshot, index) => index > 0 && snapshot.time <= snapshots[index - 1].time)) {
+      setDerivedError("Transient pathline timestamps must be strictly increasing.");
+      return;
+    }
+    const firstVelocity = listResultFields(snapshots[0].dataset).find(
+      (field) => ["u", "velocity"].includes(field.field.toLowerCase()) && field.kind === "vector"
+    );
+    if (
+      !firstVelocity
+      || snapshots.some(
+        (snapshot) =>
+          !listResultFields(snapshot.dataset).some(
+            (field) =>
+              field.field === firstVelocity.field
+              && field.location === firstVelocity.location
+              && field.kind === "vector"
+          )
+      )
+    ) {
+      setDerivedError("Transient pathlines require a compatible U vector field at every frame.");
+      return;
+    }
+    const firstPoint = snapshots[0].dataset.points[0];
+    if (!firstPoint) {
+      setDerivedError("Transient pathlines require non-empty full source topology.");
+      return;
+    }
+    const bounds = snapshots[0].dataset.points.reduce(
+      (value, point) => ({
+        min: value.min.map((entry, axis) => Math.min(entry, point[axis])) as [number, number, number],
+        max: value.max.map((entry, axis) => Math.max(entry, point[axis])) as [number, number, number]
+      }),
+      { min: [...firstPoint] as [number, number, number], max: [...firstPoint] as [number, number, number] }
+    );
+    const seed = bounds.min.map((value, axis) => value + (bounds.max[axis] - value) * 0.5) as [number, number, number];
+    const artifacts = snapshots.map((snapshot) => ({
+      path: snapshot.provenance?.kind === "case-artifact" ? snapshot.provenance.artifactName : snapshot.label,
+      time: snapshot.time
+    }));
+    const field: DerivedFieldRequest = {
+      name: firstVelocity.field,
+      location: firstVelocity.location,
+      kind: "vector",
+      unit: "m/s"
+    };
+    const duration = snapshots.at(-1)!.time - snapshots[0].time;
+    const request: DerivedVisualizationRequest = {
+      schema: DERIVED_REQUEST_SCHEMA,
+      operation: "pathlines",
+      artifacts,
+      fields: [field],
+      pathlines: {
+        seeds: [seed],
+        stepSeconds: duration / Math.min(100, Math.max(1, snapshots.length * 10)),
+        maxVertices: 250000
+      }
+    };
+    setDerivedBusy(true);
+    setDerivedError(null);
+    try {
+      await submitDerivedRequest(request, snapshots);
+      setDerivedCutPlane(null);
+      setDerivedIsoValue(null);
+    } catch (error) {
+      setDerivedError(error instanceof Error ? error.message : "Could not derive transient pathlines.");
+    } finally {
+      setDerivedBusy(false);
+    }
+  }
+
   function scrollToPanel(id: string) {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
@@ -2167,6 +2440,8 @@ export default function App() {
                 project={visualProject}
                 result={result}
                 resultDataset={authoritativeDataset}
+                derivedVisualization={derivedAuthorityAllowed || pathlineAuthorityAllowed ? derivedVisualization : null}
+                derivedPresentationOptions={derivedPresentationOptions}
                 resultFieldSelection={activeResultField}
                 resultVectorComponent={activeVectorComponent}
                 resultColorMap={resultColorMap}
@@ -2316,6 +2591,101 @@ export default function App() {
               <span>{loadedResult ? activeResultLink.message : "No VTK/VTU result loaded"}</span>
               {resultError ? <small>{resultError}</small> : null}
             </div>
+            {loadedResult ? (
+              <div className="derived-controls" aria-label="Derived visualization controls">
+                <strong>Derived visualization</strong>
+                <small>Visualization-only · full artifacts · fail-closed provenance</small>
+                <label>
+                  Field unit
+                  <input
+                    aria-label="Derived field unit"
+                    value={derivedDeclaredUnit}
+                    placeholder="Required, e.g. m/s"
+                    onChange={(event) => setDerivedDeclaredUnit(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Volume grid
+                  <select
+                    aria-label="Derived volume grid"
+                    value={derivedGridDimension}
+                    onChange={(event) => setDerivedGridDimension(Number(event.target.value) as 64 | 96)}
+                  >
+                    <option value={64}>64³ default</option>
+                    <option value={96}>96³ maximum</option>
+                  </select>
+                </label>
+                <div className="derived-actions">
+                  <button type="button" onClick={buildDerivedVolume} disabled={derivedBusy || !derivedAuthorityAllowed}>
+                    <Box size={15} />
+                    {derivedBusy ? "Deriving…" : "Build derived volume"}
+                  </button>
+                  <button type="button" onClick={buildTransientPathlines} disabled={derivedBusy || !pathlineAuthorityAllowed}>
+                    <GitBranchPlus size={15} />
+                    Build transient pathlines
+                  </button>
+                </div>
+                {!derivedAuthorityAllowed ? (
+                  <small className="result-field-warning">Explicit resultComponentMap authority is required; imported, thinned, ambiguous, stale, unsupported, and SU2-unverified results remain probe-only.</small>
+                ) : null}
+                {derivedManifest?.operation === "volume" && derivedManifest.grid ? (
+                  <>
+                    <label>
+                      Internal cut plane
+                      <select
+                        aria-label="Derived cut plane axis"
+                        value={derivedCutPlane?.axis ?? 2}
+                        onChange={(event) => {
+                          const axis = Number(event.target.value) as 0 | 1 | 2;
+                          setDerivedCutPlane({
+                            axis,
+                            index: Math.floor(derivedManifest.grid!.dimensions[axis] / 2)
+                          });
+                        }}
+                      >
+                        <option value={0}>X plane</option>
+                        <option value={1}>Y plane</option>
+                        <option value={2}>Z plane</option>
+                      </select>
+                    </label>
+                    <input
+                      aria-label="Derived cut plane position"
+                      type="range"
+                      min={0}
+                      max={derivedManifest.grid.dimensions[derivedCutPlane?.axis ?? 2] - 1}
+                      value={derivedCutPlane?.index ?? 0}
+                      onChange={(event) =>
+                        setDerivedCutPlane({
+                          axis: derivedCutPlane?.axis ?? 2,
+                          index: Number(event.target.value)
+                        })
+                      }
+                    />
+                    <label>
+                      Iso value
+                      <input
+                        aria-label="Derived iso value"
+                        type="number"
+                        value={derivedIsoValue ?? ""}
+                        placeholder={fieldStats ? String(fieldStats.mean) : "Off"}
+                        onChange={(event) =>
+                          setDerivedIsoValue(event.target.value === "" ? null : Number(event.target.value))
+                        }
+                      />
+                    </label>
+                  </>
+                ) : null}
+                {derivedManifest ? (
+                  <small aria-label="Derived visualization status">
+                    {derivedManifest.operation === "volume"
+                      ? `${derivedManifest.grid?.dimensions.join("×")} volume · ${derivedManifest.browserResidencyBytes.toLocaleString()} bytes`
+                      : `${derivedManifest.pathlines?.seedCount} pathline seed(s) · ${derivedManifest.pathlines?.vertexCount} vertices`}
+                    {" · "}{derivedManifest.componentResolution.status === "source-cell-map" ? "source-cell linked" : "probe-only"}
+                  </small>
+                ) : null}
+                {derivedError ? <small className="result-field-warning" role="status">{derivedError}</small> : null}
+              </div>
+            ) : null}
           </section>
         ) : null}
         {project.visualization.mode === "sweep" ? <button className="accordion" onClick={() => setAdvancedOpen((value) => !value)}>

@@ -21,11 +21,11 @@ CFD physics.
   interpolation point IDs, weights and method, plus its termination reason.
   A deterministic AABB index only narrows candidate cells; exact barycentric
   membership selects the rendered cell. It never establishes source ownership.
-- Imported full artifacts keep artifact-local cell IDs and remain unlinked.
-  Generated OpenFOAM results are linked only when their explicit case result map
-  proves the complete solver-cell order. SU2 user-plane support remains
-  explicitly two-dimensional and unlinked until stable solver-cell identity is
-  proven.
+- Imported artifacts, sparse previews, stale or ambiguous case links, and SU2
+  results without stable solver-cell identity remain probe-only. Streamline
+  controls fail closed unless the full artifact has exactly one matching
+  `resultComponentMap` cell-range binding that proves the complete source-cell
+  order.
 
 Velocity, pressure, temperature, phase fraction, and an explicitly loaded
 vorticity field can colour the curves. FlowLab does not derive vorticity when

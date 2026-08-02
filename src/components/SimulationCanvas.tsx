@@ -1,4 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent, type PointerEvent, type WheelEvent } from "react";
+import type { DecodedDerivedVisualization } from "../results/derived";
 import {
   fieldValuesForOverlay,
   fieldValuesForSelection,
@@ -23,6 +24,7 @@ import type {
   Vec2
 } from "../types";
 import type { CinemaPick, CinemaResultProbe, CinemaRuntime } from "./cinemaRenderer";
+import type { DerivedPresentationOptions } from "./derivedRenderer";
 import { recordEditorFrame, recordEditorMetric } from "../performance/editorProfiler";
 import type { StreamlineDisplayOptions, StreamlineResult } from "../streamlines/types";
 import {
@@ -42,6 +44,8 @@ type Props = {
   project: FluidProject;
   result: SimulationResult;
   resultDataset?: VtkResultDataset | null;
+  derivedVisualization?: DecodedDerivedVisualization | null;
+  derivedPresentationOptions?: DerivedPresentationOptions;
   resultFieldSelection?: ResultFieldSelection | null;
   resultVectorComponent?: ResultVectorComponent;
   resultColorMap?: ResultColorMap;
@@ -489,6 +493,8 @@ export function SimulationCanvas({
   project,
   result,
   resultDataset,
+  derivedVisualization = null,
+  derivedPresentationOptions,
   resultFieldSelection = null,
   resultVectorComponent = "magnitude",
   resultColorMap = "turbo",
@@ -590,6 +596,8 @@ export function SimulationCanvas({
             result,
             cinemaCamera,
             resultDataset,
+            derivedVisualization,
+            derivedPresentationOptions,
             resultFieldSelection,
             resultVectorComponent,
             resultColorMap,
@@ -613,6 +621,7 @@ export function SimulationCanvas({
           canvasElement.dataset.cinemaCameraPanY = String(cinemaCamera.pan.y);
           canvasElement.dataset.engine = runtime.engine;
           onRenderBackendChange("webgl");
+          canvasElement.dataset.derivedFallback = runtime.derivedFallback;
           if (resultDataset) {
             canvasElement.dataset.resultViewMode = resultViewMode;
             canvasElement.dataset.resultCameraYaw = String(resultCamera.yaw);
@@ -649,6 +658,7 @@ export function SimulationCanvas({
           delete canvasElement.dataset.cinemaCameraPanY;
           delete canvasElement.dataset.engine;
           onRenderBackendChange("2d");
+          delete canvasElement.dataset.derivedFallback;
         });
 
       return () => {
@@ -948,7 +958,7 @@ export function SimulationCanvas({
       resizeObserver?.disconnect();
       cancelAnimationFrame(animationId);
     };
-  }, [canvasRenderMode, force2dProjection, onRenderBackendChange, resultDataset, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind, streamlineDisplay, streamlines]);
+  }, [canvasRenderMode, force2dProjection, onRenderBackendChange, resultDataset, derivedVisualization, derivedPresentationOptions, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind, streamlineDisplay, streamlines]);
 
   useEffect(() => {
     if (canvasRenderMode !== "cinema") return;

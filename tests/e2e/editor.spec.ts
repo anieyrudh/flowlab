@@ -79,6 +79,36 @@ VECTORS U float
 2 0 0
 `;
 
+const importedHexVolumeResult = `# vtk DataFile Version 3.0
+FlowLab imported hexahedral volume
+ASCII
+DATASET UNSTRUCTURED_GRID
+POINTS 8 float
+0 0 0
+1 0 0
+1 1 0
+0 1 0
+0 0 1
+1 0 1
+1 1 1
+0 1 1
+CELLS 1 9
+8 0 1 2 3 4 5 6 7
+CELL_TYPES 1
+12
+POINT_DATA 8
+SCALARS pressure float 1
+LOOKUP_TABLE default
+0
+1
+2
+1
+1
+2
+3
+2
+`;
+
 const patchMetricsFixture = {
   schema: "flowlab.patch_metrics.v1",
   status: "partial",
@@ -461,6 +491,132 @@ async function showStage(page: Page, stage: "Define" | "Estimate" | "CFD" | "Ins
 async function loadFixtureResult(page: Page) {
   await showStage(page, "Inspect");
   await page.getByRole("button", { name: /Load fixture result/i }).click();
+}
+
+async function installDerivedVisualizationRoutes(page: Page, linked: boolean) {
+  const payloads: Record<string, Buffer> = {
+    "values-000.bin": Buffer.from(new Float32Array([0, 1, 0, 1, 0, 1, 0, 1]).buffer),
+    "validity.bin": Buffer.from(new Uint8Array(8).fill(1).buffer),
+    "source-cell-ids.bin": Buffer.from(new Uint32Array(8).fill(0).buffer),
+    "subcell-ids.bin": Buffer.from(new Uint8Array(8).buffer),
+    "ambiguity.bin": Buffer.from(new Uint8Array(8).buffer),
+    "spatial-weights.bin": Buffer.from(new Float32Array(32).fill(0.25).buffer)
+  };
+  const descriptor = (name: string, dtype: "float32" | "uint32" | "uint8", components: number, count: number) => ({
+    schema: "flowlab.derived_visualization_blob.v1",
+    name,
+    dtype,
+    components,
+    count,
+    byteOrder: "little-endian",
+    byteLength: payloads[name].byteLength,
+    sha256: createHash("sha256").update(payloads[name]).digest("hex")
+  });
+  const descriptors = [
+    descriptor("values-000.bin", "float32", 1, 8),
+    descriptor("validity.bin", "uint8", 1, 8),
+    descriptor("source-cell-ids.bin", "uint32", 1, 8),
+    descriptor("subcell-ids.bin", "uint8", 1, 8),
+    descriptor("ambiguity.bin", "uint8", 1, 8),
+    descriptor("spatial-weights.bin", "float32", 4, 8)
+  ];
+  const byName = Object.fromEntries(descriptors.map((entry) => [entry.name, entry]));
+  const requestSha256 = "a".repeat(64);
+  const manifest = {
+    schema: "flowlab.derived_visualization_manifest.v1",
+    requestSchema: "flowlab.derived_visualization_request.v1",
+    requestSha256,
+    manifestSha256: "b".repeat(64),
+    operation: "volume",
+    visualizationOnly: true,
+    scientificStateEffect: "none",
+    releaseStateEffect: "none",
+    unitAuthority: linked ? "case-contract" : "user-declared",
+    sourceArtifacts: [
+      {
+        path: linked ? "postProcessing/flowlabNative/time_0_002.vtk" : "venturi-result.vtk",
+        time: 0.002,
+        size: 100,
+        sha256: "c".repeat(64),
+        geometryDigest: "d".repeat(64),
+        cellOrderDigest: "e".repeat(64)
+      }
+    ],
+    componentResolution: {
+      status: linked ? "source-cell-map" : "probe-only",
+      reason: linked ? "explicit generated map" : "imported",
+      map: linked
+        ? {
+            version: 2,
+            projectSha256: "f".repeat(64),
+            artifactBindings: [{
+              artifactName: "postProcessing/flowlabNative/*.vtk",
+              scope: "cell-ranges",
+              sourceCellCount: 3,
+              identitySchema: "flowlab.openfoam-source-cell-identity.v1",
+              identityField: "flowlabSourceCellId",
+              identityContractSha256: "1".repeat(64),
+              cellRanges: [
+                { edgeId: "inlet", cellStart: 0, cellCount: 1 },
+                { edgeId: "outlet", cellStart: 2, cellCount: 1 }
+              ],
+              unownedCellRanges: [{
+                artifactId: "generated:test:unowned:v1",
+                cellStart: 1,
+                cellCount: 1,
+                schematicOwner: null
+              }]
+            }]
+          }
+        : null
+    },
+    limits: {
+      defaultGridDimension: 64,
+      maxGridDimension: 96,
+      artifactSetBytes: 48 * 1024 * 1024,
+      browserResidencyBytes: 96 * 1024 * 1024,
+      derivedCacheBytesPerJob: 256 * 1024 * 1024,
+      maxSeeds: 512,
+      maxPathlineVertices: 250000,
+      maxIsoTriangles: 500000,
+      overflowBehavior: "reject"
+    },
+    grid: {
+      dimensions: [2, 2, 2],
+      voxelCount: 8,
+      bounds: { min: [0, 0, 0], max: [1, 1, 1] },
+      spacing: [0.5, 0.5, 0.5],
+      sampleLocation: "voxel-center"
+    },
+    provenance: {
+      validity: byName["validity.bin"],
+      sourceCellIds: byName["source-cell-ids.bin"],
+      subcellIds: byName["subcell-ids.bin"],
+      ambiguity: byName["ambiguity.bin"],
+      spatialWeights: byName["spatial-weights.bin"],
+      invalidSourceCellId: 0xffffffff,
+      ambiguousSelections: "probe-only"
+    },
+    fields: [
+      {
+        name: linked ? "U" : "pressure",
+        location: linked ? "cell" : "point",
+        kind: "scalar",
+        unit: linked ? "m/s" : "Pa",
+        values: byName["values-000.bin"],
+        validity: byName["validity.bin"]
+      }
+    ],
+    gradients: [],
+    blobs: descriptors,
+    browserResidencyBytes: Object.values(payloads).reduce((sum, payload) => sum + payload.byteLength, 0)
+  };
+  await page.route("**/api/derived/import", async (route) => route.fulfill({ json: manifest }));
+  await page.route("**/api/jobs/*/derived", async (route) => route.fulfill({ json: manifest }));
+  await page.route("**/blob/*.bin", async (route) => {
+    const name = new URL(route.request().url()).pathname.split("/").at(-1)!;
+    await route.fulfill({ status: 200, contentType: "application/octet-stream", body: payloads[name] });
+  });
 }
 
 async function waitProjectSaved(page: Page) {
@@ -1141,6 +1297,39 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByRole("button", { name: "Next result timestep" })).toBeDisabled();
     await expect(page.getByLabel("Result playback speed")).toHaveValue("1");
     await expect(page.getByRole("button", { name: "Loop result playback" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("rejects imported derived volume controls without component-map authority", async ({ page }) => {
+    const consoleErrors: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push(message.text());
+    });
+    await openFresh(page);
+    await showStage(page, "Inspect");
+    await page.getByTestId("result-import-file").setInputFiles({
+      name: "imported-volume.vtk",
+      mimeType: "text/plain",
+      buffer: Buffer.from(importedHexVolumeResult)
+    });
+
+    await expect(page.getByLabel("Derived field unit")).toHaveValue("Pa");
+    await expect(page.getByRole("button", { name: "Build derived volume" })).toBeDisabled();
+    await expect(page.getByLabel("Derived visualization controls")).toContainText("Explicit resultComponentMap authority is required");
+    await expect(page.getByLabel("Derived visualization status")).toHaveCount(0);
+    expect(consoleErrors).toEqual([]);
+  });
+
+  test("builds a generated-job derived volume through the explicit source-cell map", async ({ page }) => {
+    await installDerivedVisualizationRoutes(page, true);
+    await openFresh(page, "passed", { runnableOpenfoam: true, verifiedMultiEdgeLink: true });
+    await showStage(page, "CFD");
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await showStage(page, "Inspect");
+
+    await page.getByRole("button", { name: "Build derived volume" }).click();
+    await expect(page.getByLabel("Derived visualization status")).toContainText("source-cell linked");
+    await expect(page.getByLabel("Derived visualization status")).toContainText("2×2×2 volume");
   });
 
   test("renders the desktop workspace without console errors", async ({ page }) => {
