@@ -1,22 +1,82 @@
 import { describe, expect, it } from "vitest";
 import { venturiPreset } from "../data/presets";
+import type { FluidProject, Vec2 } from "../types";
 import {
   MAX_FIT_ZOOM,
   MIN_NODE_SEPARATION,
+  ROUTE_CLEARANCE,
   SCHEMATIC_GRID_SIZE,
+  axisDirection,
+  boxesOverlap,
   clampViewportZoom,
+  countEdgeCrossings,
   defaultSchematicViewport,
+  distanceToPolyline,
+  firstClearBox,
   fitSchematicViewport,
   isCellFree,
+  labelPlacementCandidates,
+  longestPolylineSegment,
   panSchematicViewport,
+  pointOnPolyline,
+  polylineLength,
+  polylineObstacleBoxes,
+  polylineSegments,
   resetSchematicViewport,
+  routeLaneSpans,
+  routeOrthogonalPipe,
+  schematicNodePositions,
   screenToWorld,
+  segmentCrossing,
+  simplifyPolyline,
   snapNodeToFreeCell,
   snapToGrid,
+  tidySchematicLayout,
+  tidySchematicRotations,
   visibleGridRange,
+  wireCrossings,
+  wireJunctions,
   worldToScreen,
   zoomViewportAtPoint
 } from "./viewportModel";
+
+const RIGHT = { x: 1, y: 0 };
+const LEFT = { x: -1, y: 0 };
+const UP = { x: 0, y: -1 };
+const DOWN = { x: 0, y: 1 };
+
+/** x of every vertical run in a route, which is the lane the router picked. */
+function verticalLanes(points: Vec2[]): number[] {
+  return polylineSegments(points)
+    .filter((segment) => segment.from.x === segment.to.x && segment.from.y !== segment.to.y)
+    .map((segment) => segment.from.x);
+}
+
+/** Math.sign with -0 folded onto 0, so a flat axis compares equal whichever way it is written. */
+function axisSign(value: number): number {
+  return Math.sign(value) === 0 ? 0 : Math.sign(value);
+}
+
+/**
+ * A layout whose two pipes have to swap rows: `a` sits above `b` on the left, but wires to
+ * the lower component on the right, so the two runs cross.
+ */
+function crossedProject(): FluidProject {
+  return {
+    ...venturiPreset,
+    nodes: {
+      a: { id: "a", type: "source", label: "A", position: { x: 100, y: 100 }, elevation: 0 },
+      b: { id: "b", type: "source", label: "B", position: { x: 100, y: 300 }, elevation: 0 },
+      upper: { id: "upper", type: "sink", label: "Upper", position: { x: 500, y: 100 }, elevation: 0 },
+      lower: { id: "lower", type: "sink", label: "Lower", position: { x: 500, y: 300 }, elevation: 0 }
+    },
+    edges: {
+      first: { ...venturiPreset.edges.inlet, id: "first", from: "a", to: "lower" },
+      second: { ...venturiPreset.edges.inlet, id: "second", from: "b", to: "upper" }
+    },
+    sweeps: []
+  };
+}
 
 describe("viewport model", () => {
   it("keeps the point under the cursor stable while zooming", () => {
@@ -97,5 +157,334 @@ describe("viewport model", () => {
     expect(range.endX).toBeGreaterThanOrEqual(bottomRight.x);
     expect(range.startY).toBeLessThanOrEqual(topLeft.y);
     expect(range.endY).toBeGreaterThanOrEqual(bottomRight.y);
+  });
+});
+
+describe("orthogonal pipe routing", () => {
+  it("snaps a port aimed off-axis onto the axis it is closest to", () => {
+    expect(axisDirection({ x: 1, y: 0 })).toEqual(RIGHT);
+    expect(axisDirection({ x: Math.cos(Math.PI), y: Math.sin(Math.PI) })).toEqual(LEFT);
+    // The north port is drawn at -90 degrees, whose cosine is 6.1e-17 rather than 0.
+    expect(axisDirection({ x: Math.cos(-Math.PI / 2), y: Math.sin(-Math.PI / 2) })).toEqual(UP);
+    expect(axisDirection({ x: Math.cos(Math.PI / 2), y: Math.sin(Math.PI / 2) })).toEqual(DOWN);
+    // 30 degrees is nearer the horizontal, 60 degrees nearer the vertical.
+    expect(axisDirection({ x: Math.cos(Math.PI / 6), y: Math.sin(Math.PI / 6) })).toEqual(RIGHT);
+    expect(axisDirection({ x: Math.cos(Math.PI / 3), y: Math.sin(Math.PI / 3) })).toEqual(DOWN);
+  });
+
+  it("leaves a run between two facing ports dead straight", () => {
+    // The venturi source sits at (120, 260) with a 17-unit body, so its outlet ring is at
+    // 120 + 27 = 147. The throat at (420, 260) has a 14-unit body, so its inlet is at
+    // 420 - 24 = 396. Same row, facing each other: one segment, no corners.
+    const route = routeOrthogonalPipe({ x: 147, y: 260 }, RIGHT, { x: 396, y: 260 }, LEFT);
+    expect(route).toEqual([
+      { x: 147, y: 260 },
+      { x: 396, y: 260 }
+    ]);
+  });
+
+  it("turns a row change into two corners on a grid line", () => {
+    // Stubs put the free ends at 147 + 16 = 163 and 396 - 16 = 380, so the connector may
+    // sit anywhere in [163, 380] and the midpoint is 271.5. The nearest grid line inside
+    // that range is 280, which is where the two corners land.
+    const route = routeOrthogonalPipe({ x: 147, y: 260 }, RIGHT, { x: 396, y: 100 }, LEFT);
+    expect(route).toEqual([
+      { x: 147, y: 260 },
+      { x: 280, y: 260 },
+      { x: 280, y: 100 },
+      { x: 396, y: 100 }
+    ]);
+    expect(route[1].x % SCHEMATIC_GRID_SIZE).toBe(0);
+  });
+
+  it("routes around the back when the two ports face away from each other", () => {
+    // The outlet at 400 faces right and the inlet at 100 faces left, so neither can be
+    // reached head on: both escape a further cell (456 and 44) and meet on a lane above.
+    const route = routeOrthogonalPipe({ x: 400, y: 260 }, RIGHT, { x: 100, y: 260 }, LEFT);
+    expect(route).toEqual([
+      { x: 400, y: 260 },
+      { x: 456, y: 260 },
+      { x: 456, y: 240 },
+      { x: 44, y: 240 },
+      { x: 44, y: 260 },
+      { x: 100, y: 260 }
+    ]);
+  });
+
+  it("always leaves and enters along the port axis and never runs at a diagonal", () => {
+    const cases: Array<[Vec2, Vec2, Vec2, Vec2]> = [
+      [{ x: 147, y: 260 }, RIGHT, { x: 396, y: 260 }, LEFT],
+      [{ x: 147, y: 260 }, RIGHT, { x: 396, y: 100 }, LEFT],
+      [{ x: 120, y: 233 }, UP, { x: 720, y: 287 }, DOWN],
+      [{ x: 120, y: 233 }, UP, { x: 720, y: 233 }, UP],
+      [{ x: 147, y: 260 }, RIGHT, { x: 300, y: 60 }, UP],
+      [{ x: 120, y: 287 }, DOWN, { x: 500, y: 200 }, LEFT],
+      [{ x: 400, y: 260 }, RIGHT, { x: 100, y: 260 }, LEFT],
+      [{ x: 100, y: 100 }, LEFT, { x: 400, y: 400 }, RIGHT]
+    ];
+    for (const [start, exit, end, entry] of cases) {
+      const route = routeOrthogonalPipe(start, exit, end, entry);
+      expect(route[0]).toEqual(start);
+      expect(route[route.length - 1]).toEqual(end);
+      for (const segment of polylineSegments(route)) {
+        const horizontal = segment.from.y === segment.to.y;
+        const vertical = segment.from.x === segment.to.x;
+        expect(horizontal || vertical).toBe(true);
+      }
+      const first = polylineSegments(route)[0];
+      expect(axisSign(first.to.x - first.from.x)).toBe(axisSign(exit.x));
+      expect(axisSign(first.to.y - first.from.y)).toBe(axisSign(exit.y));
+      // The last leg runs into the port, so it travels against the port's outward normal.
+      const last = polylineSegments(route).at(-1)!;
+      expect(axisSign(last.to.x - last.from.x)).toBe(axisSign(-entry.x));
+      expect(axisSign(last.to.y - last.from.y)).toBe(axisSign(-entry.y));
+    }
+  });
+
+  it("keeps a run clear of the components it is told about", () => {
+    const throat = { x: 420, y: 260 };
+    const ports = [{ x: 120, y: 233 }, UP, { x: 720, y: 287 }, DOWN] as const;
+    const naive = routeOrthogonalPipe(ports[0], ports[1], ports[2], ports[3]);
+    const guided = routeOrthogonalPipe(ports[0], ports[1], ports[2], ports[3], {
+      obstacles: [{ x: 120, y: 260 }, throat, { x: 720, y: 260 }]
+    });
+    // Told nothing, the detour lane lands at 400: 20 units from the throat, straight
+    // through its port rings. Told where the components are, it moves out to 360.
+    expect(verticalLanes(naive)).toEqual([120, 400, 720]);
+    expect(verticalLanes(guided)).toEqual([120, 360, 720]);
+    expect(Math.min(...verticalLanes(naive).map((lane) => Math.abs(lane - throat.x)))).toBeLessThan(ROUTE_CLEARANCE);
+    // The two stubs sit on their own components by definition; the free lane clears the
+    // component nobody asked it to pass through.
+    for (const lane of verticalLanes(guided)) {
+      expect(Math.abs(lane - throat.x)).toBeGreaterThanOrEqual(ROUTE_CLEARANCE);
+    }
+  });
+
+  it("moves a pipe off a lane another pipe has already claimed", () => {
+    const obstacles = [
+      { x: 100, y: 100 },
+      { x: 100, y: 300 },
+      { x: 500, y: 100 },
+      { x: 500, y: 300 }
+    ];
+    const first = routeOrthogonalPipe({ x: 127, y: 100 }, RIGHT, { x: 473, y: 300 }, LEFT, { obstacles });
+    const unaware = routeOrthogonalPipe({ x: 127, y: 300 }, RIGHT, { x: 473, y: 100 }, LEFT, { obstacles });
+    const aware = routeOrthogonalPipe({ x: 127, y: 300 }, RIGHT, { x: 473, y: 100 }, LEFT, {
+      obstacles,
+      occupiedLanes: routeLaneSpans(first)
+    });
+    // Both pipes prefer the same lane, which would draw 200 units of one straight on top
+    // of the other; knowing the lane is taken moves the second pipe off it.
+    expect(verticalLanes(first)).toEqual([280]);
+    expect(verticalLanes(unaware)).toEqual([280]);
+    expect(verticalLanes(aware)).toEqual([300]);
+  });
+
+  it("drops duplicate and mid-run points when simplifying", () => {
+    expect(
+      simplifyPolyline([
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+        { x: 50, y: 0 },
+        { x: 100, y: 0 },
+        { x: 100, y: 40 }
+      ])
+    ).toEqual([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 40 }
+    ]);
+    expect(simplifyPolyline([])).toEqual([]);
+  });
+
+  it("measures, walks, and probes a routed polyline", () => {
+    const route = [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 300 }
+    ];
+    expect(polylineLength(route)).toBe(400);
+    expect(pointOnPolyline(route, 0)).toEqual({ x: 0, y: 0 });
+    // A quarter of 400 units is 100 along, exactly the corner.
+    expect(pointOnPolyline(route, 0.25)).toEqual({ x: 100, y: 0 });
+    expect(pointOnPolyline(route, 0.5)).toEqual({ x: 100, y: 100 });
+    expect(pointOnPolyline(route, 1)).toEqual({ x: 100, y: 300 });
+    expect(longestPolylineSegment(route)).toEqual({ from: { x: 100, y: 0 }, to: { x: 100, y: 300 } });
+    // A click near the corner hits the route; the same point is 94 units from the straight
+    // line between the two ends, so hit testing has to follow the run the user can see.
+    expect(distanceToPolyline({ x: 90, y: 10 }, route)).toBe(10);
+  });
+});
+
+describe("crossings and junctions", () => {
+  const across = { id: "across", points: [{ x: 0, y: 100 }, { x: 400, y: 100 }] };
+  const down = { id: "down", points: [{ x: 200, y: 0 }, { x: 200, y: 300 }] };
+
+  it("marks a crossing on the horizontal run whichever pipe is drawn first", () => {
+    const marker = { routeId: "across", segmentIndex: 0, overRouteId: "down", point: { x: 200, y: 100 } };
+    expect(wireCrossings([across, down])).toEqual([marker]);
+    expect(wireCrossings([down, across])).toEqual([marker]);
+  });
+
+  it("treats a run that ends on another run as a junction, not a crossing", () => {
+    const tee = { id: "tee", points: [{ x: 200, y: 100 }, { x: 200, y: 300 }] };
+    expect(segmentCrossing({ from: across.points[0], to: across.points[1] }, { from: tee.points[0], to: tee.points[1] })).toBeNull();
+    expect(wireCrossings([across, tee])).toEqual([]);
+    expect(wireJunctions([across, tee])).toEqual([{ x: 200, y: 100 }]);
+    // Two runs that merely cross share no endpoint, so nothing is marked as connected.
+    expect(wireJunctions([across, down])).toEqual([]);
+  });
+
+  it("ignores parallel runs and finds every crossing on a multi-corner route", () => {
+    const parallel = { id: "parallel", points: [{ x: 0, y: 100 }, { x: 400, y: 100 }] };
+    expect(wireCrossings([across, parallel])).toEqual([]);
+    const zigzag = {
+      id: "zigzag",
+      points: [{ x: 100, y: 0 }, { x: 100, y: 200 }, { x: 300, y: 200 }, { x: 300, y: 0 }]
+    };
+    expect(wireCrossings([across, zigzag]).map((crossing) => crossing.point)).toEqual([
+      { x: 100, y: 100 },
+      { x: 300, y: 100 }
+    ]);
+  });
+
+  it("reports every straight run of a route so the next route can avoid them", () => {
+    expect(routeLaneSpans([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 300 }])).toEqual([
+      { axis: "horizontal", position: 0, from: 0, to: 100 },
+      { axis: "vertical", position: 100, from: 0, to: 300 }
+    ]);
+  });
+});
+
+describe("label placement", () => {
+  it("boxes a routed run so a chip can be tested against it", () => {
+    expect(polylineObstacleBoxes([{ x: 0, y: 100 }, { x: 400, y: 100 }], 10)).toEqual([
+      { left: -10, right: 410, top: 90, bottom: 110 }
+    ]);
+    expect(boxesOverlap({ left: 0, top: 0, right: 10, bottom: 10 }, { left: 9, top: 9, right: 20, bottom: 20 })).toBe(true);
+    expect(boxesOverlap({ left: 0, top: 0, right: 10, bottom: 10 }, { left: 10, top: 0, right: 20, bottom: 10 })).toBe(false);
+  });
+
+  it("offers the preferred side first and then walks outwards", () => {
+    const candidates = labelPlacementCandidates({ x: 200, y: 100 }, 60, 20, { preferred: "below", step: 13, rings: 2 });
+    expect(candidates).toHaveLength(8);
+    expect(candidates[0]).toEqual({ left: 170, top: 100, right: 230, bottom: 120 });
+    expect(candidates[1]).toEqual({ left: 170, top: 80, right: 230, bottom: 100 });
+    expect(candidates[4]).toEqual({ left: 170, top: 113, right: 230, bottom: 133 });
+  });
+
+  it("pushes a chip off a routed run instead of stamping it on the pipe", () => {
+    const wire = polylineObstacleBoxes([{ x: 0, y: 100 }, { x: 400, y: 100 }], 10);
+    const candidates = labelPlacementCandidates({ x: 200, y: 100 }, 60, 20, { preferred: "below", step: 13, rings: 4 });
+    // Hard against the wire the chip would sit on it, so the first clear place is one
+    // step below: the box top moves to 100 + 13 = 113, clear of the run's 110 edge.
+    expect(firstClearBox(candidates, [])).toEqual({ left: 170, top: 100, right: 230, bottom: 120 });
+    expect(firstClearBox(candidates, wire)).toEqual({ left: 170, top: 113, right: 230, bottom: 133 });
+    for (const box of wire) expect(boxesOverlap(box, firstClearBox(candidates, wire)!)).toBe(false);
+    // A chip with nowhere to go is reported as unplaceable rather than drawn over a pipe.
+    expect(firstClearBox(candidates, [{ left: -1e4, top: -1e4, right: 1e4, bottom: 1e4 }])).toBeNull();
+  });
+});
+
+describe("tidy layout", () => {
+  it("lays a chain out left to right on the grid", () => {
+    const arranged = tidySchematicLayout(venturiPreset);
+    // Three components on one chain: one column each, 5 grid cells apart, on the row the
+    // drawing already occupies. minX 120 snaps to 120; the vertical centre 260 snaps to 280.
+    expect(arranged).toEqual({
+      source: { x: 120, y: 280 },
+      throat: { x: 320, y: 280 },
+      sink: { x: 520, y: 280 }
+    });
+    expect(arranged.throat.x - arranged.source.x).toBe(SCHEMATIC_GRID_SIZE * 5);
+  });
+
+  it("unpicks crossed wires and keeps every component on a free grid cell", () => {
+    const project = crossedProject();
+    const before = schematicNodePositions(project);
+    expect(countEdgeCrossings(project, before)).toBe(1);
+
+    const arranged = tidySchematicLayout(project);
+    expect(countEdgeCrossings(project, arranged)).toBe(0);
+    // `a` wires to the lower sink, so the barycentre sweep lifts that sink to the top row
+    // and the two pipes run parallel instead of over one another.
+    expect(arranged).toEqual({
+      a: { x: 120, y: 160 },
+      b: { x: 120, y: 280 },
+      lower: { x: 320, y: 160 },
+      upper: { x: 320, y: 280 }
+    });
+
+    const placed = Object.values(arranged);
+    for (const position of placed) {
+      expect(position.x % SCHEMATIC_GRID_SIZE).toBe(0);
+      expect(position.y % SCHEMATIC_GRID_SIZE).toBe(0);
+    }
+    for (let first = 0; first < placed.length; first += 1) {
+      for (let second = first + 1; second < placed.length; second += 1) {
+        expect(Math.hypot(placed[first].x - placed[second].x, placed[first].y - placed[second].y)).toBeGreaterThanOrEqual(
+          MIN_NODE_SEPARATION
+        );
+      }
+    }
+  });
+
+  it("survives an empty project and a recirculating loop", () => {
+    expect(tidySchematicLayout({ ...venturiPreset, nodes: {}, edges: {} })).toEqual({});
+    const looped: FluidProject = {
+      ...venturiPreset,
+      edges: {
+        ...venturiPreset.edges,
+        back: { ...venturiPreset.edges.inlet, id: "back", from: "sink", to: "source", fromPort: "north", toPort: "south" }
+      }
+    };
+    const arranged = tidySchematicLayout(looped);
+    expect(Object.keys(arranged).sort()).toEqual(["sink", "source", "throat"]);
+    for (const position of Object.values(arranged)) {
+      expect(Number.isFinite(position.x) && Number.isFinite(position.y)).toBe(true);
+      expect(position.x % SCHEMATIC_GRID_SIZE).toBe(0);
+    }
+  });
+
+  it("aims every component along the flow so its ports face the runs that reach it", () => {
+    // The preset arrives with the throat and the outlet turned to 180 degrees, which puts
+    // the throat's inlet on its downstream side and forces the router to loop a run all
+    // the way round the body. Tidying points each outlet at what it feeds instead.
+    expect(venturiPreset.nodes.throat.rotation ?? 0).toBe(0);
+    const misaimed: FluidProject = {
+      ...venturiPreset,
+      nodes: {
+        ...venturiPreset.nodes,
+        throat: { ...venturiPreset.nodes.throat, rotation: 180 },
+        sink: { ...venturiPreset.nodes.sink, rotation: 180 }
+      }
+    };
+    // source -> throat -> sink all run left to right, so every component faces 0 degrees:
+    // the sink has nothing downstream and is turned away from the throat that feeds it.
+    expect(tidySchematicRotations(misaimed)).toEqual({ source: 0, throat: 0, sink: 0 });
+
+    const stacked: FluidProject = {
+      ...misaimed,
+      nodes: {
+        source: { ...venturiPreset.nodes.source, position: { x: 200, y: 100 } },
+        throat: { ...venturiPreset.nodes.throat, position: { x: 200, y: 300 } },
+        sink: { ...venturiPreset.nodes.sink, position: { x: 200, y: 500 } }
+      }
+    };
+    // The same chain drawn top to bottom aims every component straight down.
+    expect(tidySchematicRotations(stacked)).toEqual({ source: 90, throat: 90, sink: 90 });
+  });
+
+  it("counts only pipes that genuinely cross, not pipes that share a component", () => {
+    const project = crossedProject();
+    // Both pipes leave the same component, so they meet by design rather than crossing.
+    const shared: FluidProject = {
+      ...project,
+      edges: {
+        first: { ...project.edges.first, from: "a", to: "lower" },
+        second: { ...project.edges.second, from: "a", to: "upper", fromPort: "north" }
+      }
+    };
+    expect(countEdgeCrossings(shared, schematicNodePositions(shared))).toBe(0);
   });
 });
