@@ -540,7 +540,7 @@ describe("FlowLab result visualization", () => {
     window.webkit = { messageHandlers: { flowlabDesktop: { postMessage } } };
     render(<App />);
 
-    fireEvent.click(screen.getByTitle("Export project"));
+    fireEvent.click(screen.getByTitle("Save a copy of this project"));
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "save-files",
@@ -558,7 +558,7 @@ describe("FlowLab result visualization", () => {
     window.flowlabDesktop = { platform: "darwin", saveFiles };
     render(<App />);
 
-    fireEvent.click(screen.getByTitle("Export project"));
+    fireEvent.click(screen.getByTitle("Save a copy of this project"));
 
     await waitFor(() => expect(saveFiles).toHaveBeenCalledTimes(1));
     expect(saveFiles.mock.calls[0][0]).toEqual([
@@ -572,7 +572,7 @@ describe("FlowLab result visualization", () => {
   it("switches an already-loaded recent run back to its newest artifact and reconciles velocity to U", async () => {
     render(<App />);
     fireEvent.change(await screen.findByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
-    fireEvent.click(screen.getByRole("button", { name: /Generate and queue experimental CFD case/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Run CFD case/i }));
 
     expect(await screen.findByText("Server job job-openfoam-test: complete")).toBeTruthy();
     expect(screen.getByText(/Using U from VTK\/case_2\.vtk/)).toBeTruthy();
@@ -755,7 +755,7 @@ describe("FlowLab result visualization", () => {
     render(<App />);
     await screen.findByLabelText("Solver runtime readiness");
     fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
-    fireEvent.click(screen.getByRole("button", { name: /Generate and queue experimental CFD case/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Run CFD case/i }));
 
     expect((await screen.findAllByText("Generated-case mesh preview")).length).toBeGreaterThan(0);
     expect(screen.getByText(/Deterministic pre-solve mesh from the current generated case/)).toBeTruthy();
@@ -861,7 +861,7 @@ describe("FlowLab result visualization", () => {
 
     await screen.findByLabelText("Solver runtime readiness");
     fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
-    fireEvent.click(screen.getByRole("button", { name: /Generate and queue experimental CFD case/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Run CFD case/i }));
 
     expect(await screen.findByText("Job complete")).toBeTruthy();
     expect(screen.getAllByText("Solver-produced mesh").length).toBeGreaterThan(0);
@@ -950,7 +950,7 @@ describe("FlowLab result visualization", () => {
     await screen.findByLabelText("Solver runtime readiness");
     fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
 
-    const queueButton = screen.getByRole("button", { name: /Generate and queue experimental CFD case/i });
+    const queueButton = screen.getByRole("button", { name: /Run CFD case/i });
     expect(queueButton).toBeDisabled();
     expect(screen.getByText(/Fix 1 blocking network issue before queueing a solver case/i)).toBeTruthy();
 
@@ -964,7 +964,7 @@ describe("FlowLab result visualization", () => {
     render(<App />);
 
     await screen.findByLabelText("Solver runtime readiness");
-    const queueButton = screen.getByRole("button", { name: /Generate and queue experimental CFD case/i });
+    const queueButton = screen.getByRole("button", { name: /Run CFD case/i });
     expect(queueButton).toBeDisabled();
     expect(screen.getByText(/Instant 1D runs in the Estimate stage/i)).toBeTruthy();
     expect(screen.queryByTestId("result-import-file")).toBeNull();
@@ -1058,7 +1058,7 @@ describe("FlowLab result visualization", () => {
 
     await screen.findByLabelText("Solver runtime readiness");
     fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
-    fireEvent.click(screen.getByRole("button", { name: /Generate and queue experimental CFD case/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Run CFD case/i }));
 
     expect(await screen.findByText("Server job job-progressive-test: running")).toBeTruthy();
 

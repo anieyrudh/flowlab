@@ -4555,3 +4555,81 @@ body {
   word-break: keep-all;
   hyphens: none;
 }
+
+
+/* ---- Workflow rail: each step says what it gives you ------------------ */
+.workflow-rail button small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: left;
+  white-space: normal;
+}
+
+.workflow-rail button.active small { color: rgba(220, 240, 255, 0.78); }
+
+/* A step with nothing to show is not a dead end: the title says why. */
+.workflow-rail button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.workflow-rail button:disabled small { color: var(--muted); }
+
+
+/* ---- Collapsible panels ---------------------------------------------- */
+.panel-collapse-toggle,
+.dock-collapse-toggle {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-subtle);
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.panel-collapse-toggle { margin-top: 6px; width: 100%; }
+.dock-collapse-toggle {
+  /* The footer is a two-column grid; without this the button lands in a row of
+     its own under the panel instead of beside the tabs. */
+  position: absolute;
+  z-index: 4;
+  top: 8px;
+  right: 12px;
+}
+
+.bottom-dock { position: relative; }
+
+.panel-collapse-toggle:hover,
+.dock-collapse-toggle:hover { color: var(--text); background: var(--panel-raised); }
+
+/* The rail and the dock tabs stay visible, so there is always a way back. */
+.workspace-shell.panels-collapsed { grid-template-columns: 104px minmax(520px, 1fr) minmax(300px, 340px); }
+.workspace-shell.panels-collapsed .sidebar-stack { display: none; }
+
+.workspace-shell.dock-collapsed { grid-template-rows: minmax(64px, auto) minmax(0, 1fr) auto; }
+.workspace-shell.dock-collapsed .dock-panel { display: none; }
+
+
+/* ---- Top-bar file actions -------------------------------------------- */
+/* These were three unlabelled glyphs. They are the only way to keep or move
+   a project, so they carry their task in words. */
+/* `.toolbar-actions button` pins a 36px square for the icon-only controls, so
+   a labelled one has to opt out or its text overflows the button. */
+.toolbar-actions .file-action { width: auto; }
+
+.toolbar-actions { flex-wrap: wrap; }
+
+.file-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}

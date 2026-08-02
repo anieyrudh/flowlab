@@ -278,10 +278,10 @@ export function validatedRunStatusLabel(
 }
 
 const workflowStages: { id: WorkspaceMode; label: string; description: string }[] = [
-  { id: "design", label: "Define", description: "Build the system" },
-  { id: "simulate", label: "Estimate", description: "Run the instant 1D estimate" },
-  { id: "sweep", label: "CFD", description: "Configure and queue an experimental case" },
-  { id: "analyze", label: "Inspect", description: "Examine result fields and evidence" }
+  { id: "design", label: "Define", description: "Draw the system" },
+  { id: "simulate", label: "Estimate", description: "Instant 1D result" },
+  { id: "sweep", label: "CFD", description: "Full solver run" },
+  { id: "analyze", label: "Inspect", description: "View result fields" }
 ];
 
 const advancedModes: { id: AdvancedPhysicsMode; label: string }[] = [
@@ -980,6 +980,10 @@ export default function App() {
   const [use2dProjection, setUse2dProjection] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   // Show the four workflow steps once, so a new user is not left to infer them.
+  // Panels the user can put away. The workflow rail and the dock tab strip stay
+  // on screen, so collapsing never hides the way back.
+  const [panelsCollapsed, setPanelsCollapsed] = useState(false);
+  const [dockCollapsed, setDockCollapsed] = useState(false);
   const [firstRunSeen, setFirstRunSeen] = useState(
     () => typeof window === "undefined" || window.localStorage.getItem(FIRST_RUN_STORAGE_KEY) === "true"
   );
@@ -2089,7 +2093,7 @@ export default function App() {
   }
 
   return (
-    <main className={`app-shell workspace-shell ${inspectorOpen ? "inspector-overlay-open" : ""}`} data-stage={project.visualization.mode}>
+    <main className={`app-shell workspace-shell ${inspectorOpen ? "inspector-overlay-open" : ""}${panelsCollapsed ? " panels-collapsed" : ""}${dockCollapsed ? " dock-collapsed" : ""}`} data-stage={project.visualization.mode}>
       <header className="top-hud">
         <div className="toolbar-left">
           <div className="brand-lockup">
@@ -2118,14 +2122,17 @@ export default function App() {
             <button type="button" aria-label="Redo" aria-keyshortcuts="Shift+Meta+Z Shift+Control+Z Meta+Y Control+Y" disabled={!canRedo} onClick={redo} title="Redo model edit">
               <Redo2 size={17} />
             </button>
-            <button onClick={exportProject} title="Export project">
-              <Download size={18} />
+            <button className="file-action" onClick={exportProject} title="Save a copy of this project" aria-label="Save a copy of this project">
+              <Download size={16} />
+              Save
             </button>
-            <button onClick={exportResultBundle} title="Export project and results">
-              <FileDown size={18} />
+            <button className="file-action" onClick={exportResultBundle} title="Save this project together with its results" aria-label="Save this project together with its results">
+              <FileDown size={16} />
+              Save + results
             </button>
-            <button onClick={() => fileRef.current?.click()} title="Import project">
-              <Upload size={18} />
+            <button className="file-action" onClick={() => fileRef.current?.click()} title="Open a project file" aria-label="Open a project file">
+              <Upload size={16} />
+              Open
             </button>
             <input
               ref={fileRef}
@@ -2161,18 +2168,37 @@ export default function App() {
 
       <aside className="left-sidebar cinema-sidebar">
         <nav className="workflow-rail" aria-label="FlowLab workflow stages">
-          {workflowStages.map((stage, index) => (
-            <button
-              key={stage.id}
-              className={project.visualization.mode === stage.id ? "active" : ""}
-              aria-pressed={project.visualization.mode === stage.id}
-              onClick={() => setMode(stage.id)}
-              title={stage.description}
-            >
-              <span>{String(index + 1).padStart(2, "0")}</span>
-              <strong>{stage.label}</strong>
-            </button>
-          ))}
+          {workflowStages.map((stage, index) => {
+            // Inspect is also where a result is imported, so disabling it would
+            // be a dead end: you could not reach the one place that gives you a
+            // result. Mark it instead, so the step sequence still means
+            // something without trapping the user.
+            const blocked = stage.id === "analyze" && resultSnapshots.length === 0
+              ? "No result yet. Run a case in 03 CFD, or import one here."
+              : null;
+            return (
+              <button
+                key={stage.id}
+                className={project.visualization.mode === stage.id ? "active" : ""}
+                aria-pressed={project.visualization.mode === stage.id}
+                onClick={() => setMode(stage.id)}
+                title={blocked ?? stage.description}
+              >
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <strong>{stage.label}</strong>
+                <small aria-hidden="true">{blocked ? "No result yet" : stage.description}</small>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            className="panel-collapse-toggle"
+            aria-pressed={panelsCollapsed}
+            title={panelsCollapsed ? "Show the side panels" : "Hide the side panels"}
+            onClick={() => setPanelsCollapsed((value) => !value)}
+          >
+            {panelsCollapsed ? "Panels" : "Hide"}
+          </button>
         </nav>
 
         <div className="sidebar-stack">
@@ -2194,13 +2220,9 @@ export default function App() {
                 <GitBranchPlus size={17} />
                 Venturi
               </button>
-              <button title="Add pipe" onClick={() => handleAddEdge("pipe")}>
-                <GitBranchPlus size={17} />
-                Pipe
-              </button>
               <button title="Add bend" onClick={() => handleAddEdge("bend")}>
                 <GitBranchPlus size={17} />
-                Elbow
+                Bend
               </button>
               <button title="Add valve" onClick={() => handleAddEdge("valve")}>
                 <GitBranchPlus size={17} />
@@ -2424,7 +2446,7 @@ export default function App() {
                     aria-describedby="cfd-stage-action-reason"
                   >
                     <Box size={16} />
-                    Generate and queue experimental CFD case
+                    Run CFD case
                   </button>
                   <button
                     type="button"
@@ -2822,6 +2844,15 @@ export default function App() {
       </aside>
 
       <footer className="bottom-dock">
+        <button
+          type="button"
+          className="dock-collapse-toggle"
+          aria-pressed={dockCollapsed}
+          title={dockCollapsed ? "Show the bottom panel" : "Hide the bottom panel"}
+          onClick={() => setDockCollapsed((value) => !value)}
+        >
+          {dockCollapsed ? "Show" : "Hide"}
+        </button>
         <nav className="dock-tabs" aria-label="Workspace panels">
           {dockPanelOptions.filter((panel) => dockPanelsByMode[project.visualization.mode].includes(panel.id)).map((panel) => (
             <button
