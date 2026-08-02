@@ -24,7 +24,8 @@ import {
   extractExteriorCellFaces,
   resultSurfaceTriangles,
   solvedDomainCaptionPlacement,
-  steppedTone
+  steppedTone,
+  datasetBounds
 } from "./cinemaRenderer";
 
 function dataset(
@@ -686,5 +687,18 @@ describe("Naming the solved domain", () => {
     expect(empty.extent).toEqual([0, 0, 0]);
     expect(empty.layers).toBe(0);
     expect(empty.lines).toHaveLength(4);
+  });
+});
+
+describe("datasetBounds on a large result", () => {
+  it("does not overflow the argument limit", () => {
+    // Spreading a per-point array into Math.min throws RangeError past roughly
+    // 100k arguments, which is the size of result this view exists to show.
+    const count = 300_000;
+    const points: [number, number, number][] = new Array(count);
+    for (let i = 0; i < count; i += 1) points[i] = [i, -i - 1, 0];
+    const bounds = datasetBounds({ points, cells: [], fields: {} } as never);
+    expect(bounds.min).toEqual([0, -count, 0]);
+    expect(bounds.max).toEqual([count - 1, -1, 0]);
   });
 });

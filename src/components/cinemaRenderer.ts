@@ -479,12 +479,19 @@ function createPipeMesh(start: THREE.Vector3, end: THREE.Vector3, radius: number
   return mesh;
 }
 
-function datasetBounds(dataset: VtkResultDataset) {
-  const xs = dataset.points.map((point) => point[0]);
-  const ys = dataset.points.map((point) => point[1]);
-  const zs = dataset.points.map((point) => point[2]);
-  const min: [number, number, number] = [Math.min(...xs), Math.min(...ys), Math.min(...zs)];
-  const max: [number, number, number] = [Math.max(...xs), Math.max(...ys), Math.max(...zs)];
+export function datasetBounds(dataset: VtkResultDataset) {
+  // Spreading a per-point array into Math.min throws RangeError once the array
+  // passes the engine's argument limit, around 100k points. That is precisely
+  // the size of result this view exists to show, so this walks the points.
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (const point of dataset.points) {
+    for (let axis = 0; axis < 3; axis += 1) {
+      const value = point[axis];
+      if (value < min[axis]) min[axis] = value;
+      if (value > max[axis]) max[axis] = value;
+    }
+  }
   return {
     min,
     max,
@@ -700,7 +707,12 @@ function addResultSurfaceMesh(
   const fieldValues = resultFieldSelection ? fieldValuesForSelection(dataset, resultFieldSelection, resultVectorComponent) : fieldValuesForOverlay(dataset, overlay);
   if (!fieldValues || dataset.cells.length === 0 || dataset.points.length === 0) return null;
   const bounds = datasetBounds(dataset);
-  const maxValue = Math.max(...fieldValues.values.map((value) => Math.abs(value)), 1e-9);
+  // Same argument-limit hazard as datasetBounds: one value per point.
+  let maxValue = 1e-9;
+  for (const value of fieldValues.values) {
+    const magnitude = Math.abs(value);
+    if (magnitude > maxValue) maxValue = magnitude;
+  }
   const positions: number[] = [];
   const colors: number[] = [];
   const meshScale = worldSpan / bounds.span;
