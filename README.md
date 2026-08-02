@@ -20,11 +20,22 @@ Docker Desktop.
 
 ## Get FlowLab
 
-**Signed installers are not released yet.** Automated candidate builds pass on
-macOS 13 or later on Apple Silicon, and on Windows 11 x64. But these builds are
-not signed. Your operating system will refuse to open them.
+Download it from the [releases page](https://github.com/anieyrudh/flowlab/releases).
+It runs on macOS 13 or later on Apple Silicon, and on Windows 11 x64.
 
-Build FlowLab from source until a signed release exists. Refer to
+**The builds are not signed.** Your operating system shows a warning the first
+time you open the application. The application still runs. On macOS, open
+**System Settings**, click **Privacy & Security**, then click **Open Anyway**.
+On Windows, click **More info**, then **Run anyway**. Do this one time.
+[The user guide](docs/USER_GUIDE.md#3-start-the-application) gives the steps.
+
+CFD also needs Docker Desktop and one container. Build it one time:
+
+```bash
+docker build -t flowlab/openfoam11-gmsh:2026-07-13 docker/openfoam11-gmsh
+```
+
+You can also build FlowLab from source. Refer to
 [the installation guide](docs/INSTALLATION.md).
 
 ## Start using it

@@ -24,6 +24,7 @@ Your project data stays on your computer. FlowLab does not send it anywhere.
 | macOS 13 or later, Apple Silicon | The application |
 | Windows 11, x64 | The application |
 | Docker Desktop | CFD only. Not needed for instant estimates. |
+| The solver image | CFD only. Refer to section 8. |
 
 **Do not install Python for the packaged application.** It contains its own
 copy. To build from source, you need Node.js 24 and CPython 3.12. Refer to
@@ -31,16 +32,33 @@ copy. To build from source, you need Node.js 24 and CPython 3.12. Refer to
 
 ## 3. Start the application
 
-**There is no signed installer yet.** The project builds candidate packages
-automatically. It does not sign them. Thus macOS and Windows refuse to open
-them.
+Download FlowLab from the
+[releases page](https://github.com/anieyrudh/flowlab/releases).
 
-To get FlowLab now, build it from source. Refer to
-[the installation guide](INSTALLATION.md). This guide gives the installation
-steps when a signed release is available.
+**The application is not signed.** Your operating system shows a warning the
+first time you open it. The warning is correct: the project has no signing
+certificate. The application still runs. Do these steps one time.
+
+**On macOS**
+
+1. Move FlowLab to your Applications folder.
+2. Open FlowLab. macOS stops it and shows a warning.
+3. Open **System Settings**.
+4. Click **Privacy & Security**.
+5. Find the message about FlowLab. Then click **Open Anyway**.
+6. Open FlowLab again. Then click **Open**.
+
+**On Windows**
+
+1. Open the file you downloaded. Windows shows "Windows protected your PC".
+2. Click **More info**.
+3. Click **Run anyway**.
 
 FlowLab starts its own local service when it opens. Wait a few seconds. The
 **Backend** indicator changes to **Online**.
+
+To build from source instead, refer to
+[the installation guide](INSTALLATION.md).
 
 ## 4. The four steps
 
@@ -194,6 +212,27 @@ connected. Correct all warnings before you continue.
 
 **You must have Docker Desktop open before you start.**
 
+### 8.1 Build the solver image, one time
+
+FlowLab runs OpenFOAM in a container. Build that container one time. Get the
+source first, then run this command in the source folder:
+
+```bash
+docker build -t flowlab/openfoam11-gmsh:2026-07-13 docker/openfoam11-gmsh
+```
+
+The image is the OpenFOAM Foundation image with `gmsh` added. Its base is
+pinned by digest, so the build gives the same image each time. The download is
+approximately 3 GB, and the build takes some minutes.
+
+The image is built for x86-64. On Apple Silicon it runs through emulation.
+The results are the same, but the run is slower.
+
+If the image is absent, FlowLab shows OpenFOAM as not available and gives the
+reason. It does not fail quietly.
+
+### 8.2 Set up and start the run
+
 1. Click **03 CFD**.
 2. Open the **Inspector** with the button at the top right.
 3. Find **Advanced solvers**.
@@ -262,4 +301,5 @@ a project.
 | No pressure drop after a run | Set **Run mode** to Steady. The transient mode does not converge. |
 | The CFD pressure drop looks much too small | The **Patch Metrics** panel gives the raw solver value. An incompressible run reports a kinematic pressure in m2/s2. Multiply it by the density to get pascals. The **Guided first case** panel does this for you. |
 | The CFD pressure drop is near 3 times the analytic value | You used Hagen-Poiseuille with the Planar 2D mesh. Planar 2D is a flat channel. Use plane-Poiseuille. Refer to section 6. |
-| macOS refuses to open the application | The installer is not signed yet. Refer to [the installation guide](INSTALLATION.md). |
+| macOS or Windows stops the application | The build is not signed. Refer to section 3 for the one-time steps. |
+| OpenFOAM shows as not available | Build the solver image. Refer to section 8.1. |
