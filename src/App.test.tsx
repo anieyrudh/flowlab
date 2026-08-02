@@ -941,6 +941,58 @@ describe("FlowLab result visualization", () => {
     expect(screen.getByText(/Using U from VTK\/case_1\.vtk/)).toBeTruthy();
   }, 20_000);
 
+  it("reports run state and what the finished solve produced where the run was started", async () => {
+    render(<App />);
+
+    await screen.findByLabelText("Solver runtime readiness");
+    fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
+    fireEvent.click(screen.getByRole("button", { name: /Run CFD case/i }));
+
+    // Progress is stated beside the control that started the run, not only
+    // inside a collapsed panel.
+    const progress = await screen.findByLabelText("CFD run progress");
+    expect(progress).toHaveTextContent("Complete");
+    expect(progress).toHaveTextContent("Time 0.002");
+    expect(progress).toHaveTextContent("exit 0");
+
+    const outcome = screen.getByLabelText("Solve outcome");
+    expect(outcome).toHaveTextContent("Solve complete");
+    expect(outcome).toHaveTextContent("field files");
+    expect(outcome).toHaveTextContent("diagnostic file");
+    expect(outcome).toHaveTextContent("2.325 kPa");
+    expect(within(outcome).getByRole("button", { name: /View fields in Inspect/i })).toBeTruthy();
+
+    fireEvent.click(within(outcome).getByRole("button", { name: /Open solver diagnostics/i }));
+    expect(screen.getByLabelText("Solver diagnostics panel")).toBeVisible();
+  }, 20_000);
+
+  it("keeps the mesh reasons a case would not run inside solver diagnostics", async () => {
+    render(<App />);
+
+    await screen.findByLabelText("Solver runtime readiness");
+    fireEvent.change(screen.getByRole("combobox", { name: /^Solver$/i }), { target: { value: "openfoam" } });
+
+    // The Mesh QA tab is gone; the mesh evidence that explains a failed run
+    // moved here.
+    expect(screen.queryByRole("button", { name: "Mesh QA" })).toBeNull();
+    expect(screen.getByLabelText("Mesh blockers", { exact: true })).toHaveTextContent("Queue an OpenFOAM job to collect native mesh evidence.");
+  });
+
+  it("names the swept parameter and unit from the project's own sweep record", async () => {
+    render(<App />);
+
+    await screen.findByLabelText("Solver runtime readiness");
+    fireEvent.click(within(screen.getByRole("navigation", { name: "FlowLab workflow stages" })).getByRole("button", { name: /Estimate$/ }));
+
+    // The venturi preset sweeps the throat diameter, not an inlet flow rate.
+    expect(screen.getByText("Sweep: throat diameter (m)")).toBeTruthy();
+    expect(screen.getByText(/Converging Venturi · 0.045 m to 0.14 m in 8 steps/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Run sweep/i }));
+    expect(screen.getByText("0.045 m")).toBeTruthy();
+    expect(screen.getByText("0.14 m")).toBeTruthy();
+  });
+
   it("blocks advanced case queueing when the live network has topology errors", async () => {
     useFlowStore.getState().setProject({ ...venturiPreset, visualization: { ...venturiPreset.visualization, mode: "sweep" } });
     useFlowStore.getState().updateEdge("inlet", { to: "source" });
@@ -952,7 +1004,9 @@ describe("FlowLab result visualization", () => {
 
     const queueButton = screen.getByRole("button", { name: /Run CFD case/i });
     expect(queueButton).toBeDisabled();
-    expect(screen.getByText(/Fix 1 blocking network issue before queueing a solver case/i)).toBeTruthy();
+    // The blocking reason is now stated on the run control itself as well as in
+    // the solver settings, so the message appears more than once.
+    expect(screen.getAllByText(/Fix 1 blocking network issue before queueing a solver case/i).length).toBeGreaterThan(0);
 
     fireEvent.click(queueButton);
 
@@ -960,21 +1014,43 @@ describe("FlowLab result visualization", () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/cases/generate")).toBe(false);
   });
 
-  it("keeps browser-side Instant 1D out of the CFD queue and keeps VTK import in Inspect", async () => {
+  // "Use OpenFOAM" and "Run CFD case" used to be two controls, so this test
+  // asserted the run control stayed disabled while Instant 1D was selected. One
+  // control now does both. What still matters, and is asserted here, is that
+  // Instant 1D is never the solver that gets queued.
+  it("promotes Instant 1D to a runnable CFD solver from the single run control", async () => {
     render(<App />);
 
     await screen.findByLabelText("Solver runtime readiness");
     const queueButton = screen.getByRole("button", { name: /Run CFD case/i });
-    expect(queueButton).toBeDisabled();
-    expect(screen.getByText(/Instant 1D runs in the Estimate stage/i)).toBeTruthy();
+    expect(queueButton).toBeEnabled();
+    expect(screen.getByText(/Switches Instant 1D to OpenFOAM, then runs/i)).toBeTruthy();
+    expect(screen.queryByTestId("result-import-file")).toBeNull();
+
+    fireEvent.click(queueButton);
+    expect(await screen.findByText("Server job job-openfoam-test: complete")).toBeTruthy();
+
+    const fetchMock = vi.mocked(fetch);
+    const generateCall = fetchMock.mock.calls.find(([input]) => String(input) === "/api/cases/generate");
+    expect(generateCall).toBeTruthy();
+    const generatePayload = JSON.parse(String((generateCall?.[1] as RequestInit).body)) as {
+      solver: string;
+      project: { solver: { tier: string } };
+    };
+    expect(generatePayload.solver).toBe("openfoam");
+    expect(generatePayload.project.solver.tier).toBe("openfoam");
+    expect(useFlowStore.getState().project.solver.tier).toBe("openfoam");
+  });
+
+  it("keeps VTK import in Inspect", async () => {
+    render(<App />);
+
+    await screen.findByLabelText("Solver runtime readiness");
     expect(screen.queryByTestId("result-import-file")).toBeNull();
 
     fireEvent.click(within(screen.getByRole("navigation", { name: "FlowLab workflow stages" })).getByRole("button", { name: /Inspect$/ }));
     expect(screen.getByRole("button", { name: "Import VTK/VTU" })).toBeTruthy();
     expect(screen.getByTestId("result-import-file")).toBeTruthy();
-
-    const fetchMock = vi.mocked(fetch);
-    expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/cases/generate")).toBe(false);
   });
 
   it("keeps progressive solver snapshots playable as completed result files arrive", async () => {
