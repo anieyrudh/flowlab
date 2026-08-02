@@ -33,18 +33,35 @@ import {
   SCHEMATIC_GRID_SIZE,
   clampViewportZoom,
   defaultSchematicViewport,
+  distanceToPolyline,
+  firstClearBox,
   fitSchematicViewport,
   isCellFree,
+  labelPlacementCandidates,
+  longestPolylineSegment,
   panSchematicViewport,
+  pointOnPolyline,
+  polylineObstacleBoxes,
+  polylineSegments,
   resetSchematicViewport,
+  routeLaneSpans,
+  routeOrthogonalPipe,
   screenToWorld,
   snapNodeToFreeCell,
   snapToGrid,
-  type CinemaCameraState,
-  type SchematicViewport,
-  visibleGridRange,
+  tidySchematicLayout,
+  tidySchematicRotations,
+  wireCrossings,
+  wireJunctions,
   worldToScreen,
-  zoomViewportAtPoint
+  zoomViewportAtPoint,
+  type CinemaCameraState,
+  type LabelRect,
+  type LabelSide,
+  type LaneSpan,
+  type SchematicViewport,
+  type WireRoute,
+  visibleGridRange
 } from "./viewportModel";
 
 type Props = {
@@ -116,10 +133,13 @@ type HoverTarget =
   | { kind: "endpoint"; edgeId: string; endpoint: "from" | "to" }
   | { kind: "rotate"; nodeId: string };
 
-type LabelBox = { left: number; top: number; right: number; bottom: number };
+type LabelBox = LabelRect;
 
 const ports: PipePortId[] = ["inlet", "outlet", "north", "south"];
 const ignoreRenderBackendChange = () => {};
+
+/** Screen-pixel halo kept clear around every routed run when a label looks for a home. */
+const LABEL_WIRE_CLEARANCE = 5;
 
 /**
  * Screen-space margin auto-fit keeps clear. The bottom strip is the anchored Fit/Reset
@@ -135,10 +155,6 @@ const cursorForHover: Record<HoverTarget["kind"], string> = {
   endpoint: "crosshair",
   rotate: "crosshair"
 };
-
-function boxesOverlap(a: LabelBox, b: LabelBox) {
-  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-}
 
 function roundedRectPath(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
   const r = Math.min(radius, width / 2, height / 2);
@@ -227,18 +243,111 @@ function portPosition(node: FluidNode, port: PipePortId): Vec2 {
   };
 }
 
+/** Outward normal of a port: the direction a pipe has to leave along. */
+function portDirection(node: FluidNode, port: PipePortId): Vec2 {
+  const angle = degreesToRadians(portAngle(node, port));
+  return { x: Math.cos(angle), y: Math.sin(angle) };
+}
+
+/** The orthogonal polyline one pipe is drawn along, in world coordinates. */
+function edgeRoutePoints(
+  edge: FluidEdge,
+  nodes: Record<string, FluidNode>,
+  obstacles?: Vec2[],
+  occupiedLanes?: LaneSpan[]
+): Vec2[] | null {
+  const from = nodes[edge.from];
+  const to = nodes[edge.to];
+  if (!from || !to) return null;
+  const fromPort = edge.fromPort ?? "outlet";
+  const toPort = edge.toPort ?? "inlet";
+  return routeOrthogonalPipe(
+    portPosition(from, fromPort),
+    portDirection(from, fromPort),
+    portPosition(to, toPort),
+    portDirection(to, toPort),
+    { obstacles: obstacles ?? componentCentres(nodes), occupiedLanes: occupiedLanes ?? [] }
+  );
+}
+
+function componentCentres(nodes: Record<string, FluidNode>): Vec2[] {
+  return Object.values(nodes).map((node) => node.position);
+}
+
+/**
+ * Routes every drawable pipe. Pipes are routed one after another and each one hands its
+ * runs to the next, so a second pipe picks a different lane instead of being drawn on top
+ * of the first. Edge order is the project's own, so the picture is stable frame to frame.
+ */
+function buildEdgeRoutes(project: FluidProject): WireRoute[] {
+  const obstacles = componentCentres(project.nodes);
+  const occupiedLanes: LaneSpan[] = [];
+  const routes: WireRoute[] = [];
+  for (const edge of Object.values(project.edges)) {
+    const points = edgeRoutePoints(edge, project.nodes, obstacles, occupiedLanes);
+    if (!points || points.length < 2) continue;
+    occupiedLanes.push(...routeLaneSpans(points));
+    routes.push({ id: edge.id, points });
+  }
+  return routes;
+}
+
+/** A crossing marker on one run: where it is, and how far the run steps aside for it. */
+type RouteHop = Vec2 & { radius: number };
+
+/**
+ * Traces a routed pipe, stepping the pen aside wherever it crosses another pipe. The step
+ * is wider than the pipe being crossed, so what the reader sees is a clean break with
+ * rounded shoulders: the schematic convention for "these two do not connect". Without it a
+ * crossover and a tee look identical once both runs are the same colour.
+ */
+function traceRouteWithHops(context: CanvasRenderingContext2D, points: Vec2[], hopsBySegment: Map<number, RouteHop[]>) {
+  context.beginPath();
+  context.moveTo(points[0].x, points[0].y);
+  polylineSegments(points).forEach((segment, index) => {
+    const hops = hopsBySegment.get(index);
+    const horizontal = Math.abs(segment.from.y - segment.to.y) < 1e-6;
+    const along = (point: Vec2) => (horizontal ? point.x : point.y);
+    const start = along(segment.from);
+    const finish = along(segment.to);
+    const forward = finish >= start ? 1 : -1;
+    // A step needs its own width of run on both sides, otherwise it would swallow a corner
+    // and the route would visibly kink instead of stepping over.
+    const usable = (hops ?? []).filter(
+      (hop) => hop.radius > 0 && Math.abs(along(hop) - start) > hop.radius && Math.abs(finish - along(hop)) > hop.radius
+    );
+    if (usable.length === 0) {
+      context.lineTo(segment.to.x, segment.to.y);
+      return;
+    }
+    for (const hop of usable.sort((left, right) => (along(left) - along(right)) * forward)) {
+      const entry = along(hop) - hop.radius * forward;
+      if (horizontal) {
+        context.lineTo(entry, segment.from.y);
+        // The step is always drawn towards -y so every crossover on the sheet looks alike.
+        context.arc(hop.x, segment.from.y, hop.radius, forward > 0 ? Math.PI : 0, forward > 0 ? 0 : Math.PI, forward < 0);
+      } else {
+        context.lineTo(segment.from.x, entry);
+        context.arc(segment.from.x, hop.y, hop.radius, forward > 0 ? -Math.PI / 2 : Math.PI / 2, forward > 0 ? Math.PI / 2 : -Math.PI / 2, forward > 0);
+      }
+    }
+    context.lineTo(segment.to.x, segment.to.y);
+  });
+}
+
+/** Outer width a pipe is stroked at, casing included. */
+function edgeCasingWidth(edge: FluidEdge | undefined): number {
+  if (!edge) return 18;
+  const widthScale = edge.shape.kind === "circular" ? edge.shape.diameter * 55 : edge.shape.height * 55;
+  return Math.max(18, widthScale + 18);
+}
+
 function aimHandlePosition(node: FluidNode): Vec2 {
   const angle = degreesToRadians(node.rotation ?? 0);
   return {
     x: node.position.x + Math.cos(angle) * 46,
     y: node.position.y + Math.sin(angle) * 46
   };
-}
-
-function edgeMidpoint(edge: FluidEdge, nodes: Record<string, FluidNode>) {
-  const from = nodes[edge.from].position;
-  const to = nodes[edge.to].position;
-  return { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
 }
 
 function endpointPoint(edge: FluidEdge, endpoint: "from" | "to", nodes: Record<string, FluidNode>) {
@@ -811,6 +920,7 @@ export function SimulationCanvas({
       canvasElement.dataset.viewOffsetY = String(view.offset.y);
       canvasElement.dataset.snapGrid = String(SCHEMATIC_GRID_SIZE);
       canvasElement.dataset.viewFitted = userZoomedRef.current ? "user" : "auto";
+      canvasElement.dataset.tidyShortcut = "t";
       context.clearRect(0, 0, width, height);
 
       const grd = context.createRadialGradient(width * 0.45, height * 0.35, 40, width * 0.5, height * 0.5, width * 0.75);
@@ -960,13 +1070,39 @@ export function SimulationCanvas({
         context.restore();
       }
 
+      // Every pipe is routed as horizontal and vertical runs before anything is drawn, so
+      // the crossing markers come from the finished picture rather than being guessed at
+      // per pipe. Crossings are resolved once here and shared by the strokes below.
+      const routes = buildEdgeRoutes(renderedProject);
+      const routeById = new Map(routes.map((route) => [route.id, route.points]));
+      const crossings = wireCrossings(routes);
+      const hopsByRoute = new Map<string, Map<number, RouteHop[]>>();
+      for (const crossing of crossings) {
+        const bySegment = hopsByRoute.get(crossing.routeId) ?? new Map<number, RouteHop[]>();
+        // Step wide enough to clear the pipe being crossed, whatever its bore, so the
+        // break stays readable instead of shrinking inside a fat run.
+        const radius = Math.max(px(5), edgeCasingWidth(renderedProject.edges[crossing.overRouteId]) / 2 + px(3));
+        const hop: RouteHop = { ...crossing.point, radius };
+        bySegment.set(crossing.segmentIndex, [...(bySegment.get(crossing.segmentIndex) ?? []), hop]);
+        hopsByRoute.set(crossing.routeId, bySegment);
+      }
+      const junctions = wireJunctions(routes);
+      const connectedPorts = new Set(
+        Object.values(renderedProject.edges).flatMap((edge) => [
+          `${edge.from}:${edge.fromPort ?? "outlet"}`,
+          `${edge.to}:${edge.toPort ?? "inlet"}`
+        ])
+      );
+      canvasElement.dataset.wireRouting = "orthogonal";
+      canvasElement.dataset.wireCrossings = String(crossings.length);
+
+      const noHops = new Map<number, RouteHop[]>();
       Object.values(renderedProject.edges).forEach((edge) => {
         const from = renderedProject.nodes[edge.from];
         const to = renderedProject.nodes[edge.to];
         const solved: EdgeResult | undefined = activeResult.edgeResults[edge.id];
-        if (!from || !to || !solved) return;
-        const start = endpointPoint(edge, "from", renderedProject.nodes) ?? from.position;
-        const end = endpointPoint(edge, "to", renderedProject.nodes) ?? to.position;
+        const points = routeById.get(edge.id);
+        if (!from || !to || !solved || !points) return;
         const widthScale = edge.shape.kind === "circular" ? edge.shape.diameter * 55 : edge.shape.height * 55;
         const metric =
           activeProject.visualization.overlay === "pressure"
@@ -976,30 +1112,32 @@ export function SimulationCanvas({
               : solved.velocity;
         const color = overlayValueColor(metric, maxEdge, activeProject.visualization.overlay);
         const hovered = hover?.kind === "edge" && hover.id === edge.id;
+        const hops = hopsByRoute.get(edge.id) ?? noHops;
+        const casing = edgeCasingWidth(edge);
 
-        context.lineCap = "round";
+        // Corners are mitred rather than rounded off, which is what makes a run read as a
+        // deliberate right angle instead of a slack hose.
+        context.lineCap = "butt";
+        context.lineJoin = "miter";
+        context.miterLimit = 4;
         if (hovered && edge.id !== selectedId) {
           context.strokeStyle = "rgba(62, 224, 255, 0.34)";
-          context.lineWidth = Math.max(18, widthScale + 18) + 10;
-          context.beginPath();
-          context.moveTo(start.x, start.y);
-          context.lineTo(end.x, end.y);
+          context.lineWidth = casing + 10;
+          traceRouteWithHops(context, points, hops);
           context.stroke();
         }
+        // The casing is drawn with the same steps as the core, so the break a crossing
+        // leaves is not filled back in by the dark outline underneath.
         context.strokeStyle = "rgba(8, 20, 28, 0.95)";
-        context.lineWidth = Math.max(18, widthScale + 18);
-        context.beginPath();
-        context.moveTo(start.x, start.y);
-        context.lineTo(end.x, end.y);
+        context.lineWidth = casing;
+        traceRouteWithHops(context, points, hops);
         context.stroke();
 
         context.strokeStyle = edge.id === selectedId ? "#f7d84b" : color;
         context.lineWidth = Math.max(8, widthScale);
         context.shadowColor = color;
         context.shadowBlur = 18;
-        context.beginPath();
-        context.moveTo(start.x, start.y);
-        context.lineTo(end.x, end.y);
+        traceRouteWithHops(context, points, hops);
         context.stroke();
         context.shadowBlur = 0;
 
@@ -1007,15 +1145,26 @@ export function SimulationCanvas({
           const count = Math.max(7, Math.min(22, Math.floor(Math.abs(solved.velocity) * 4)));
           for (let i = 0; i < count; i += 1) {
             const t = (frameRef.current * Math.sign(solved.flowRate || 1) + i / count) % 1;
-            const px = start.x + (end.x - start.x) * (t < 0 ? t + 1 : t);
-            const py = start.y + (end.y - start.y) * (t < 0 ? t + 1 : t);
+            const along = pointOnPolyline(points, t < 0 ? t + 1 : t);
             context.fillStyle = solved.cavitationRisk ? "#ff4d6d" : "#c8f7ff";
             context.beginPath();
-            context.arc(px, py, 2.4, 0, Math.PI * 2);
+            context.arc(along.x, along.y, 2.4, 0, Math.PI * 2);
             context.fill();
           }
         }
       });
+      context.lineCap = "round";
+      context.lineJoin = "round";
+
+      // A pipe that ends on another pipe is a connection, so it gets a solid dot. Nothing
+      // else on the sheet is a filled disc on a run, which is what tells it apart from the
+      // hop drawn where two pipes merely cross.
+      for (const junction of junctions) {
+        context.beginPath();
+        context.arc(junction.x, junction.y, Math.max(4, px(4.5)), 0, Math.PI * 2);
+        context.fillStyle = "#9dfbd7";
+        context.fill();
+      }
 
       Object.values(renderedProject.nodes).forEach((node) => {
         const radius = nodeRadius(node);
@@ -1075,11 +1224,15 @@ export function SimulationCanvas({
             context.strokeStyle = snapRefused ? "#ff7a7a" : snapped ? "#9dfbd7" : "rgba(62, 224, 255, 0.85)";
             context.stroke();
           }
-          context.fillStyle = active ? "#f7d84b" : "#071019";
+          // Filled disc means a pipe terminates here, hollow ring means the port is free.
+          // That is the electronics convention, and it is what keeps "two pipes meet at
+          // this component" from looking like "two pipes happen to cross here".
+          const wired = connectedPorts.has(`${node.id}:${port}`);
+          context.fillStyle = wired ? (active ? "#f7d84b" : "#9dfbd7") : active ? "#f7d84b" : "#071019";
           context.strokeStyle = flowPort ? "#9dfbd7" : "rgba(238, 248, 255, 0.45)";
           context.lineWidth = 1.5;
           context.beginPath();
-          context.arc(point.x, point.y, flowPort ? 4.5 : 3.5, 0, Math.PI * 2);
+          context.arc(point.x, point.y, wired ? 5 : flowPort ? 4.5 : 3.5, 0, Math.PI * 2);
           context.fill();
           context.stroke();
         });
@@ -1119,22 +1272,55 @@ export function SimulationCanvas({
                 return edge ? endpointPoint(edge, draft.endpoint === "from" ? "to" : "from", renderedProject.nodes) : null;
               })();
         // The rubber band terminates on the snapped port, not the raw pointer, so the
-        // connection the user is about to make is the one they can see.
+        // connection the user is about to make is the one they can see. Once it has a port
+        // to land on it is previewed through the same router that will draw the finished
+        // pipe, so the drop never rearranges the run the user was promised.
         const target = draft.snap?.point ?? draft.pointer;
-        if (anchor) {
+        const anchorNode =
+          draft.kind === "connect"
+            ? renderedProject.nodes[draft.from.nodeId]
+            : (() => {
+                const edge = renderedProject.edges[draft.edgeId];
+                if (!edge) return undefined;
+                return renderedProject.nodes[draft.endpoint === "from" ? edge.to : edge.from];
+              })();
+        const anchorPort: PipePortId | null =
+          draft.kind === "connect"
+            ? draft.from.port
+            : (() => {
+                const edge = renderedProject.edges[draft.edgeId];
+                if (!edge) return null;
+                return draft.endpoint === "from" ? (edge.toPort ?? "inlet") : (edge.fromPort ?? "outlet");
+              })();
+        const snapNode = draft.snap ? renderedProject.nodes[draft.snap.nodeId] : undefined;
+        const preview =
+          anchor && anchorNode && anchorPort && draft.snap && snapNode
+            ? routeOrthogonalPipe(
+                anchor,
+                portDirection(anchorNode, anchorPort),
+                draft.snap.point,
+                portDirection(snapNode, draft.snap.port),
+                { obstacles: componentCentres(renderedProject.nodes) }
+              )
+            : anchor
+              ? [anchor, target]
+              : null;
+        if (anchor && preview) {
+          const tracePreview = () => {
+            context.beginPath();
+            context.moveTo(preview[0].x, preview[0].y);
+            for (const point of preview.slice(1)) context.lineTo(point.x, point.y);
+          };
           context.save();
+          context.lineJoin = "miter";
           context.strokeStyle = "rgba(4, 12, 19, 0.85)";
           context.lineWidth = px(7);
-          context.beginPath();
-          context.moveTo(anchor.x, anchor.y);
-          context.lineTo(target.x, target.y);
+          tracePreview();
           context.stroke();
           context.strokeStyle = draft.snap ? (draft.snap.free ? "#9dfbd7" : "#ff7a7a") : "#f7d84b";
           context.lineWidth = px(3);
           context.setLineDash(draft.snap?.free ? [] : [px(9), px(7)]);
-          context.beginPath();
-          context.moveTo(anchor.x, anchor.y);
-          context.lineTo(target.x, target.y);
+          tracePreview();
           context.stroke();
           context.setLineDash([]);
           context.restore();
@@ -1150,8 +1336,12 @@ export function SimulationCanvas({
       const viewport = { pan: view.offset, zoom: view.scale };
       const placedLabels: LabelBox[] = [];
       // Regions no label may cover, whatever its priority: the snap markers must stay
-      // readable while a component is being dragged.
+      // readable while a component is being dragged, and no chip may sit on a routed run.
       const reservedBoxes: LabelBox[] = [];
+      for (const route of routes) {
+        const half = Math.max(4, (edgeCasingWidth(renderedProject.edges[route.id]) * view.scale) / 2 + LABEL_WIRE_CLEARANCE);
+        reservedBoxes.push(...polylineObstacleBoxes(route.points.map((point) => worldToScreen(point, viewport)), half));
+      }
       const snapMarkerHalf = (Math.max(SCHEMATIC_GRID_SIZE * 1.5, px(52)) * view.scale) / 2;
       if (draft?.kind === "node" && draft.moved) {
         const centre = worldToScreen(draft.position, viewport);
@@ -1177,7 +1367,7 @@ export function SimulationCanvas({
         lines: string[],
         tone: "node" | "edge",
         emphasis: boolean,
-        placement: "below" | "above" = "below"
+        placement: LabelSide = "below"
       ) {
         const padding = 7;
         const lineHeight = 14;
@@ -1186,18 +1376,21 @@ export function SimulationCanvas({
         const textWidth = Math.max(...lines.map((line) => context.measureText(line).width));
         const boxWidth = textWidth + padding * 2;
         const boxHeight = lines.length * lineHeight + padding * 2 - 3;
-        const left = Math.round(anchor.x - boxWidth / 2);
-        const top = Math.round(placement === "above" ? anchor.y - boxHeight : anchor.y);
-        const box: LabelBox = { left, top, right: left + boxWidth, bottom: top + boxHeight };
+        // The chip walks a ladder of placements around its anchor and takes the first that
+        // is clear of every routed run, every snap marker, and every chip already drawn.
+        // A pipe with its own name sitting on top of it is unreadable, so a chip that
+        // cannot find room anywhere is dropped rather than stamped over the wire.
+        const candidates = labelPlacementCandidates(anchor, boxWidth, boxHeight, { preferred: placement, step: 13, rings: 4 });
+        const box =
+          firstClearBox(candidates, [...reservedBoxes, ...placedLabels])
+          ?? (emphasis ? firstClearBox(candidates, reservedBoxes) : null);
+        if (!box) {
+          context.restore();
+          return;
+        }
+        const left = Math.round(box.left);
+        const top = Math.round(box.top);
         if (box.right < -40 || box.left > width + 40 || box.bottom < -40 || box.top > height + 40) {
-          context.restore();
-          return;
-        }
-        if (reservedBoxes.some((reserved) => boxesOverlap(reserved, box))) {
-          context.restore();
-          return;
-        }
-        if (!emphasis && placedLabels.some((existing) => boxesOverlap(existing, box))) {
           context.restore();
           return;
         }
@@ -1248,25 +1441,21 @@ export function SimulationCanvas({
       for (const edge of Object.values(renderedProject.edges)) {
         const solved = activeResult.edgeResults[edge.id];
         if (!solved) continue;
-        const from = renderedProject.nodes[edge.from];
-        const to = renderedProject.nodes[edge.to];
-        if (!from || !to) continue;
+        const points = routeById.get(edge.id);
+        if (!points) continue;
         const emphasis = edge.id === selectedId || (hover?.kind === "edge" && hover.id === edge.id);
-        const mid = worldToScreen(edgeMidpoint(edge, renderedProject.nodes), viewport);
-        // Offset along the run's normal, always choosing the upward-pointing one, so the
-        // chip sits clear of the pipe and clear of the node chips that hang below nodes.
-        const dx = to.position.x - from.position.x;
-        const dy = to.position.y - from.position.y;
-        const length = Math.hypot(dx, dy) || 1;
-        const normal = { x: -dy / length, y: dx / length };
-        const direction = normal.y > 0 ? -1 : 1;
-        const offset = 24;
+        // The chip hangs off the longest straight run of the route rather than the straight
+        // line between the two components, which after routing may not be on the pipe at all.
+        const run = longestPolylineSegment(points);
+        if (!run) continue;
+        const mid = worldToScreen({ x: (run.from.x + run.to.x) / 2, y: (run.from.y + run.to.y) / 2 }, viewport);
+        const runIsHorizontal = Math.abs(run.from.y - run.to.y) <= Math.abs(run.from.x - run.to.x);
         drawLabelChip(
-          { x: mid.x + normal.x * direction * offset, y: mid.y + normal.y * direction * offset },
+          mid,
           [edge.label, `Re ${Math.round(solved.reynolds).toLocaleString()}`],
           "edge",
           emphasis,
-          "above"
+          runIsHorizontal ? "above" : "right"
         );
       }
 
@@ -1437,19 +1626,24 @@ export function SimulationCanvas({
     return best;
   }
 
+  /**
+   * Picks the pipe nearest the pointer, measured against the routed run the user can see.
+   * The routes are rebuilt exactly as the renderer builds them, so a click lands on the
+   * pipe under the cursor rather than on the straight line it used to be drawn as.
+   */
   function edgeAt(point: Vec2) {
     const activeProject = currentProject();
     const reach = tolerance(20);
-    return Object.values(activeProject.edges).find((candidate) => {
-      const from = endpointPoint(candidate, "from", activeProject.nodes);
-      const to = endpointPoint(candidate, "to", activeProject.nodes);
-      if (!from || !to) return false;
-      const length = Math.hypot(to.x - from.x, to.y - from.y) || 1;
-      const t = Math.max(0, Math.min(1, ((point.x - from.x) * (to.x - from.x) + (point.y - from.y) * (to.y - from.y)) / length ** 2));
-      const px = from.x + (to.x - from.x) * t;
-      const py = from.y + (to.y - from.y) * t;
-      return Math.hypot(px - point.x, py - point.y) < reach;
-    });
+    let best: FluidEdge | undefined;
+    let bestDistance = reach;
+    for (const route of buildEdgeRoutes(activeProject)) {
+      const distance = distanceToPolyline(point, route.points);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = activeProject.edges[route.id];
+      }
+    }
+    return best;
   }
 
   /** What the pointer is currently over, in the same priority order the click handler uses. */
@@ -1797,6 +1991,34 @@ export function SimulationCanvas({
     schematicViewportInitializedRef.current = true;
   }
 
+  /**
+   * Lays the network out left to right on the grid with the wire crossings unpicked, aims
+   * every component along the flow so its ports face the runs that reach them, and lets
+   * the router redraw. It goes through the same `onMoveNode`/`onRotateNode` the drag
+   * handlers use, so a tidy is undoable exactly like any other edit.
+   */
+  function tidyLayout() {
+    if (canvasRenderMode !== "schematic") return 0;
+    const arranged = tidySchematicLayout(project);
+    const aimed = tidySchematicRotations(project, arranged);
+    let changed = 0;
+    for (const [id, position] of Object.entries(arranged)) {
+      const node = project.nodes[id];
+      if (!node || (node.position.x === position.x && node.position.y === position.y)) continue;
+      onMoveNode(id, position);
+      changed += 1;
+    }
+    for (const [id, rotation] of Object.entries(aimed)) {
+      const node = project.nodes[id];
+      if (!node || Math.round(node.rotation ?? 0) === rotation) continue;
+      onRotateNode(id, rotation);
+      changed += 1;
+    }
+    const canvas = canvasRef.current;
+    if (canvas) canvas.dataset.tidyChanged = String(changed);
+    return changed;
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLCanvasElement>) {
     if (event.key === "Escape") {
       dragRef.current = null;
@@ -1817,6 +2039,9 @@ export function SimulationCanvas({
     } else if (event.key === "f" || event.key === "F") {
       event.preventDefault();
       fitViewport();
+    } else if (event.key === "t" || event.key === "T") {
+      event.preventDefault();
+      tidyLayout();
     } else if (event.key === "0") {
       event.preventDefault();
       resetViewport();
@@ -1857,7 +2082,7 @@ export function SimulationCanvas({
         aria-describedby={statusId}
         role="application"
         tabIndex={0}
-        aria-keyshortcuts="F 0 + -"
+        aria-keyshortcuts="F T 0 + -"
       />
       <div className="viewport-actions" aria-label="Viewport controls">
         <button type="button" onClick={fitViewport} title="Fit viewport" aria-label="Fit viewport">
