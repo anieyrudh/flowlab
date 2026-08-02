@@ -4595,11 +4595,12 @@ body {
 .panel-collapse-toggle { margin-top: 6px; width: 100%; }
 .dock-collapse-toggle {
   /* The footer is a two-column grid; without this the button lands in a row of
-     its own under the panel instead of beside the tabs. */
+     its own under the panel. Top-right collided with the panel's own status
+     badge, so it sits under the tab list, which is empty space. */
   position: absolute;
   z-index: 4;
-  top: 8px;
-  right: 12px;
+  left: 12px;
+  bottom: 12px;
 }
 
 .bottom-dock { position: relative; }
