@@ -1,6 +1,9 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
+const frontendPort = Number(process.env.FLOWLAB_E2E_FRONTEND_PORT ?? 5173);
+const backendPort = Number(process.env.FLOWLAB_E2E_BACKEND_PORT ?? 8787);
+
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -14,9 +17,9 @@ export default defineConfig({
     }
   },
   server: {
-    port: 5173,
+    port: frontendPort,
     proxy: {
-      "/api": "http://127.0.0.1:8787"
+      "/api": `http://127.0.0.1:${backendPort}`
     }
   },
   test: {

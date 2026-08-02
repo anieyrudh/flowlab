@@ -22,6 +22,25 @@ VECTORS U float
 1.5 0 0
 `;
 
+const generatedVolumeMesh = `# vtk DataFile Version 3.0
+FlowLab generated-case volume mesh
+ASCII
+DATASET UNSTRUCTURED_GRID
+POINTS 8 float
+0 0 0
+1 0 0
+1 1 0
+0 1 0
+0 0 1
+1 0 1
+1 1 1
+0 1 1
+CELLS 1 9
+8 0 1 2 3 4 5 6 7
+CELL_TYPES 1
+12
+`;
+
 const multiEdgeOpenFoamResult = `# vtk DataFile Version 3.0
 FlowLab multi-edge OpenFOAM native time 1
 ASCII
@@ -183,9 +202,9 @@ function meshQualityFixture(kind: "passed" | "failed" | "missing" | "production"
 async function openFresh(
   page: Page,
   meshKind: "passed" | "failed" | "missing" | "production" = "passed",
-  options: { keepCinema?: boolean; runnableOpenfoam?: boolean; verifiedMultiEdgeLink?: boolean } = {}
+  options: { keepCinema?: boolean; runnableOpenfoam?: boolean; verifiedMultiEdgeLink?: boolean; resultMode?: "full" | "none" | "indexed" } = {}
 ) {
-  const { runnableOpenfoam = false, verifiedMultiEdgeLink = false } = options;
+  const { runnableOpenfoam = false, verifiedMultiEdgeLink = false, resultMode = "full" } = options;
   let generatedProjectText = "";
   let generatedProjectSha256 = "";
   await page.route("**/api/health", async (route) => {
@@ -271,8 +290,15 @@ async function openFresh(
         solver: "openfoam",
         advancedMode: "incompressible-navier-stokes",
         status: "generated",
-        files: verifiedMultiEdgeLink
-          ? {
+        files: {
+          ...(resultMode !== "full"
+            ? {
+                "flowlab_project.json": generatedProjectText,
+                "mesh/flowlab_mesh.vtk": generatedVolumeMesh
+              }
+            : {}),
+          ...(verifiedMultiEdgeLink
+            ? {
               "flowlab_project.json": generatedProjectText,
               "constant/flowlab_result_identity_contract.json": identityContractText,
               "flowlab_case_manifest.json": JSON.stringify({
@@ -283,7 +309,8 @@ async function openFresh(
                 resultComponentMap
               })
             }
-          : {},
+            : {})
+        },
         runCommand: ["bash", "Allrun"],
         provenance: [],
         resultComponentMap
@@ -296,16 +323,25 @@ async function openFresh(
         id: "job-openfoam-e2e",
         caseId: "case-openfoam-e2e",
         solver: "openfoam",
-        status: "complete",
+        status: resultMode === "none" ? "running" : "complete",
         createdAt: "2026-06-11T00:00:00Z",
         updatedAt: "2026-06-11T00:00:02Z",
-        finishedAt: "2026-06-11T00:00:02Z",
+        finishedAt: resultMode === "none" ? undefined : "2026-06-11T00:00:02Z",
         caseDir: "/tmp/flowlab/case",
         execution: "native",
         command: ["bash", "Allrun"],
         logs: ["Time = 0.002", "Solver process exited successfully with code 0."],
-        exitCode: 0,
-        result: {
+        exitCode: resultMode === "none" ? undefined : 0,
+        result: resultMode === "none"
+          ? null
+          : resultMode === "indexed"
+            ? {
+                caseDir: "/tmp/flowlab/case",
+                resultFiles: [],
+                diagnosticFiles: [],
+                progressive: false
+              }
+            : {
           caseDir: "/tmp/flowlab/case",
           exitCode: 0,
           logsCaptured: 5,
@@ -344,6 +380,68 @@ async function openFresh(
           meshQuality: meshQualityFixture(meshKind),
           patchMetrics: patchMetricsFixture,
           progressive: false
+        }
+      }
+    });
+  });
+  await page.route("**/api/jobs/job-openfoam-e2e/artifacts?**", async (route) => {
+    await route.fulfill({
+      json: {
+        artifacts: [{
+          path: "postProcessing/flowlabNative/thinned-only.vtk",
+          size: nativeOpenFoamResult.length,
+          kind: "result",
+          fieldSummary: {
+            schema: "flowlab.result_field_summary.v1",
+            format: "legacy-vtk-ascii-v1",
+            pointCount: 4,
+            cellCount: 1,
+            fields: [
+              { name: "p", location: "cell", kind: "scalar", tupleCount: 1, min: 101325, max: 101325, mean: 101325 },
+              { name: "U", location: "cell", kind: "vector-magnitude", tupleCount: 1, min: 1.5, max: 1.5, mean: 1.5 }
+            ]
+          }
+        }],
+        count: 1,
+        truncated: false
+      }
+    });
+  });
+  await page.route("**/api/jobs/job-openfoam-e2e/artifact/preview?**", async (route) => {
+    await route.fulfill({
+      json: {
+        path: "postProcessing/flowlabNative/thinned-only.vtk",
+        size: nativeOpenFoamResult.length,
+        schema: "flowlab.result_preview.v1",
+        format: "legacy-vtk-ascii-v1",
+        sourcePointCount: 8,
+        sourceCellCount: 2,
+        pointCount: 4,
+        cellCount: 1,
+        pointLimit: 500,
+        cellLimit: 500,
+        truncated: true,
+        pointIndices: [0, 1, 2, 3],
+        cellIndices: [0],
+        points: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]],
+        cells: [[0, 1, 2, 3]],
+        cellTypes: [9],
+        fieldSummary: {
+          schema: "flowlab.result_field_summary.v1",
+          format: "legacy-vtk-ascii-v1",
+          pointCount: 4,
+          cellCount: 1,
+          fields: [
+            { name: "p", location: "cell", kind: "scalar", tupleCount: 1, min: 101325, max: 101325, mean: 101325 },
+            { name: "U", location: "cell", kind: "vector-magnitude", tupleCount: 1, min: 1.5, max: 1.5, mean: 1.5 }
+          ]
+        },
+        fieldSamples: {
+          point: [],
+          cell: [
+            { name: "p", kind: "scalar", values: [101325] },
+            { name: "U", kind: "vector", values: [[1.5, 0, 0]], magnitudes: [1.5] }
+          ]
         }
       }
     });
@@ -539,6 +637,53 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByText(/Using pressure from venturi-result\.vtk/)).toBeVisible();
   });
 
+  test("governs concept and generated-case preview states", async ({ page }) => {
+    await openFresh(page, "passed", { runnableOpenfoam: true, resultMode: "none" });
+    await showStage(page, "Define");
+    await expect(page.getByText("Concept preview", { exact: true }).first()).toBeVisible();
+
+    await showStage(page, "Estimate");
+    await expect(page.getByRole("button", { name: "Illustrative estimate animation—not CFD" })).toHaveAttribute("aria-pressed", "false");
+
+    await showStage(page, "CFD");
+    await page.getByLabel("Mesh mode").selectOption("full-ogrid");
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await expect(page.getByText("Generated-case mesh preview", { exact: true }).first()).toBeVisible();
+  });
+
+  test("promotes the full solver-produced mesh over generated previews", async ({ page }) => {
+    await openFresh(page, "passed", { runnableOpenfoam: true });
+    await showStage(page, "CFD");
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await expect(page.getByText("Solver-produced mesh", { exact: true }).first()).toBeVisible();
+  });
+
+  test("governs thinned, imported, 2D fallback, and fixture preview states", async ({ page }) => {
+    test.setTimeout(45_000);
+    await openFresh(page, "passed", { runnableOpenfoam: true, resultMode: "indexed" });
+    await showStage(page, "CFD");
+    await page.getByLabel("Mesh mode").selectOption("full-ogrid");
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Index field files" }).click();
+    await page.getByLabel("Indexed result artifacts").getByRole("button", { name: "Preview" }).click();
+    await expect(page.getByText("Thinned artifact preview — surface only", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Streamlines" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Pathlines" })).toBeDisabled();
+
+    await showStage(page, "Inspect");
+    await page.getByTestId("result-import-file").setInputFiles("public/fixtures/venturi-result.vtk");
+    await expect(page.getByText("Imported result — probe only", { exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Use 2D projection fallback" }).click();
+    await expect(page.getByText("2D projection fallback — WebGL/accessibility/export", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("cinema-canvas")).toHaveAttribute("data-canvas-render-mode", "projection");
+
+    await page.getByLabel("Examples / Developer tooling").getByRole("button", { name: "Load fixture result" }).click();
+    await expect(page.getByText("Fixture result — developer example · probe only", { exact: true }).first()).toBeVisible();
+  });
+
   test("selects multi-edge generated results only through verified source-cell provenance", async ({ page }) => {
     test.setTimeout(120_000);
     await openFresh(page, "passed", { runnableOpenfoam: true, verifiedMultiEdgeLink: true });
@@ -612,21 +757,22 @@ test.describe("FlowLab editor workspace", () => {
     await expect.poll(() => page.getByTestId("cinema-canvas").evaluate((element) => (element as HTMLCanvasElement).dataset.resultViewMode)).toBe("3d");
   });
 
-  test("freezes preview phase separately from model undo and keyboard editing", async ({ page }) => {
+  test("keeps illustrative estimate motion opt-in and separate from model undo", async ({ page }) => {
     await openFresh(page);
+    await showStage(page, "Estimate");
     const canvas = page.getByTestId("schematic-canvas");
     await canvas.focus();
-    await expect(page.getByText("Preview animation running")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Pause animation" })).toBeVisible();
-    await page.getByRole("button", { name: "Pause animation" }).click();
-    await expect(page.getByText("Preview animation paused")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Play animation" })).toHaveAttribute("aria-pressed", "false");
+    const illustration = page.getByRole("button", { name: "Illustrative estimate animation—not CFD" });
+    await expect(illustration).toHaveAttribute("aria-pressed", "false");
     const pausedPhase = await canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.previewPhase);
     await page.waitForTimeout(120);
     await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.previewPhase)).toBe(pausedPhase);
 
-    await page.keyboard.press("Space");
-    await expect(page.getByText("Preview animation running")).toBeVisible();
+    await illustration.click();
+    await expect(illustration).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.previewPhase)).not.toBe(pausedPhase);
+
+    await showStage(page, "Define");
     await page.getByTitle("Add pump").click();
     await expect(page.getByRole("heading", { name: "Pump" })).toBeVisible();
     await expect(page.getByTestId("cinema-canvas")).toHaveAttribute("data-selected-id", "pump-4");
@@ -849,6 +995,8 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByLabel("STL metadata")).toContainText("1");
     await expect(page.getByLabel("STL metadata")).toContainText("open");
     await expect(page.getByLabel("STL preview")).toBeVisible();
+    await expect(page.getByText("Imported STL preview — setup geometry only", { exact: true })).toBeVisible();
+    await expect(page.getByText(/not solver-produced result evidence/i)).toBeVisible();
     const boundaryConditionStatus = page
       .getByLabel("Reviewed STL surface table")
       .getByText(/BC|boundary condition|unset|required|ready/i);

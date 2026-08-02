@@ -2066,11 +2066,30 @@ dd {
 }
 
 .mesh-stl-preview {
+  display: grid;
+  gap: 3px;
   min-width: 0;
   overflow: hidden;
   border: 1px solid rgba(148, 196, 220, 0.12);
   border-radius: 7px;
   background: radial-gradient(circle at 35% 30%, rgba(32, 200, 232, 0.18), rgba(6, 12, 18, 0.76));
+}
+
+.mesh-stl-preview > strong,
+.mesh-stl-preview > small {
+  padding-inline: 6px;
+}
+
+.mesh-stl-preview > strong {
+  padding-top: 6px;
+  color: #dff6ff;
+  font-size: 9px;
+}
+
+.mesh-stl-preview > small {
+  color: var(--faint);
+  font-size: 8px;
+  line-height: 1.25;
 }
 
 .mesh-stl-preview svg {
@@ -3653,7 +3672,7 @@ body {
 
 .workspace-view {
   display: grid;
-  grid-template-rows: 34px minmax(0, 1fr);
+  grid-template-rows: 46px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -3661,9 +3680,9 @@ body {
 }
 
 .workspace-view-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   min-width: 0;
   padding: 5px 10px;
@@ -3677,16 +3696,24 @@ body {
   gap: 7px;
 }
 
-.workspace-view-header strong { color: #eefaff; font-size: 11px; }
+.workspace-view-header strong {
+  color: #eefaff;
+  font-size: 11px;
+  white-space: nowrap;
+}
 
 .workspace-view-header small {
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
   font-size: 10px;
-  text-align: right;
+  line-height: 1.25;
+  text-align: left;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .workspace-view-tools {
@@ -3784,6 +3811,107 @@ body {
 }
 
 .compact-readouts { margin-bottom: 0; }
+
+.illustrative-estimate-toggle {
+  margin-top: 8px;
+}
+
+.preview-boundary-copy {
+  display: block;
+  margin-top: 7px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.developer-example-tools {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(154, 194, 220, 0.12);
+}
+
+.developer-example-tools > strong {
+  color: #dcefff;
+  font-size: 11px;
+}
+
+.developer-example-tools > small {
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.render-fallback-label,
+.legacy-preview-notice {
+  position: absolute;
+  z-index: 6;
+  left: 10px;
+  bottom: 10px;
+  max-width: calc(100% - 20px);
+  border: 1px solid rgba(243, 180, 73, 0.34);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #ffe0a6;
+  background: rgba(38, 27, 8, 0.9);
+  font-size: 9px;
+  line-height: 1.3;
+}
+
+.legacy-preview-notice {
+  bottom: 42px;
+}
+
+.result-empty-authority {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 7px;
+  padding: 24px;
+  color: var(--muted);
+  background: rgba(3, 10, 17, 0.94);
+  text-align: center;
+}
+
+.result-empty-authority strong {
+  color: #effbff;
+  font-size: 14px;
+}
+
+.result-empty-authority span {
+  font-size: 11px;
+}
+
+.flow-path-controls {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  border: 1px solid rgba(154, 194, 220, 0.12);
+  border-radius: 6px;
+  padding: 8px;
+  background: rgba(3, 10, 17, 0.36);
+}
+
+.flow-path-controls > div {
+  display: flex;
+  gap: 6px;
+}
+
+.flow-path-controls button {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 10px;
+}
+
+.flow-path-controls small {
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.35;
+}
 
 @media (min-width: 1100px) and (max-width: 1439px) {
   .workspace-shell {

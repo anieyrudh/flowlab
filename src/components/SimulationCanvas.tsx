@@ -48,6 +48,7 @@ type Props = {
   cinemaCamera?: CinemaCameraState;
   resultViewMode?: ResultViewMode;
   resultCamera?: ResultCamera;
+  force2dProjection?: boolean;
   selectedId: string | null;
   selectedKind?: "node" | "edge" | null;
   onSelect: (kind: "node" | "edge", id: string) => void;
@@ -62,6 +63,7 @@ type Props = {
   ) => void;
   previewPlaying?: boolean;
   onCinemaCameraChange?: (camera: CinemaCameraState) => void;
+  onRenderBackendChange?: (backend: "webgl" | "2d") => void;
   testId?: string;
   ariaLabel?: string;
   statusId?: string;
@@ -79,6 +81,7 @@ type DragState =
   | { kind: "cinema-pan"; startX: number; startY: number; camera: CinemaCameraState; moved: boolean };
 
 const ports: PipePortId[] = ["inlet", "outlet", "north", "south"];
+const ignoreRenderBackendChange = () => {};
 
 const paletteByOverlay: Record<OverlayMode, string[]> = {
   velocity: ["#0ad7ff", "#62f3bd", "#ffe15c", "#ff6f3d"],
@@ -490,6 +493,7 @@ export function SimulationCanvas({
   cinemaCamera = { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } },
   resultViewMode = "2d",
   resultCamera = { yaw: -32, pitch: 24, zoom: 1 },
+  force2dProjection = false,
   selectedId,
   selectedKind,
   onSelect,
@@ -500,6 +504,7 @@ export function SimulationCanvas({
   onProbePoint = () => {},
   previewPlaying = true,
   onCinemaCameraChange = () => {},
+  onRenderBackendChange = ignoreRenderBackendChange,
   testId = "simulation-canvas",
   ariaLabel = "Flow simulation canvas",
   statusId = "canvas-status"
@@ -549,7 +554,7 @@ export function SimulationCanvas({
     const canvasElement: HTMLCanvasElement = canvasRef.current;
     cinemaRef.current = null;
 
-    if (canvasRenderMode === "cinema" && browserSupportsWebGL()) {
+    if (canvasRenderMode === "cinema" && !force2dProjection && browserSupportsWebGL()) {
       const rect = canvasElement.getBoundingClientRect();
       const width = Math.max(1, rect.width);
       const height = Math.max(1, rect.height);
@@ -600,6 +605,7 @@ export function SimulationCanvas({
           canvasElement.dataset.cinemaCameraPanX = String(cinemaCamera.pan.x);
           canvasElement.dataset.cinemaCameraPanY = String(cinemaCamera.pan.y);
           canvasElement.dataset.engine = runtime.engine;
+          onRenderBackendChange("webgl");
           if (resultDataset) {
             canvasElement.dataset.resultViewMode = resultViewMode;
             canvasElement.dataset.resultCameraYaw = String(resultCamera.yaw);
@@ -635,6 +641,7 @@ export function SimulationCanvas({
           delete canvasElement.dataset.cinemaCameraPanX;
           delete canvasElement.dataset.cinemaCameraPanY;
           delete canvasElement.dataset.engine;
+          onRenderBackendChange("2d");
         });
 
       return () => {
@@ -649,6 +656,7 @@ export function SimulationCanvas({
 
     const maybeContext = canvasElement.getContext("2d");
     if (!maybeContext) return;
+    if (canvasRenderMode === "cinema") onRenderBackendChange("2d");
     const context: CanvasRenderingContext2D = maybeContext;
     let animationId = 0;
 
@@ -739,13 +747,21 @@ export function SimulationCanvas({
         delete canvasElement.dataset.resultCameraPitch;
         delete canvasElement.dataset.resultCameraZoom;
       }
-      canvasElement.dataset.canvasRenderMode = "schematic";
+      const resultProjection = canvasRenderMode === "cinema" && Boolean(resultDataset);
+      canvasElement.dataset.canvasRenderMode = resultProjection ? "projection" : "schematic";
       delete canvasElement.dataset.cinemaWebgl;
       delete canvasElement.dataset.cinemaObjectCount;
       delete canvasElement.dataset.cinemaNodePositions;
       delete canvasElement.dataset.cinemaCameraYaw;
       delete canvasElement.dataset.cinemaCameraPitch;
       delete canvasElement.dataset.cinemaCameraZoom;
+
+      if (resultProjection) {
+        recordEditorMetric("schematic-frame", performance.now() - started);
+        recordEditorFrame("schematic-frame");
+        animationId = requestAnimationFrame(draw);
+        return;
+      }
 
       const edgeValues = Object.values(activeResult.edgeResults).map((edge) => {
         if (activeProject.visualization.overlay === "pressure") return edge.pressureDrop;
@@ -925,7 +941,7 @@ export function SimulationCanvas({
       resizeObserver?.disconnect();
       cancelAnimationFrame(animationId);
     };
-  }, [canvasRenderMode, resultDataset, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind]);
+  }, [canvasRenderMode, force2dProjection, onRenderBackendChange, resultDataset, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind]);
 
   useEffect(() => {
     if (canvasRenderMode !== "cinema") return;
@@ -1092,6 +1108,19 @@ export function SimulationCanvas({
         camera: { ...cinemaCamera, pan: { ...cinemaCamera.pan } },
         moved: false
       };
+      capturePointer(event.currentTarget, event.pointerId);
+      return;
+    }
+
+    if (canvasRenderMode === "cinema" && resultDataset) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      dragRef.current = {
+        kind: "canvas-pan",
+        start: screenPoint(event),
+        viewport: { ...schematicViewportRef.current, pan: { ...schematicViewportRef.current.pan } },
+        moved: false
+      };
+      onProbePoint(screen, { width: rect.width, height: rect.height });
       capturePointer(event.currentTarget, event.pointerId);
       return;
     }
@@ -1314,7 +1343,7 @@ export function SimulationCanvas({
   return (
     <>
       <canvas
-        key={canvasRenderMode}
+        key={`${canvasRenderMode}-${force2dProjection ? "projection" : "auto"}`}
         ref={canvasRef}
         data-testid={testId}
         data-selected-id={selectedId ?? ""}
