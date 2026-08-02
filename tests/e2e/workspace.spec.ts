@@ -115,7 +115,9 @@ test.describe("FlowLab workspace shell", () => {
     await expect(estimatePanels.getByRole("button", { name: "Sweep" })).toBeVisible();
     await expect(estimatePanels.getByRole("button", { name: "Metrics" })).toBeVisible();
     await expect(estimatePanels.getByRole("button", { name: "Diagnostics" })).toHaveCount(0);
-    await expect(page.getByText("Sweep: inlet flow rate")).toBeVisible();
+    // The header names the parameter this preset's sweep record declares. It
+    // used to read "Sweep: inlet flow rate" no matter what was swept.
+    await expect(page.getByText("Sweep: throat diameter (m)")).toBeVisible();
 
     await stages.getByRole("button", { name: /CFD/ }).click();
     await expect(page.getByText("Mesh controls")).toBeVisible();
@@ -128,8 +130,14 @@ test.describe("FlowLab workspace shell", () => {
     await expect(cfdPanels.getByRole("button", { name: "Diagnostics" })).toBeVisible();
     await expect(cfdPanels.getByRole("button", { name: "Warnings" })).toBeVisible();
     await expect(page.getByText("Solver diagnostics", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Run CFD case" })).toBeDisabled();
-    await expect(page.getByText(/Instant 1D runs in the Estimate stage/i)).toBeVisible();
+    // One control now runs the case: it promotes Instant 1D to a CFD solver
+    // itself, so the separate "Use OpenFOAM" fix is gone. This test runs against
+    // the real service, whose local runtimes vary by machine, so it asserts the
+    // control always states either what it will do or why it cannot.
+    await expect(page.getByRole("button", { name: "Use OpenFOAM" })).toHaveCount(0);
+    await expect(page.locator("#cfd-stage-action-reason")).toHaveText(
+      /Switches Instant 1D to OpenFOAM, then runs|is not runnable locally|solver service is offline|blocking network issue/i
+    );
 
     await stages.getByRole("button", { name: /Inspect/ }).click();
     await expect(page.locator("#components-panel")).toBeHidden();

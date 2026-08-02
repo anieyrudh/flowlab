@@ -1121,10 +1121,13 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByLabel("Solver progress summary")).toContainText("0.002");
     await expect(page.getByLabel("Residual summary")).toContainText("Ux: 7.50e-6");
     await expect(page.getByLabel("Residual summary")).toContainText("p: 9.00e-5");
-    await expect(page.getByLabel("Mesh QA panel")).toContainText("Native passed");
+    // Mesh QA is gone as a panel. The part that explains a run — which native
+    // mesh command ran and what still blocks it — moved into Diagnostics.
+    // The y-plus min/mean/max read-out went with the rest of the mesh quality
+    // numbers, which the owner had already had removed.
+    await expect(page.getByLabel("Mesh blockers", { exact: true })).toContainText("passed");
     await expect(page.getByLabel("Native mesh command list")).toContainText("snappyHexMesh -overwrite");
-    await expect(page.getByLabel("Y plus evidence")).toContainText("max 42");
-    await expect(page.getByLabel("Mesh QA blockers")).toContainText("CAD/B-rep reviewed");
+    await expect(page.getByLabel("Mesh blocking reasons")).toContainText("CAD/B-rep reviewed");
     await expect(page.getByRole("slider", { name: "Result timestep" })).toHaveAttribute(
       "aria-valuetext",
       "t0.002 postProcessing/flowlabNative/time_0_002.vtk"
@@ -1139,9 +1142,14 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByText("1 warning")).toBeVisible();
   });
 
-  test("imports reviewed multi-surface STL geometry and shows production-ready mesh QA", async ({ page }) => {
+  // STL import is wired end to end — the surface text reaches
+  // `constant/triSurface/*.stl` in the generated case, drives snappyHexMesh and
+  // writes the boundary-condition files — so it was kept when Mesh QA went. It
+  // is a solver setting, `project.solver.reviewedGeometry`, and now lives with
+  // the other solver settings in the Inspector.
+  test("imports reviewed multi-surface STL geometry from the solver settings", async ({ page }) => {
     await openFresh(page, "production", { runnableOpenfoam: true });
-    await page.getByRole("navigation", { name: "Workspace panels" }).getByRole("button", { name: "Mesh QA" }).click();
+    await showStage(page, "CFD");
 
     await expect(page.getByLabel("Reviewed geometry controls")).toContainText("Generated starter");
     await page.getByTestId("reviewed-stl-file").setInputFiles([
@@ -1257,38 +1265,92 @@ test.describe("FlowLab editor workspace", () => {
       .poll(() => page.evaluate(() => window.localStorage.getItem("flowlab.project.v1") ?? ""))
       .toContain('"temperature":315');
 
-    await showStage(page, "CFD");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
     await page.getByRole("button", { name: "Run CFD case" }).click();
 
-    await expect(page.getByLabel("Mesh QA panel")).toContainText("Ready");
-    await expect(page.getByLabel("Mesh QA panel")).toContainText("approved");
-    await expect(page.getByLabel("Mesh QA panel")).toContainText("User reviewed");
+    // The Mesh QA badge that carried "Ready"/"approved" went with the panel.
+    // The reviewed state of the imported surfaces is still stated where the
+    // surfaces are edited, and the run reports no mesh blockers.
+    await expect(page.getByLabel("Reviewed geometry controls")).toContainText("User reviewed surfaces");
+    await expect(page.getByLabel("Mesh blockers", { exact: true })).toContainText("No mesh blockers reported.");
   });
 
-  test("shows mesh QA missing command blockers", async ({ page }) => {
+  // These two used to assert against the Mesh QA dock panel. That panel is gone;
+  // the blockers it carried are actionable, so they moved into Diagnostics and
+  // the assertions moved with them.
+  test("shows missing native mesh command blockers in diagnostics", async ({ page }) => {
     await openFresh(page, "missing", { runnableOpenfoam: true });
     await showStage(page, "CFD");
 
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
     await page.getByRole("button", { name: "Run CFD case" }).click();
 
-    await expect(page.getByLabel("Mesh QA panel")).toContainText("Blocked");
+    await expect(page.getByRole("navigation", { name: "Workspace panels" }).getByRole("button", { name: "Mesh QA" })).toHaveCount(0);
+    await expect(page.getByLabel("Mesh blockers", { exact: true })).toContainText("blocked");
     await expect(page.getByLabel("Native mesh command list")).toContainText("surfaceFeatureExtract");
     await expect(page.getByLabel("Native mesh command list")).toContainText("missing-command");
-    await expect(page.getByLabel("Mesh QA blockers")).toContainText("Missing OpenFOAM native mesh command `surfaceFeatureExtract`");
+    await expect(page.getByLabel("Mesh blocking reasons")).toContainText("Missing OpenFOAM native mesh command `surfaceFeatureExtract`");
   });
 
-  test("shows failed checkMesh reason in mesh QA", async ({ page }) => {
+  test("shows the failed checkMesh count and reason in diagnostics", async ({ page }) => {
     await openFresh(page, "failed", { runnableOpenfoam: true });
     await showStage(page, "CFD");
 
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
     await page.getByRole("button", { name: "Run CFD case" }).click();
 
-    await expect(page.getByLabel("Mesh QA panel")).toContainText("Blocked");
+    await expect(page.getByLabel("Mesh blockers", { exact: true })).toContainText("blocked");
     await expect(page.getByLabel("checkMesh metrics")).toContainText("2");
-    await expect(page.getByLabel("Mesh QA blockers")).toContainText("OpenFOAM checkMesh failed 2 check(s).");
+    await expect(page.getByLabel("Mesh blocking reasons")).toContainText("OpenFOAM checkMesh failed 2 check(s).");
+    // The y-plus record carries its own blocking reason; folding it into the
+    // one list keeps every actionable reason together.
+    await expect(page.getByLabel("Mesh blocking reasons")).toContainText("Missing y-plus or wall-distance evidence.");
+  });
+
+  test("reports run progress and what a finished solve produced beside the run control", async ({ page }) => {
+    await openFresh(page, "passed", { runnableOpenfoam: true });
+    await showStage(page, "CFD");
+
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByRole("button", { name: "Run CFD case" }).click();
+
+    await expect(page.getByLabel("CFD run progress")).toContainText("Complete");
+    await expect(page.getByLabel("CFD run progress")).toContainText("Time 0.002");
+    await expect(page.getByLabel("Solve outcome")).toContainText("Solve complete");
+    await expect(page.getByLabel("Solve outcome")).toContainText("1 field file");
+    await expect(page.getByLabel("Solve outcome")).toContainText("2.325 kPa");
+
+    await page.getByLabel("Solve outcome").getByRole("button", { name: "View fields in Inspect" }).click();
+    await expect(page.getByRole("button", { name: "Import VTK/VTU" })).toBeVisible();
+  });
+
+  test("runs a CFD case from one control while the solver is still Instant 1D", async ({ page }) => {
+    await openFresh(page, "passed", { runnableOpenfoam: true });
+    await showStage(page, "CFD");
+
+    // There is no separate "Use OpenFOAM" fix any more.
+    await expect(page.getByRole("button", { name: "Use OpenFOAM" })).toHaveCount(0);
+    await expect(page.getByText(/Switches Instant 1D to OpenFOAM, then runs/i)).toBeVisible();
+
+    await page.getByRole("button", { name: "Run CFD case" }).click();
+
+    await expect(page.getByRole("combobox", { name: "Solver" })).toHaveValue("openfoam");
+    await expect(page.getByLabel("Solve outcome")).toContainText("Solve complete");
+  });
+
+  test("takes the Solver settings control to the solver settings", async ({ page }) => {
+    await openFresh(page, "passed", { runnableOpenfoam: true });
+    await showStage(page, "CFD");
+
+    const inspectorSolverGroup = page.locator("#inspector-panel").getByRole("button", { name: "Solver settings" });
+    await inspectorSolverGroup.click();
+    await expect(page.getByRole("combobox", { name: "Solver" })).toHaveCount(0);
+
+    // The stage control used to only flip an overlay flag that is inert on a
+    // desktop window, so at this width pressing it did nothing at all.
+    await page.getByRole("button", { name: "Solver settings" }).first().click();
+    await expect(inspectorSolverGroup).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("combobox", { name: "Solver" })).toBeInViewport();
   });
 
   test("shows desktop result playback controls after loading a fixture", async ({ page }) => {

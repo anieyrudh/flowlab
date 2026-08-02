@@ -1,4 +1,4 @@
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Beaker,
@@ -98,6 +98,7 @@ import type {
   AdvancedPhysicsMode,
   FluidEdge,
   FluidNode,
+  FluidProject,
   JobArtifactFile,
   JobArtifactIndex,
   JobArtifactPreview,
@@ -127,6 +128,7 @@ import type {
   SolverRuntimeStatus,
   SolverSettings,
   SolverTier,
+  SweepConfig,
   VtkResultDataset,
   WorkspaceMode
 } from "./types";
@@ -145,7 +147,7 @@ type ResultComponentLink =
   | { state: "linked"; edgeId?: string; message: string }
   | { state: "unlinked"; message: string };
 
-type DockPanelId = "field" | "sweep" | "metrics" | "mesh" | "diagnostics" | "warnings";
+type DockPanelId = "field" | "sweep" | "metrics" | "diagnostics" | "warnings";
 
 const defaultDockPanelByMode: Record<WorkspaceMode, DockPanelId> = {
   design: "metrics",
@@ -158,16 +160,17 @@ const dockPanelOptions: { id: DockPanelId; label: string }[] = [
   { id: "field", label: "Field viewer" },
   { id: "sweep", label: "Sweep" },
   { id: "metrics", label: "Metrics" },
-  { id: "mesh", label: "Mesh QA" },
   { id: "diagnostics", label: "Diagnostics" },
   { id: "warnings", label: "Warnings" }
 ];
 
+// The Mesh QA tab is gone. Its one actionable part — why a case would not mesh —
+// now sits in Diagnostics, which is where a user looks after a failure.
 const dockPanelsByMode: Record<WorkspaceMode, DockPanelId[]> = {
-  design: ["metrics", "mesh", "warnings"],
+  design: ["metrics", "warnings"],
   simulate: ["sweep", "metrics", "warnings"],
-  sweep: ["diagnostics", "mesh", "warnings"],
-  analyze: ["field", "diagnostics", "mesh", "warnings"]
+  sweep: ["diagnostics", "warnings"],
+  analyze: ["field", "diagnostics", "warnings"]
 };
 
 type DesktopExportFile = {
@@ -303,6 +306,87 @@ const solverLabels: Record<SolverTier, string> = {
   mujoco: "MuJoCo"
 };
 
+/**
+ * Instant 1D is a browser-side estimate, not a solver the job service can run.
+ * Everything else is a CFD tier the single run control may select on the user's
+ * behalf, in this preference order.
+ */
+const RUNNABLE_CFD_TIERS: SolverTier[] = ["openfoam", "su2", "code-saturne", "mujoco"];
+const DEFAULT_CFD_TIER: SolverTier = "openfoam";
+
+const TERMINAL_JOB_STATUSES = ["complete", "failed", "blocked", "cancelled"] as const;
+
+function isTerminalJobStatus(status: string | undefined): boolean {
+  return status !== undefined && (TERMINAL_JOB_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * A CFD run takes minutes to hours. Nothing in the job record is a percentage —
+ * there is no total iteration count to divide by — so this reports only what is
+ * actually measured: the state, how long it has been in flight, and whichever
+ * of simulation time / iteration / log lines the solver has emitted.
+ */
+export type RunProgressModel = {
+  status: string;
+  terminal: boolean;
+  stateLabel: string;
+  tone: "running" | "done" | "failed";
+  elapsedLabel: string | null;
+  advanceLabel: string | null;
+  detail: string | null;
+};
+
+export function formatElapsed(milliseconds: number): string {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "0s";
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+const runStateLabels: Record<string, string> = {
+  generated: "Case generated",
+  queued: "Queued",
+  running: "Running",
+  complete: "Complete",
+  failed: "Failed",
+  blocked: "Blocked",
+  cancelled: "Cancelled"
+};
+
+export function runProgressModel(job: JobRecord | null, nowMs: number): RunProgressModel | null {
+  if (!job) return null;
+  const terminal = isTerminalJobStatus(job.status);
+  const started = Date.parse(job.createdAt);
+  const ended = job.finishedAt ? Date.parse(job.finishedAt) : Number.NaN;
+  const endMs = terminal && Number.isFinite(ended) ? ended : nowMs;
+  const elapsedLabel = Number.isFinite(started) ? formatElapsed(endMs - started) : null;
+  const summary = (job.result as JobResultPayload | null | undefined)?.logSummary ?? null;
+  // Only one of these is ever parsed for a given solver: OpenFOAM reports a
+  // simulation time, SU2/Code_Saturne/MuJoCo report an iteration count. Log
+  // lines are the last resort — they prove the run is alive even when nothing
+  // else has been parsed yet.
+  const advanceLabel = summary?.latestTime !== undefined
+    ? `Time ${formatResidual(summary.latestTime)}`
+    : summary?.latestIteration !== undefined
+      ? `Iteration ${formatNumber(summary.latestIteration, 0)}`
+      : summary?.lineCount
+        ? `${summary.lineCount} log line${summary.lineCount === 1 ? "" : "s"}`
+        : null;
+  return {
+    status: job.status,
+    terminal,
+    stateLabel: runStateLabels[job.status] ?? job.status,
+    tone: job.status === "complete" ? "done" : terminal ? "failed" : "running",
+    elapsedLabel,
+    advanceLabel,
+    detail: job.error ?? (terminal && job.exitCode !== null && job.exitCode !== undefined ? `exit ${job.exitCode}` : null)
+  };
+}
+
 function formatNumber(value: number, digits = 2) {
   if (!Number.isFinite(value)) return "n/a";
   if (Math.abs(value) >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -322,6 +406,115 @@ function formatResidual(value: number | undefined) {
 function residualRatio(initial?: number, final?: number) {
   if (!Number.isFinite(initial) || !Number.isFinite(final) || initial === undefined || final === undefined || initial === 0) return null;
   return Math.abs(final / initial);
+}
+
+/**
+ * A sweep stores raw SI numbers. `0.012` on the laminar starter is twelve
+ * millimetres of pipe diameter — it is not a flow rate, which is what the panel
+ * header used to claim for every preset. Each sweepable parameter therefore
+ * declares its own name and quantity here, and the panel reads the sweep record
+ * rather than hardcoding one parameter's label.
+ *
+ * The parameter keys are exactly the ones `runSweep` in `physics/sweeps.ts`
+ * knows how to apply. Anything else is shown under its raw name with no unit,
+ * because inventing a unit for an unknown parameter would be a fresh lie.
+ */
+type SweepQuantity = "length" | "pressure" | "flow" | "viscosity" | "density" | "temperature" | "dimensionless";
+
+const sweepParameterCatalog: Record<string, { label: string; quantity: SweepQuantity }> = {
+  diameter: { label: "diameter", quantity: "length" },
+  throatDiameter: { label: "throat diameter", quantity: "length" },
+  height: { label: "height", quantity: "length" },
+  width: { label: "width", quantity: "length" },
+  length: { label: "length", quantity: "length" },
+  minorLossK: { label: "minor-loss K", quantity: "dimensionless" },
+  pressure: { label: "pressure", quantity: "pressure" },
+  head: { label: "pump head", quantity: "length" },
+  flowDemand: { label: "flow demand", quantity: "flow" },
+  dynamicViscosity: { label: "dynamic viscosity", quantity: "viscosity" },
+  density: { label: "density", quantity: "density" },
+  temperature: { label: "temperature", quantity: "temperature" }
+};
+
+/**
+ * Picks one unit for the whole sweep from its largest value, so the six ticks
+ * of a diameter sweep read `12 mm … 32 mm` instead of switching unit halfway.
+ */
+function sweepUnitFor(quantity: SweepQuantity, magnitude: number): { symbol: string; scale: number; digits: number } {
+  switch (quantity) {
+    case "length":
+      return magnitude > 0 && magnitude < 0.1
+        ? { symbol: "mm", scale: 1000, digits: 1 }
+        : { symbol: "m", scale: 1, digits: 3 };
+    case "pressure":
+      return magnitude >= 1000 ? { symbol: "kPa", scale: 0.001, digits: 2 } : { symbol: "Pa", scale: 1, digits: 1 };
+    case "flow":
+      return magnitude > 0 && magnitude < 0.01
+        ? { symbol: "L/s", scale: 1000, digits: 3 }
+        : { symbol: "m3/s", scale: 1, digits: 4 };
+    case "viscosity":
+      return { symbol: "Pa.s", scale: 1, digits: 4 };
+    case "density":
+      return { symbol: "kg/m3", scale: 1, digits: 1 };
+    case "temperature":
+      return { symbol: "K", scale: 1, digits: 2 };
+    case "dimensionless":
+      return { symbol: "", scale: 1, digits: 3 };
+  }
+}
+
+export type SweepDescription = {
+  configured: boolean;
+  parameterLabel: string;
+  unitSymbol: string;
+  targetLabel: string | null;
+  targetMissing: boolean;
+  title: string;
+  rangeLabel: string | null;
+  formatValue: (value: number) => string;
+};
+
+/**
+ * Everything the sweep panel needs to name itself, derived from the sweep the
+ * project actually declares. Exported so the naming is testable without React.
+ */
+export function describeSweep(project: FluidProject, sweep: SweepConfig | undefined): SweepDescription {
+  if (!sweep) {
+    return {
+      configured: false,
+      parameterLabel: "no parameter",
+      unitSymbol: "",
+      targetLabel: null,
+      targetMissing: false,
+      title: "Sweep: none configured",
+      rangeLabel: null,
+      formatValue: (value: number) => formatNumber(value, 4)
+    };
+  }
+  const known = sweepParameterCatalog[sweep.parameter];
+  const parameterLabel = known?.label ?? sweep.parameter;
+  const quantity: SweepQuantity = known?.quantity ?? "dimensionless";
+  const unit = sweepUnitFor(quantity, Math.max(Math.abs(sweep.min), Math.abs(sweep.max)));
+  const unitSymbol = known ? unit.symbol : "";
+  const formatValue = (value: number) =>
+    `${formatNumber(value * (known ? unit.scale : 1), unit.digits)}${unitSymbol ? ` ${unitSymbol}` : ""}`;
+  const target =
+    sweep.targetKind === "edge"
+      ? project.edges[sweep.targetId]
+      : sweep.targetKind === "node"
+        ? project.nodes[sweep.targetId]
+        : null;
+  const targetLabel = sweep.targetKind === "fluid" ? "Fluid" : target?.label ?? null;
+  return {
+    configured: true,
+    parameterLabel,
+    unitSymbol,
+    targetLabel,
+    targetMissing: sweep.targetKind !== "fluid" && !target,
+    title: `Sweep: ${parameterLabel}${unitSymbol ? ` (${unitSymbol})` : ""}`,
+    rangeLabel: `${formatValue(sweep.min)} to ${formatValue(sweep.max)} in ${sweep.steps} steps`,
+    formatValue
+  };
 }
 
 function defaultReviewedGeometry(): ReviewedGeometrySource {
@@ -911,6 +1104,110 @@ export function verifiedResultComponentLink(
   return { state: "linked", edgeId: edge.id, message: `Verified cell link: ${edge.label}${component}` };
 }
 
+/**
+ * What a finished solve produced and where to look at it. Without this the only
+ * sign a run had ended was a status word in a collapsed panel, so a completed
+ * solve looked the same as one that never started.
+ *
+ * Every number here is read from the job record. Nothing is estimated.
+ */
+function SolveOutcome({
+  job,
+  patchMetrics,
+  onOpenResults,
+  onOpenDiagnostics
+}: {
+  job: JobRecord | null;
+  patchMetrics: PatchMetrics | null;
+  onOpenResults: () => void;
+  onOpenDiagnostics: () => void;
+}) {
+  if (!job || !isTerminalJobStatus(job.status)) return null;
+  const payload = job.result as JobResultPayload | null | undefined;
+  const fieldCount = (payload?.resultFiles ?? []).length;
+  const diagnosticCount = (payload?.diagnosticFiles ?? []).length;
+  const pressureDrop = patchMetrics?.pressureDrops?.[0];
+  const succeeded = job.status === "complete";
+  const produced = succeeded
+    ? [
+        `${fieldCount} field file${fieldCount === 1 ? "" : "s"}`,
+        `${diagnosticCount} diagnostic file${diagnosticCount === 1 ? "" : "s"}`,
+        pressureDrop && Number.isFinite(pressureDrop.deltaP)
+          ? `Δp ${formatNumber(pressureDrop.deltaP / 1000, 3)} kPa ${pressureDrop.fromPatch} to ${pressureDrop.toPatch}`
+          : null
+      ].filter(Boolean).join(" · ")
+    : job.error ?? `The run ended ${job.status}.`;
+  return (
+    <div className={`solve-outcome ${succeeded ? "done" : "failed"}`} aria-label="Solve outcome" role="status">
+      <strong>{succeeded ? "Solve complete" : `Solve ${job.status}`}</strong>
+      <span>{produced}</span>
+      <div className="solve-outcome-actions">
+        {succeeded && fieldCount > 0 ? (
+          <button type="button" onClick={onOpenResults}>
+            View fields in Inspect
+          </button>
+        ) : null}
+        <button type="button" onClick={onOpenDiagnostics}>
+          Open solver diagnostics
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type InspectorSectionId = "selection" | "solver" | "guide" | "project";
+
+/**
+ * Every part of the Inspector gets a heading that says what it is for and a
+ * control that puts it away. Without this the panel was a single 2600px column
+ * inside a 600px viewport, so whichever part came last was clipped at the panel
+ * edge with nothing to say more existed.
+ */
+function InspectorSection({
+  id,
+  title,
+  icon,
+  open,
+  onToggle,
+  hidden = false,
+  sectionRef,
+  children
+}: {
+  id: InspectorSectionId;
+  title: string;
+  icon?: ReactNode;
+  open: boolean;
+  onToggle: (id: InspectorSectionId) => void;
+  hidden?: boolean;
+  sectionRef?: RefObject<HTMLElement | null>;
+  children: ReactNode;
+}) {
+  if (hidden) return null;
+  // No `aria-label` here: the header button already names the group, and an
+  // accessible name on the wrapper would shadow the labels of the controls
+  // inside it for label-based queries.
+  return (
+    <section className={`inspector-group ${open ? "open" : "closed"}`} data-inspector-group={id} ref={sectionRef}>
+      <button
+        type="button"
+        className="inspector-group-header"
+        aria-expanded={open}
+        aria-controls={`inspector-group-${id}`}
+        onClick={() => onToggle(id)}
+      >
+        <span>
+          {icon}
+          {title}
+        </span>
+        <ChevronDown size={15} className={open ? "open" : ""} />
+      </button>
+      <div className="inspector-group-body" id={`inspector-group-${id}`} hidden={!open}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const {
     project,
@@ -956,7 +1253,13 @@ export default function App() {
   const [caseRecord, setCaseRecord] = useState<SolverCase | null>(null);
   const [jobRecord, setJobRecord] = useState<JobRecord | null>(null);
   const [recentJobs, setRecentJobs] = useState<RecentJob[]>([]);
-  const [advancedOpen, setAdvancedOpen] = useState(true);
+  // A CFD run has no percentage to report, but it does have a wall clock. This
+  // ticks only while a run is in flight so the elapsed figure keeps moving.
+  const [runClockMs, setRunClockMs] = useState(() => Date.now());
+  // Only the sections the user has explicitly toggled are stored; everything
+  // else follows the stage default below, so switching stage re-focuses the
+  // Inspector on the part that matches it.
+  const [inspectorSectionOverrides, setInspectorSectionOverrides] = useState<Partial<Record<InspectorSectionId, boolean>>>({});
   const [activeDockPanel, setActiveDockPanel] = useState<DockPanelId>("field");
   const [illustrativeEstimateAnimation, setIllustrativeEstimateAnimation] = useState(false);
   const [resultSnapshots, setResultSnapshots] = useState<ResultSnapshot[]>([]);
@@ -1005,6 +1308,7 @@ export default function App() {
   const [storageReady, setStorageReady] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const resultFileRef = useRef<HTMLInputElement | null>(null);
+  const solverSectionRef = useRef<HTMLElement | null>(null);
   const streamlineWorkerRef = useRef<StreamlineWorkerRun | null>(null);
 
   const selected = selectedEntity(project, selectedKind, selectedId);
@@ -1246,17 +1550,71 @@ export default function App() {
     () => runtimeStatuses.find((status) => status.solver === project.solver.tier) ?? null,
     [project.solver.tier, runtimeStatuses]
   );
-  const cfdQueueBlocker = useMemo(() => {
-    if (project.solver.tier === "instant-1d") {
-      return "Instant 1D runs in the Estimate stage in this browser. Select a runnable CFD solver before queueing a local job.";
-    }
-    if (!backendOnline) return "The local solver service is offline. Start it before queueing a CFD job.";
-    if (!activeRuntime?.runnable) {
-      return `${solverLabels[project.solver.tier]} is not runnable locally: ${activeRuntime?.blockers[0] ?? "runtime diagnostics are still loading"}`;
-    }
-    return null;
-  }, [activeRuntime, backendOnline, project.solver.tier]);
-  const canQueueCfd = blockingWarnings.length === 0 && cfdQueueBlocker === null;
+  /**
+   * One control runs the case. Instant 1D is a browser estimate, not a CFD
+   * solver, so when it is still selected this plan picks the CFD solver the
+   * button will switch to before running instead of making the user press a
+   * separate "Use OpenFOAM" fix first.
+   *
+   * `blocker` stays non-null whenever the run genuinely cannot proceed — no
+   * service, no runtime, invalid network — so the button never silently does
+   * nothing.
+   */
+  const cfdRunPlan = useMemo(() => {
+    const needsSolverSwitch = !RUNNABLE_CFD_TIERS.includes(project.solver.tier);
+    const targetTier = needsSolverSwitch
+      ? RUNNABLE_CFD_TIERS.find((tier) => runtimeStatuses.find((status) => status.solver === tier)?.runnable)
+        ?? DEFAULT_CFD_TIER
+      : project.solver.tier;
+    const targetRuntime = runtimeStatuses.find((status) => status.solver === targetTier) ?? null;
+    const blocker = blockingWarnings.length > 0
+      ? `Fix ${blockingWarnings.length} blocking network issue${blockingWarnings.length === 1 ? "" : "s"} before queueing a solver case.`
+      : !backendOnline
+        ? "The local solver service is offline. Start it before queueing a CFD job."
+        : !targetRuntime?.runnable
+          ? `${solverLabels[targetTier]} is not runnable locally: ${targetRuntime?.blockers[0] ?? "runtime diagnostics are still loading"}`
+          : null;
+    return { needsSolverSwitch, targetTier, targetRuntime, blocker };
+  }, [backendOnline, blockingWarnings.length, project.solver.tier, runtimeStatuses]);
+  const cfdQueueBlocker = cfdRunPlan.blocker;
+  const canQueueCfd = cfdQueueBlocker === null;
+  const runProgress = useMemo(() => runProgressModel(jobRecord, runClockMs), [jobRecord, runClockMs]);
+  // Shown only when nothing blocks the run: what the one control is about to do.
+  const cfdReadyLine = useMemo(() => {
+    const action = cfdRunPlan.needsSolverSwitch
+      ? `Switches ${solverLabels[project.solver.tier]} to ${solverLabels[cfdRunPlan.targetTier]}, then runs`
+      : `Ready: ${solverLabels[cfdRunPlan.targetTier]}`;
+    const mesh = !project.solver.meshMode || project.solver.meshMode === "planar-2d" ? "planar 2D mesh" : project.solver.meshMode;
+    const run = project.solver.runMode === "steady" ? "steady run" : "transient starter run";
+    return `${action} · ${mesh} · ${run}`;
+  }, [cfdRunPlan, project.solver.meshMode, project.solver.runMode, project.solver.tier]);
+  const sweepDescription = useMemo(() => describeSweep(project, project.sweeps[0]), [project]);
+  const isInspectorSectionOpen = useCallback(
+    (id: InspectorSectionId) =>
+      inspectorSectionOverrides[id]
+      // The guide is a tutorial. It leads in the two stages where a beginner is
+      // still building the case, and steps aside once the user is configuring or
+      // reading a solve.
+      ?? (id === "guide" ? project.visualization.mode === "design" || project.visualization.mode === "simulate" : true),
+    [inspectorSectionOverrides, project.visualization.mode]
+  );
+  const toggleInspectorSection = useCallback(
+    (id: InspectorSectionId) =>
+      setInspectorSectionOverrides((current) => ({ ...current, [id]: !isInspectorSectionOpen(id) })),
+    [isInspectorSectionOpen]
+  );
+  /**
+   * "Solver settings" used to only flip `inspectorOpen`, which is inert above
+   * 1439px — on a desktop window the button did nothing at all. It now opens
+   * the solver section and brings it into view at every width.
+   */
+  const revealSolverSettings = useCallback(() => {
+    setInspectorOpen(true);
+    setInspectorSectionOverrides((current) => ({ ...current, solver: true }));
+    window.requestAnimationFrame(() => {
+      solverSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }, []);
   const actionPoint = useMemo(() => {
     if (selectedNode) return selectedNode.position;
     if (selectedEdge) {
@@ -1649,7 +2007,14 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!jobRecord || ["complete", "failed", "blocked", "cancelled"].includes(jobRecord.status)) return;
+    if (!jobRecord || isTerminalJobStatus(jobRecord.status)) return;
+    setRunClockMs(Date.now());
+    const timer = window.setInterval(() => setRunClockMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [jobRecord?.id, jobRecord?.status]);
+
+  useEffect(() => {
+    if (!jobRecord || isTerminalJobStatus(jobRecord.status)) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -1689,18 +2054,24 @@ export default function App() {
   }
 
   async function launchAdvancedCase() {
-    if (blockingWarnings.length > 0) {
-      setProjectMessage(`Fix ${blockingWarnings.length} blocking network issue${blockingWarnings.length === 1 ? "" : "s"} before queueing a solver case.`);
-      setCaseRecord(null);
-      setJobRecord(null);
-      return;
-    }
+    // Never fall through silently: if the run cannot proceed, say why.
     if (cfdQueueBlocker) {
       setProjectMessage(cfdQueueBlocker);
+      if (blockingWarnings.length > 0) {
+        setCaseRecord(null);
+        setJobRecord(null);
+      }
       return;
     }
+    // One control, one outcome. If the project is still on the browser-side
+    // estimate, this promotes it to the CFD solver it is about to run.
+    const runTier = cfdRunPlan.targetTier;
+    const runProject = cfdRunPlan.needsSolverSwitch
+      ? { ...project, solver: { ...project.solver, tier: runTier } }
+      : project;
+    if (cfdRunPlan.needsSolverSwitch) setSolverTier(runTier);
     try {
-      const solverCase = await generateSolverCase(project, project.solver.tier, project.solver.advancedMode);
+      const solverCase = await generateSolverCase(runProject, runTier, project.solver.advancedMode);
       setCaseRecord(solverCase);
       const queued = await queueJob(solverCase);
       setJobRecord(queued);
@@ -2423,21 +2794,18 @@ export default function App() {
                 <div className="stage-action-copy">
                   <strong>Run a CFD case</strong>
                   <small id="cfd-stage-action-reason" aria-live="polite">
-                    {cfdQueueBlocker
-                      ? cfdQueueBlocker
-                      : `Ready: ${solverLabels[project.solver.tier]} · ${project.solver.meshMode === "planar-2d" || !project.solver.meshMode ? "planar 2D mesh" : project.solver.meshMode} · ${project.solver.runMode === "steady" ? "steady run" : "transient starter run"}`}
+                    {cfdQueueBlocker ?? cfdReadyLine}
                   </small>
+                  {runProgress ? (
+                    <span className={`run-progress ${runProgress.tone}`} aria-label="CFD run progress" aria-live="polite">
+                      <strong>{runProgress.stateLabel}</strong>
+                      {runProgress.elapsedLabel ? <span>{runProgress.elapsedLabel}</span> : null}
+                      {runProgress.advanceLabel ? <span>{runProgress.advanceLabel}</span> : null}
+                      {runProgress.detail ? <small>{runProgress.detail}</small> : null}
+                    </span>
+                  ) : null}
                 </div>
                 <div className="stage-action-controls">
-                  {project.solver.tier === "instant-1d" ? (
-                    <button
-                      type="button"
-                      className="stage-action-fix"
-                      onClick={() => setSolverTier("openfoam")}
-                    >
-                      Use OpenFOAM
-                    </button>
-                  ) : null}
                   <button
                     type="button"
                     className="primary-action"
@@ -2452,11 +2820,23 @@ export default function App() {
                     type="button"
                     className="stage-action-secondary"
                     aria-expanded={inspectorOpen}
-                    onClick={() => setInspectorOpen(true)}
+                    onClick={revealSolverSettings}
                   >
                     Solver settings
                   </button>
                 </div>
+                <SolveOutcome
+                  job={jobRecord}
+                  patchMetrics={patchMetrics}
+                  onOpenResults={() => {
+                    setMode("analyze");
+                    setActiveDockPanel("field");
+                  }}
+                  onOpenDiagnostics={() => {
+                    setDockCollapsed(false);
+                    setActiveDockPanel("diagnostics");
+                  }}
+                />
               </section>
             ) : null}
           </>
@@ -2594,44 +2974,53 @@ export default function App() {
         }
       />
 
+      {/*
+        The Inspector used to be one unbroken column: preset picker, tutorial,
+        component properties and solver settings all stacked with no headings,
+        so the comparison table was cut off at the panel edge and the properties
+        of the selected component sat below a screen and a half of tutorial.
+        Each part is now a named, collapsible section, ordered so the one that
+        matches the current stage comes first. Nothing was removed.
+      */}
       <aside className="inspector" id="inspector-panel">
         <div className="panel-title">
           <SlidersHorizontal size={16} />
           Inspector
         </div>
-        <label>
-          Preset
-          <select
-            value={project.name}
-            onChange={(event) => {
-              const next = presets.find((preset) => preset.name === event.target.value);
-              if (next) setProject(next);
-            }}
-          >
-            {presets.map((preset) => (
-              <option key={preset.name}>{preset.name}</option>
-            ))}
-          </select>
-        </label>
-        {projectMessage ? <p className={projectMessage.startsWith("Invalid") ? "import-message error" : "import-message"}>{projectMessage}</p> : null}
-        <GuidedFirstCase project={project} result={result} patchMetrics={patchMetrics} />
-        {project.visualization.mode === "design" && selectedEdge ? (
-          <EdgeInspector
-            edge={selectedEdge}
-            nodes={project.nodes}
-            result={selectedEdgeResult}
-            onChange={(patch) => updateEdge(selectedEdge.id, patch)}
-            onEndpointChange={(endpoint, nodeId, port) => updateEdgeEndpoint(selectedEdge.id, endpoint, nodeId, port)}
-          />
+        {/* Import, restore and job messages stay outside the collapsible
+            sections: a status line the user cannot see is not a status line. */}
+        {projectMessage ? (
+          <p className={projectMessage.startsWith("Invalid") ? "import-message error" : "import-message"} aria-live="polite">
+            {projectMessage}
+          </p>
         ) : null}
-        {project.visualization.mode === "design" && selectedNode ? (
-          <NodeInspector
-            node={selectedNode}
-            result={selectedNodeResult}
-            onChange={(patch) => updateNode(selectedNode.id, patch)}
-            onRotate={(rotation) => rotateNode(selectedNode.id, rotation)}
-          />
-        ) : null}
+
+        <InspectorSection
+          id="selection"
+          title="Component properties"
+          open={isInspectorSectionOpen("selection")}
+          onToggle={toggleInspectorSection}
+          hidden={project.visualization.mode !== "design"}
+        >
+          {selectedEdge ? (
+            <EdgeInspector
+              edge={selectedEdge}
+              nodes={project.nodes}
+              result={selectedEdgeResult}
+              onChange={(patch) => updateEdge(selectedEdge.id, patch)}
+              onEndpointChange={(endpoint, nodeId, port) => updateEdgeEndpoint(selectedEdge.id, endpoint, nodeId, port)}
+            />
+          ) : selectedNode ? (
+            <NodeInspector
+              node={selectedNode}
+              result={selectedNodeResult}
+              onChange={(patch) => updateNode(selectedNode.id, patch)}
+              onRotate={(rotation) => rotateNode(selectedNode.id, rotation)}
+            />
+          ) : (
+            <p className="ok-line">Select a component on the schematic to edit it.</p>
+          )}
+        </InspectorSection>
 
         {project.visualization.mode === "simulate" ? (
           <section className="inspector-section stage-inspector">
@@ -2779,14 +3168,15 @@ export default function App() {
             ) : null}
           </section>
         ) : null}
-        {project.visualization.mode === "sweep" ? <button className="accordion" onClick={() => setAdvancedOpen((value) => !value)}>
-          <span>
-            <Layers3 size={16} />
-            Advanced solvers
-          </span>
-          <ChevronDown size={16} className={advancedOpen ? "open" : ""} />
-        </button> : null}
-        {project.visualization.mode === "sweep" && advancedOpen ? (
+        <InspectorSection
+          id="solver"
+          title="Solver settings"
+          icon={<Layers3 size={15} />}
+          open={isInspectorSectionOpen("solver")}
+          onToggle={toggleInspectorSection}
+          hidden={project.visualization.mode !== "sweep"}
+          sectionRef={solverSectionRef}
+        >
           <div className="advanced-block">
             <label>
               Solver
@@ -2805,6 +3195,10 @@ export default function App() {
               selectedEdge={selectedEdge}
               onSolverChange={updateSolverSettings}
               onMeshControlsChange={updateSolverMeshControls}
+            />
+            <ReviewedGeometryPanel
+              reviewedGeometry={project.solver.reviewedGeometry}
+              onReviewedGeometryChange={(reviewedGeometry) => updateSolverSettings({ reviewedGeometry })}
             />
             <div className="solver-list">
               {solvers.map((solver) => (
@@ -2840,7 +3234,38 @@ export default function App() {
               />
             ) : null}
           </div>
-        ) : null}
+        </InspectorSection>
+
+        <InspectorSection
+          id="guide"
+          title="Guided first case"
+          open={isInspectorSectionOpen("guide")}
+          onToggle={toggleInspectorSection}
+        >
+          <GuidedFirstCase project={project} result={result} patchMetrics={patchMetrics} />
+        </InspectorSection>
+
+        <InspectorSection
+          id="project"
+          title="Project preset"
+          open={isInspectorSectionOpen("project")}
+          onToggle={toggleInspectorSection}
+        >
+          <label>
+            Preset
+            <select
+              value={project.name}
+              onChange={(event) => {
+                const next = presets.find((preset) => preset.name === event.target.value);
+                if (next) setProject(next);
+              }}
+            >
+              {presets.map((preset) => (
+                <option key={preset.name}>{preset.name}</option>
+              ))}
+            </select>
+          </label>
+        </InspectorSection>
       </aside>
 
       <footer className="bottom-dock">
@@ -3375,9 +3800,18 @@ export default function App() {
         <section className={`dock-panel sweep-tray ${activeDockPanel === "sweep" ? "active" : ""}`} hidden={activeDockPanel !== "sweep"}>
           <div className="panel-title">
             <FlaskConical size={16} />
-            Sweep: inlet flow rate
+            {sweepDescription.title}
           </div>
-          <button className="primary-action" onClick={() => runSweep()}>
+          <small className="sweep-subject">
+            {sweepDescription.configured
+              ? `${sweepDescription.targetLabel ?? "unknown target"}${sweepDescription.targetMissing ? " (missing from this project)" : ""} · ${sweepDescription.rangeLabel}`
+              : "This project declares no sweep, so there is nothing to vary."}
+          </small>
+          <button
+            className="primary-action"
+            onClick={() => runSweep()}
+            disabled={!sweepDescription.configured || sweepDescription.targetMissing}
+          >
             <Beaker size={16} />
             Run sweep
           </button>
@@ -3386,7 +3820,7 @@ export default function App() {
               const firstEdge = Object.values(run.result.edgeResults)[0];
               return (
                 <button key={run.index} className={firstEdge?.cavitationRisk ? "risk" : ""}>
-                  <span>{formatNumber(run.value, 4)}</span>
+                  <span>{sweepDescription.formatValue(run.value)}</span>
                   <small>{firstEdge ? `${formatNumber(firstEdge.velocity)} m/s` : "no edge"}</small>
                 </button>
               );
@@ -3426,19 +3860,12 @@ export default function App() {
           </dl>
         </section>
 
-        <MeshQualityPanel
-          hidden={activeDockPanel !== "mesh"}
-          meshQuality={meshQuality}
-          solver={jobRecord?.solver ?? project.solver.tier}
-          reviewedGeometry={project.solver.reviewedGeometry}
-          onReviewedGeometryChange={(reviewedGeometry) => updateSolverSettings({ reviewedGeometry })}
-        />
-
         <section className={`dock-panel diagnostics-panel ${activeDockPanel === "diagnostics" ? "active" : ""}`} id="solver-diagnostics-panel" hidden={activeDockPanel !== "diagnostics"}>
           <div className="panel-title">
             <Activity size={16} />
             Solver diagnostics
           </div>
+          <MeshBlockersPanel meshQuality={meshQuality} solver={jobRecord?.solver ?? project.solver.tier} />
           {solverLogSummary ? (
             <div className="solver-diagnostics" aria-label="Solver diagnostics panel">
               <div className="diagnostic-kpis">
@@ -3514,24 +3941,6 @@ export default function App() {
       </footer>
     </main>
   );
-}
-
-function meshQaStatusLabel(meshQuality: MeshQualitySummary | null, solver: SolverTier, productionEligible = true) {
-  if (solver !== "openfoam") return "OpenFOAM only";
-  if (!meshQuality) return "Waiting";
-  if (meshQuality.productionReady) return productionEligible ? "Ready" : "Needs tags";
-  if (meshQuality.openfoam.status === "passed") return "Native passed";
-  if (meshQuality.openfoam.status === "blocked") return "Blocked";
-  if (meshQuality.openfoam.status === "unavailable") return "Unavailable";
-  return meshQuality.openfoam.status;
-}
-
-function meshQaStatusClass(meshQuality: MeshQualitySummary | null, solver: SolverTier, productionEligible = true) {
-  if (solver !== "openfoam" || !meshQuality) return "pending";
-  if (meshQuality.productionReady) return productionEligible ? "ready" : "blocked";
-  if (meshQuality.openfoam.status === "passed") return "native-passed";
-  if (meshQuality.openfoam.status === "blocked") return "blocked";
-  return "pending";
 }
 
 function formatMeshMetric(value: number | null | undefined, digits = 3) {
@@ -3642,25 +4051,20 @@ function PatchMetricsPanel({ patchMetrics, solver }: { patchMetrics: PatchMetric
   );
 }
 
-function MeshQualityPanel({
-  meshQuality,
-  solver,
+/**
+ * Reviewed geometry is a solver setting — `project.solver.reviewedGeometry` —
+ * so it belongs with the other solver settings in the Inspector rather than in
+ * a QA read-out. The STL import here is wired end to end: the surface text
+ * reaches `constant/triSurface/*.stl` in the generated case and drives the
+ * snappyHexMesh stage and the boundary-condition files.
+ */
+function ReviewedGeometryPanel({
   reviewedGeometry,
-  onReviewedGeometryChange,
-  hidden = false
+  onReviewedGeometryChange
 }: {
-  meshQuality: MeshQualitySummary | null;
-  solver: SolverTier;
   reviewedGeometry?: ReviewedGeometrySource;
   onReviewedGeometryChange: (geometry: ReviewedGeometrySource | undefined) => void;
-  hidden?: boolean;
 }) {
-  const metrics = meshQuality?.openfoam.qualityMetrics;
-  const commandRuns = meshQuality?.openfoam.commandRuns ?? [];
-  const blockers = meshQuality?.openfoam.blockingReasons ?? [];
-  const yPlus = meshQuality?.openfoam.yPlusEvidence;
-  const artifacts = meshQuality?.artifacts ?? [];
-  const existingArtifacts = artifacts.filter((artifact) => artifact.exists).map((artifact) => artifact.path);
   const geometry = reviewedGeometry ?? defaultReviewedGeometry();
   const surfaces = surfacesForGeometry(geometry);
   const [selectedSurfaceId, setSelectedSurfaceId] = useState<string | null>(null);
@@ -3678,7 +4082,6 @@ function MeshQualityPanel({
   const boundaryTagsComplete = requiredBoundaryTagsComplete(geometry.boundaryTags);
   const surfaceCoverageComplete = surfaces.length > 0 ? requiredReviewedSurfaceCoverageComplete(surfaces) : boundaryTagsComplete;
   const duplicatedPatchNames = duplicatePatchNames(surfaces);
-  const productionEligible = hasRequiredReviewedGeometry(geometry);
   const [geometryMessage, setGeometryMessage] = useState<string | null>(null);
   const triSurfaceState =
     surfaces.length > 0
@@ -3825,12 +4228,9 @@ function MeshQualityPanel({
   }
 
   return (
-    <section className="dock-panel mesh-qa-panel" aria-label="Mesh QA panel" hidden={hidden}>
-      <div className="panel-title">
-        <SlidersHorizontal size={16} />
-        Mesh QA
-        <span className={`mesh-qa-badge ${meshQaStatusClass(meshQuality, solver, productionEligible)}`}>{meshQaStatusLabel(meshQuality, solver, productionEligible)}</span>
-      </div>
+    <section className="inspector-section reviewed-geometry-panel">
+      <h2>Reviewed geometry</h2>
+      <p>Optional. Import ASCII STL surfaces to mesh and solve on your own geometry instead of the generated starter.</p>
       <div className="mesh-reviewed-geometry" aria-label="Reviewed geometry controls">
         <div className="mesh-qa-status-row">
           <span>triSurface</span>
@@ -4139,61 +4539,63 @@ function MeshQualityPanel({
         ) : null}
         {geometryMessage ? <small className="mesh-geometry-message">{geometryMessage}</small> : null}
       </div>
-      {solver !== "openfoam" ? (
-        <p className="ok-line">Native mesh QA is currently tracked for OpenFOAM jobs.</p>
-      ) : meshQuality ? (
-        <div className="mesh-qa-content">
-          <div className="mesh-qa-status-row">
-            <span>Production</span>
-            <strong>{meshQuality.productionReady && productionEligible ? "ready" : meshQuality.approvalStatus || "blocked"}</strong>
-            <small>
-              {meshQuality.productionReady && !productionEligible ? "reviewed geometry and inlet/outlet/wall tags required · " : meshQuality.approvalStatus ? `${meshQuality.approvalStatus} · ` : ""}
-              {meshQuality.nativeQualityStatus ?? meshQuality.status}
-            </small>
-          </div>
-          <div className="mesh-qa-commands" aria-label="Native mesh command list">
-            {commandRuns.length > 0 ? (
-              commandRuns.slice(0, 6).map((run) => (
-                <div key={`${run.command}-${run.logPath ?? run.status}`} className={`mesh-command ${run.status}`}>
-                  <span>{run.command}</span>
-                  <strong>{run.status}</strong>
-                  <small>{run.exitCode === null || run.exitCode === undefined ? "exit n/a" : `exit ${run.exitCode}`}{run.logPath ? ` · ${run.logPath}` : ""}</small>
-                </div>
-              ))
-            ) : (
-              <small>No native mesh commands have run yet.</small>
-            )}
-          </div>
-          <div className="mesh-qa-metrics" aria-label="checkMesh metrics">
-            <div>
-              <span>Failed</span>
-              <strong>{formatMeshMetric(metrics?.failedChecks, 0)}</strong>
+    </section>
+  );
+}
+
+/**
+ * The mesh reasons a run would not proceed. The Mesh QA dock panel that used to
+ * carry mesh quality numbers is gone; what survives is the part a user can act
+ * on after a failure — which native command was missing or failed, how many
+ * `checkMesh` checks failed, and the blocking reasons themselves — so it lives
+ * beside the rest of the solver diagnostics.
+ */
+function MeshBlockersPanel({ meshQuality, solver }: { meshQuality: MeshQualitySummary | null; solver: SolverTier }) {
+  if (solver !== "openfoam") return null;
+  if (!meshQuality) {
+    return (
+      <div className="mesh-blockers" aria-label="Mesh blockers">
+        <strong>Mesh</strong>
+        <small>Queue an OpenFOAM job to collect native mesh evidence.</small>
+      </div>
+    );
+  }
+  const commandRuns = meshQuality.openfoam.commandRuns ?? [];
+  const failedChecks = meshQuality.openfoam.qualityMetrics?.failedChecks;
+  const yPlusBlockingReason = meshQuality.openfoam.yPlusEvidence?.blockingReason;
+  // The y-plus record carries its own blocking reason outside `blockingReasons`.
+  // Folding it in here keeps every actionable reason in one list.
+  const blockers = [...(meshQuality.openfoam.blockingReasons ?? []), ...(yPlusBlockingReason ? [yPlusBlockingReason] : [])];
+  return (
+    <div className="mesh-blockers" aria-label="Mesh blockers">
+      <strong>Mesh · {meshQuality.openfoam.status}</strong>
+      <div className="mesh-qa-commands" aria-label="Native mesh command list">
+        {commandRuns.length > 0 ? (
+          commandRuns.slice(0, 6).map((run) => (
+            <div key={`${run.command}-${run.logPath ?? run.status}`} className={`mesh-command ${run.status}`}>
+              <span>{run.command}</span>
+              <strong>{run.status}</strong>
+              <small>{run.exitCode === null || run.exitCode === undefined ? "exit n/a" : `exit ${run.exitCode}`}{run.logPath ? ` · ${run.logPath}` : ""}</small>
             </div>
-          </div>
-          <div className="mesh-qa-yplus" aria-label="Y plus evidence">
-            <span>Y+/wall</span>
-            <strong>{yPlus?.status ?? "missing"}</strong>
-            <small>
-              {yPlus?.status === "present"
-                ? `min ${formatMeshMetric(yPlus.min)} · mean ${formatMeshMetric(yPlus.mean)} · max ${formatMeshMetric(yPlus.max)}`
-                : yPlus?.blockingReason ?? "waiting for y-plus or wall-distance evidence"}
-            </small>
-          </div>
-          {blockers.length > 0 ? (
-            <div className="mesh-qa-blockers" aria-label="Mesh QA blockers">
-              {blockers.slice(0, 3).map((reason) => <small key={reason}>{reason}</small>)}
-            </div>
-          ) : null}
-          {existingArtifacts.length > 0 ? (
-            <small className="mesh-qa-artifacts" title={existingArtifacts.join(", ")}>
-              Evidence: {existingArtifacts.slice(0, 3).join(", ")}{existingArtifacts.length > 3 ? `, +${existingArtifacts.length - 3}` : ""}
-            </small>
-          ) : null}
+          ))
+        ) : (
+          <small>No native mesh commands have run yet.</small>
+        )}
+      </div>
+      <div className="mesh-qa-metrics" aria-label="checkMesh metrics">
+        <div>
+          <span>Failed checks</span>
+          <strong>{formatMeshMetric(failedChecks, 0)}</strong>
+        </div>
+      </div>
+      {blockers.length > 0 ? (
+        <div className="mesh-qa-blockers" aria-label="Mesh blocking reasons">
+          {blockers.slice(0, 4).map((reason) => <small key={reason}>{reason}</small>)}
         </div>
       ) : (
-        <p className="ok-line">Queue an OpenFOAM job to collect native mesh evidence.</p>
+        <small className="ok-line">No mesh blockers reported.</small>
       )}
-    </section>
+    </div>
   );
 }
 

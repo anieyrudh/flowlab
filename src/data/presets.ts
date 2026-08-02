@@ -254,7 +254,10 @@ export const pipeLossPreset: FluidProject = {
     }
   },
   sweeps: [
-    { id: "roughness-sweep", targetKind: "edge", targetId: "pipe", parameter: "diameter", min: 0.06, max: 0.18, steps: 7 }
+    // The id used to read `roughness-sweep` while the swept parameter was the
+    // diameter. The panel now names the parameter it reads from this record, so
+    // a lying id would have been a trap for the next reader.
+    { id: "pipe-diameter-sweep", targetKind: "edge", targetId: "pipe", parameter: "diameter", min: 0.06, max: 0.18, steps: 7 }
   ]
 };
 
@@ -319,7 +322,14 @@ export const mixerPreset: FluidProject = {
       roughness: 0.000045,
       minorLossK: 0.7
     }
-  }
+  },
+  // Spreading `venturiPreset` also inherited its `throat-sweep`, which points at
+  // an edge called `inlet` and a `throatDiameter` field that neither exist in
+  // this network. That sweep silently produced six identical runs. Sweep the
+  // mixed outlet instead, which is a real edge with a real diameter.
+  sweeps: [
+    { id: "mixer-outlet-diameter-sweep", targetKind: "edge", targetId: "outlet", parameter: "diameter", min: 0.08, max: 0.2, steps: 6 }
+  ]
 };
 
 export const channelPreset: FluidProject = {
