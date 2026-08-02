@@ -1,0 +1,226 @@
+{
+  "schema": "flowlab.full-ogrid-geometry-experimental-qualification-contract-revision.v1",
+  "revisionId": "full-ogrid-generated-geometry-experimental-qualification-v6",
+  "frozenOn": null,
+  "status": "draft-not-frozen",
+  "draftNotice": "This revision is a DRAFT. No runner loads it, no campaign may cite it, and no measurement recorded in its rationale is a qualification result. Freezing it requires setting status to prospective-frozen-before-v6-retained-scientific-execution on both this object and mergePatch.status, setting frozenOn, adding RUNBOOK_V6.md, and repointing CONTRACT_PATH plus the three literal revision/status/schema checks in server/flowlab/full_ogrid_geometry_qualification.py at v6.",
+  "baseContract": {
+    "path": "EXPERIMENTAL_QUALIFICATION_CONTRACT_V3.json",
+    "sha256": "f40c0dc582c58496209872c03808ee493c32535f3048af9e5ddbf78cbf98ba1f"
+  },
+  "v5Disposition": {
+    "revision": "EXPERIMENTAL_QUALIFICATION_CONTRACT_V5.json",
+    "classification": "frozen-never-executed",
+    "solverExecuted": false,
+    "scientificGatesEvaluated": false,
+    "retainedEvidenceReferencingV5": "none",
+    "v5RemainsFrozenAndByteUnchanged": true,
+    "v5MergePatchCarriedForwardVerbatim": true,
+    "v6IsACleanProspectiveAddition": true,
+    "predecessorResultMayBeReusedAsV6Outcome": false
+  },
+  "rationale": "V5 corrected result identity and two checkMesh parsers but was never executed, so the serial cost of the three-level sequence is still the binding practical obstacle. V6 changes only how the same numerical problem is executed and adds one gate that polices the iterative state. It changes no geometry, physics, mesh, boundary condition, grid level, QoI, expected trend, scientific threshold, product status, or promotion gate. Every clause below was decided from measurement on the pinned amd64 image under emulation with 16 CPUs allocated to Docker; the measurements are rehearsal evidence in scratch directories and are not campaign evidence.",
+  "measurementBasis": {
+    "notCampaignEvidence": true,
+    "host": "Apple Silicon, 16 CPUs allocated to Docker, flowlab/openfoam11-gmsh:2026-07-13 under linux/amd64 emulation",
+    "solverThroughput": {
+      "coarse2496Cells": "about 16 ms per SIMPLE iteration",
+      "medium19968CellsFirst200Iterations": "104 ms per iteration",
+      "medium19968CellsFull2000Iterations": "26 ms per iteration averaged, 51.920 s for the level; later iterations are about four times cheaper than the first 200 because the DIC-preconditioned PCG pressure solve needs far fewer inner iterations once residuals fall, so a full run must not be extrapolated from its first 200 iterations",
+      "fine159744CellsFirst200Iterations": "1957 ms per iteration",
+      "campaignCostEstimateCorrection": "The RUNBOOK_V5 expectation of about 13 minutes for the medium level came from extrapolating a small scratch case at a constant cost per cell-iteration. Measured, the medium level takes 51.9 s of solver time. Per-iteration cost is not constant: it falls roughly fourfold once residuals drop out of the initial transient, so a full run must never be extrapolated from its opening iterations."
+    },
+    "parallelSpeedupMediumLevel200Iterations": {
+      "serial": "20.888 s",
+      "twoRanks": "11.568 s, 1.81x",
+      "fourRanks": "6.559 s, 3.18x",
+      "eightRanks": "4.416 s, 4.73x",
+      "fixedOverheadPerLevel": "decomposePar about 5.8 s and reconstructPar about 0.6 s at medium; this exceeds the entire coarse solve, so the coarse level should stay serial",
+      "portability": "not a portable performance claim; specific to this host, this Docker CPU allocation, and this emulated image"
+    },
+    "iterativeBehaviour": {
+      "coarseFinalPressureInitialResidual": "about 1.3e-4, plateaus and oscillates from about iteration 400 and never falls further",
+      "mediumFinalPressureInitialResidual": "about 8.7e-8, reaches its floor by about iteration 200 and never falls further",
+      "generatedResidualControlValue": "1e-8 on p and U",
+      "residualControlNeverFires": "At neither level does the SIMPLE loop satisfy residualControl within 2,000 iterations, so every level already runs the full frozen budget and the fixed common count, not a residual criterion, is what keeps the iterative state comparable.",
+      "durableQoiStationarityIteration": {
+        "coarse": 379,
+        "medium": 185,
+        "definition": "first iteration from which the frozen acceptance windows (trailing-100 pressure-drop relative span at or below 5e-3, trailing-100 measured-flow relative span at or below 1e-3, relative mass-flow imbalance at or below 1e-3) hold for every later iteration",
+        "fine": "not measured; a smaller common budget must not be declared until it is"
+      }
+    },
+    "relaxationSweep": {
+      "design": "pressure field relaxation swept at 0.3, 0.5, 0.7 and 0.9 with the U equation relaxation held at 0.7, one run each, 2,000 iterations, on the coarse and medium levels",
+      "metric": "durable QoI stationarity (first iteration from which the frozen acceptance windows hold for every later iteration), converged pressure drop, and stability",
+      "mediumLevel": {
+        "0.3": "stationary from iteration 185, pressure drop 0.023462337, trailing-100 span 0",
+        "0.5": "stationary from iteration 186, pressure drop 0.023462336, trailing-100 span 0",
+        "0.7": "stationary from iteration 187, pressure drop 0.023462337, trailing-100 span 0",
+        "0.9": "ran apparently normally for 1,416 iterations, then pressure and velocity residuals went to nan at iteration 1,417; diverged"
+      },
+      "coarseLevel": {
+        "0.3": "stationary from iteration 379, pressure drop 0.019982992, trailing-100 span 2.52e-3, residual plateau 1.3e-4",
+        "0.5": "stationary from iteration 557, pressure drop 0.019980925, trailing-100 span 1.59e-3, residual plateau 1.3e-4",
+        "0.7": "stationary from iteration 265, pressure drop 0.020000320, trailing-100 span 1.29e-4, residual plateau 6.3e-6"
+      },
+      "conclusion": "No change. At the medium level the three stable settings are indistinguishable: two iterations of difference out of 185, and a converged pressure drop that agrees to eight significant figures. At the coarse level 0.7 does produce a tighter limit cycle than 0.3, but 0.5 is worse than both, so the coarse response is non-monotone and a single unreplicated run per setting cannot separate a real effect from the phase of an oscillation. At 0.9 the solve diverges, and late enough that a short rehearsal would not have caught it. This case is laminar and low-Reynolds and its cost is dominated by the pressure-Poisson inner solve rather than by outer-iteration under-relaxation, so relaxation is not a useful lever here.",
+      "incidentalObservation": "The coarse converged pressure drop moves in its fifth significant figure across relaxation settings, about 1e-3 relative. Since pressure drop is the QoI feeding the Richardson extrapolation, the coarse level carries roughly 1e-3 relative iterative uncertainty in the grid-convergence input. This is an observation about the existing frozen configuration, not a proposed change."
+    },
+    "meshSequencing": {
+      "design": "the medium level run twice at 2,000 iterations, once cold-started from the generated uniform initial field and once initialised with mapFields from the converged coarse solution",
+      "coldStart": "durable QoI stationarity from iteration 185; solver wall time 51.920 s",
+      "mappedFromCoarse": "durable QoI stationarity from iteration 202; solver wall time 49.410 s",
+      "convergedPressureDrop": "0.023462337 in both cases, identical to every printed digit",
+      "conclusion": "Mesh sequencing was measurably no help, and slightly worse on the metric that matters. The mapped velocity field does start closer (first-iteration Ux initial residual 9.0e-2 against 1.0 cold), but the pressure field still has to be re-established on the finer mesh, and by iteration 100 the mapped run is behind the cold one (p initial residual 2.5e-3 against 1.7e-4). The coarse source is itself only converged to a 1e-4 residual plateau, so it is not a high-quality initial condition. The wall-time difference is noise: both runs completed the same 2,000 iterations."
+    },
+    "parallelFullBudgetMediumLevel2000Iterations": {
+      "serialSolver": "51.920 s",
+      "fourRankSolver": "15.684 s, 3.31x",
+      "fourRankEndToEndIncludingDecomposeAndReconstruct": "22.084 s, 2.35x",
+      "agreement": "pressure drop 0.023462337 serial and four-rank, identical to every printed digit; inlet and outlet flow rates agree to 2e-8 relative, well inside the declared 1e-6 equivalence tolerance"
+    },
+    "parallelSpeedupFineLevel200Iterations": {
+      "serialSolver": "391.414 s (1957 ms per iteration)",
+      "fourRankSolver": "104.039 s (520 ms per iteration), 3.76x",
+      "fourRankEndToEndIncludingDecomposeAndReconstruct": "113.256 s, 3.46x (decomposePar 7.032 s, reconstructPar 2.185 s)",
+      "note": "Parallel efficiency improves with problem size: four ranks give 3.18x at medium and 3.76x at fine over the same fixed 200 iterations.",
+      "agreementCaveat": "At 200 iterations the fine level is still in its steep transient, and the serial and four-rank pressure drops differ by 4.4e-4 relative. That is not a defect; it is why parallel equivalence must be assessed at the declared stopping point, not at a truncated one. At the medium level's full 2,000 iterations the serial and four-rank pressure drops are identical to every printed digit."
+    },
+    "parallelSpeedupCoarseLevel": "None. At 2,496 cells two ranks measured 16.89 ms per iteration against 16.36 ms serial, and decomposePar alone costs about 6 s against a whole-level solve of about 25 s. The coarse level must stay serial.",
+    "notMeasured": [
+      "The fine level at its full 2,000-iteration budget was not run to completion, serially or in parallel. Only its first 200 iterations were timed, so no full-campaign wall-clock figure in this file is measured end to end.",
+      "Durable QoI stationarity at the fine level was not measured. Any future revision proposing a smaller common iteration count must measure it first.",
+      "The V6 configuration has not been executed as a campaign. The MPI path was validated component by component (generated Allrun, decomposePar/mpirun/reconstructPar ordering, reconstructed time directory layout, and the 2,001 inlet/outlet QoI history samples the evaluator requires), not end to end through the runner."
+    ]
+  },
+  "mergePatch": {
+    "schema": "flowlab.full-ogrid-geometry-experimental-qualification-contract.v6",
+    "status": "draft-not-frozen",
+    "identity": {
+      "algorithm": "full-ogrid-normalized-logical-vertex-signature-v4"
+    },
+    "runtime": {
+      "maxIterations": 2000,
+      "relaxationFactors": {
+        "p": 0.3,
+        "U": 0.7,
+        "unchangedFromV3": true,
+        "mayNotBeChangedWithoutANewRevision": true,
+        "measured": "see measurementBasis.relaxationSweep; swept at 0.3, 0.5, 0.7 and 0.9 on two levels, no candidate was better, 0.9 diverged, so nothing changed"
+      },
+      "efficiency": {
+        "appliesTo": "execution only; no discretized equation, mesh, boundary condition, threshold, QoI, grid level, or stopping rule changes",
+        "parallel": {
+          "authorized": true,
+          "method": "scotch",
+          "allowedRanks": [
+            1,
+            2,
+            4,
+            8
+          ],
+          "defaultRanks": 1,
+          "decomposeParDictGeneratedByFlowLab": true,
+          "reconstructBeforeEvaluation": true,
+          "sameMeshSameNumericsSameStoppingRuleRequired": true,
+          "onlyChangesFloatingPointReductionOrder": true,
+          "equivalence": {
+            "required": true,
+            "rankCounts": [
+              2,
+              4,
+              8
+            ],
+            "primaryQoi": [
+              "pressureDropKinematic",
+              "measuredVolumetricFlowRate"
+            ],
+            "primaryQoiRelativeTolerance": 1e-06,
+            "massImbalanceLimitUnchanged": 0.001,
+            "serialBaselineRequiredOnTheSameMesh": true,
+            "speedupIsNotEvidenceOfEquivalence": true
+          },
+          "speedupClaim": null
+        },
+        "meshSequencing": {
+          "authorized": false,
+          "evaluatedAndDeferred": true,
+          "reasonNotAuthorized": "Two independent reasons. First, measurement: initialising the medium level from the converged coarse solution moved durable QoI stationarity from iteration 185 to iteration 202, that is slightly later, not earlier, because the coarse source is itself only converged to a 1e-4 residual plateau. Second, structure: the frozen budget is a fixed 2,000 iterations that every level runs to completion, so even a genuinely better initial condition would save no wall time. Against that zero benefit it converts three independent level runs into one ordered chain that can no longer be reproduced level by level. The mechanism is declared and implemented so a later revision can enable it, but nothing currently justifies doing so.",
+          "wouldBecomeWorthwhileIf": "a later revision prospectively declares a smaller fixed common iteration count AND a source level is available that is converged well enough to be a useful initial condition; neither holds today",
+          "utility": "mapFields",
+          "arguments": [
+            "-consistent",
+            "-sourceTime",
+            "latestTime"
+          ],
+          "mappedFields": [
+            "U",
+            "p"
+          ],
+          "mappedQuantity": "internalField only; every boundaryField entry, including the fullOGridParabolicInlet codedFixedValue, is preserved byte-for-byte from the generated case, and the case manifest is rebuilt over the mapped fields",
+          "sourceOrder": [
+            "coarse",
+            "medium",
+            "fine"
+          ],
+          "coarsestLevelMustColdStart": true,
+          "sourceLevelMustHavePassedEveryMandatoryGate": true,
+          "levelsBecomeOrderedNotIndependent": true,
+          "reproducibilityConsequence": "A sequenced campaign is reproducible only as a whole ordered chain. A level may not be re-run in isolation, and the mapped initial internalField digest for every sequenced level must be retained.",
+          "scientificBasis": "A converged steady solution does not depend on its initial condition, and OpenFOAM normalises the reported initial residual against the current system rather than against the first iteration, so the accepted iterative state does not depend on how the level was initialised.",
+          "equivalence": {
+            "required": true,
+            "representativeLevel": "medium",
+            "coldAndSequencedRunsBothRequired": true,
+            "primaryQoiRelativeTolerance": 1e-06
+          }
+        },
+        "iterationControl": {
+          "method": "fixed-common-iteration-count",
+          "iterations": 2000,
+          "commonAcrossLevels": true,
+          "unchangedFromV3": true,
+          "residualBasedEarlyStopAuthorized": false,
+          "perLevelDynamicStoppingForbidden": true,
+          "generatedResidualControlRetainedButMustNotFire": "The generated fvSolution keeps residualControl at 1e-8 on p and U. Measured on this case it never fires, because the pressure initial residual plateaus near 1e-4 at coarse and near 7e-8 at medium. If it ever fires at one level and not another, the levels stop at different iterative states and the campaign fails closed.",
+          "whyNotAResidualCriterion": "No single absolute residual criterion is reachable at every level of this sequence, so a common residual window cannot be declared here. The fixed common count is what guarantees a common iterative state.",
+          "rule": "Every level runs exactly 2,000 SIMPLE iterations. A level whose solver log shows a different iteration count, or that stopped early on residualControl, fails closed. Neither outcome authorizes changing the count for that campaign.",
+          "precedent": "docs/validation/laminar-all-hex/V4_CAMPAIGN_CONTRACT.md and server/flowlab/laminar_all_hex_v4_contract.py, where per-cell dynamic stopping was replaced by a common floor after mixed stopping states failed 18 of 24 order-spread groups. V6 applies the same principle in its strictest form: the common floor and the hard cap are the same number, so no level can stop anywhere else."
+        }
+      }
+    },
+    "gates": {
+      "solverPerLevel": {
+        "iterationControlRequired": true,
+        "exactCommonIterationCount": 2000,
+        "earlyStopFailsClosed": true,
+        "residualValuesAreDiagnosticNotThresholds": true
+      }
+    },
+    "prospectiveRevision": {
+      "revisionId": "full-ogrid-generated-geometry-experimental-qualification-v6",
+      "baseContractSha256": "f40c0dc582c58496209872c03808ee493c32535f3048af9e5ddbf78cbf98ba1f",
+      "carriedForwardFromV5": {
+        "identityAlgorithmChange": "replace the discontinuous nine-significant-digit text quantisation of normalised cross-section coordinates with tolerance clustering at a relative tolerance of 1e-6, and take the per-station normalisation scale from the averaged outer wall ring rather than a single maximum sample",
+        "evaluatorParserRepairs": [
+          "the geometric-direction gate searched for 'Mesh has 3 geometric (non-empty) directions', but OpenFOAM 11 always writes the geometric line with the '(non-empty/wedge)' classification, so the literal test matched no mesh of any topology and the gate was permanently false rather than merely failing; it now parses the reported integer and compares it to the contract value, which is unchanged at 3",
+          "the connected-region gate searched for the anchored pattern '^\\s*regions:\\s+1\\s*$', but OpenFOAM writes 'Number of regions: 1 (OK).', so that gate was also permanently false; it now matches the reported count, and the required value is unchanged at 1"
+        ]
+      },
+      "runtimeExecutionChange": "authorize opt-in scotch-decomposed MPI execution with reconstructPar before evaluation; declare but do not authorize mapFields mesh sequencing; state the previously implicit fixed common iteration count explicitly and gate it",
+      "identityAlgorithmChanges": false,
+      "scientificGateChanges": false,
+      "scientificGateStrengthening": true,
+      "geometryOrPhysicsChanges": false,
+      "gateThresholdChanges": false,
+      "relaxationFactorChanges": false,
+      "iterationBudgetChanges": false,
+      "stoppingRuleChanges": false,
+      "validatedOrPromotedStatusChanges": false,
+      "freshV3OrV4OrV5ExecutionAuthorized": false,
+      "predecessorResultMayBeReusedAsV6Outcome": false
+    }
+  },
+  "promotionAuthorized": false
+}
