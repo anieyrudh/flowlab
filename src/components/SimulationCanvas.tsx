@@ -727,6 +727,72 @@ function browserSupportsWebGL() {
   }
 }
 
+/**
+ * Named view planes for the 3D camera.
+ *
+ * TEMPORARY HOME. The 3D-renderer stream owns `viewportModel`, and these three
+ * helpers belong there under the names `cinemaViewPlaneOf`,
+ * `cinemaCameraForPlane` and `normalizeYawDegrees`. `viewportModel` is that
+ * stream's file and this branch does not carry its version, so they live here
+ * where they can be compiled and tested. Merging is deleting this block and
+ * re-pointing the two imports; the signatures are already theirs.
+ */
+export type CinemaViewPlane = "iso" | "xy" | "xz" | "yz";
+
+/**
+ * Yaw folded into (-180, 180].
+ *
+ * An orbit drag accumulated yaw without bound, so a few turns of the model left
+ * the camera at values like -572 while the yaw slider is min -180 / max 180.
+ * The camera transform is periodic and never cared, but the slider and the
+ * canvas stopped agreeing about the same view, which is what "negative yaw does
+ * not work" was: dragging left drove the number off the end of the slider and
+ * the slider then snapped the camera somewhere else.
+ */
+export function normalizeYawDegrees(yaw: number): number {
+  if (!Number.isFinite(yaw)) return 0;
+  const wrapped = ((yaw + 180) % 360 + 360) % 360 - 180;
+  // -180 and 180 are the same heading; prefer the positive end so the slider
+  // shows a value inside its own range rather than sitting on its lower stop.
+  return wrapped === -180 ? 180 : wrapped;
+}
+
+/**
+ * The plane a camera is currently looking down, or `null` when it is at some
+ * angle of its own. Pitch is matched loosely because the renderer clamps it.
+ */
+export function cinemaViewPlaneOf(camera: Pick<CinemaCameraState, "yaw" | "pitch">): CinemaViewPlane | null {
+  const yaw = normalizeYawDegrees(camera.yaw);
+  const pitch = camera.pitch;
+  if (pitch >= 74) return "xy";
+  if (Math.abs(pitch) <= 1.5) {
+    if (Math.abs(yaw) <= 1.5) return "xz";
+    if (Math.abs(Math.abs(yaw) - 90) <= 1.5) return "yz";
+    return null;
+  }
+  if (Math.abs(pitch - 38) <= 1.5 && Math.abs(yaw) <= 1.5) return "iso";
+  return null;
+}
+
+/**
+ * The same camera turned to face a named plane. Zoom and pan carry across, so
+ * choosing a plane is a turn of the camera the user already has rather than a
+ * jump to a different one.
+ */
+export function cinemaCameraForPlane(plane: CinemaViewPlane, camera: CinemaCameraState): CinemaCameraState {
+  // The network is drawn in the XY plane with +Z up, and the renderer places the
+  // eye at (sin yaw, -cos yaw, sin pitch). Pitch 90 is therefore straight down
+  // onto XY; pitch 0 is an elevation, looking along -Y at yaw 0 and along +X at
+  // yaw 90.
+  const orientation: Record<CinemaViewPlane, { yaw: number; pitch: number }> = {
+    iso: { yaw: 0, pitch: 38 },
+    xy: { yaw: 0, pitch: 90 },
+    xz: { yaw: 0, pitch: 0 },
+    yz: { yaw: 90, pitch: 0 }
+  };
+  return { ...camera, ...orientation[plane] };
+}
+
 export function SimulationCanvas({
   project,
   result,
@@ -887,6 +953,12 @@ export function SimulationCanvas({
           canvasElement.dataset.cinemaCameraPanX = String(cinemaCamera.pan.x);
           canvasElement.dataset.cinemaCameraPanY = String(cinemaCamera.pan.y);
           canvasElement.dataset.engine = runtime.engine;
+          // Whether this build of the scene contains the illustrative flow
+          // ticks. The point cloud is created at build time and only at build
+          // time, so this is the one place the fact is known — and reporting it
+          // is what makes "the 3D pane responded to the toggle" observable
+          // rather than a claim about pixels nobody can read back.
+          canvasElement.dataset.cinemaPreviewTicks = project.visualization.particles ? "on" : "off";
           onRenderBackendChange("webgl");
           canvasElement.dataset.derivedFallback = runtime.derivedFallback;
           if (resultDataset) {
@@ -924,6 +996,7 @@ export function SimulationCanvas({
           delete canvasElement.dataset.cinemaCameraPanX;
           delete canvasElement.dataset.cinemaCameraPanY;
           delete canvasElement.dataset.engine;
+          delete canvasElement.dataset.cinemaPreviewTicks;
           onRenderBackendChange("2d");
           delete canvasElement.dataset.derivedFallback;
         });
@@ -1689,7 +1762,12 @@ export function SimulationCanvas({
       resizeObserver?.disconnect();
       cancelAnimationFrame(animationId);
     };
-  }, [canvasRenderMode, force2dProjection, onRenderBackendChange, resultDataset, derivedVisualization, derivedPresentationOptions, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind, streamlineDisplay, streamlines]);
+    // `project.visualization.particles` is a build-time input to the 3D scene:
+    // `buildCinemaScene` only creates the flow-tick point cloud when it is set,
+    // and `updateModel` moves those points but never creates them. Without the
+    // flag in this list the illustrative estimate toggle changed nothing in the
+    // 3D pane, because nothing else it touches is a dependency here.
+  }, [canvasRenderMode, force2dProjection, onRenderBackendChange, resultDataset, derivedVisualization, derivedPresentationOptions, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind, streamlineDisplay, streamlines, project.visualization.particles]);
 
   useEffect(() => {
     if (canvasRenderMode !== "cinema") return;
@@ -2129,7 +2207,14 @@ export function SimulationCanvas({
       const dy = event.clientY - active.startY;
       const nextCamera =
         active.kind === "cinema-orbit"
-          ? { ...active.camera, yaw: active.camera.yaw + dx * 0.45, pitch: Math.max(-12, Math.min(78, active.camera.pitch - dy * 0.35)) }
+          ? {
+              ...active.camera,
+              // Wrapped, so an orbit stays inside the range the yaw slider can
+              // show. Unwrapped it ran to values like -572 and the slider and
+              // the canvas stopped describing the same camera.
+              yaw: normalizeYawDegrees(active.camera.yaw + dx * 0.45),
+              pitch: Math.max(-12, Math.min(78, active.camera.pitch - dy * 0.35))
+            }
           : { ...active.camera, pan: { x: active.camera.pan.x - dx / 74, y: active.camera.pan.y + dy / 74 } };
       dragRef.current = { ...active, moved: active.moved || Math.hypot(dx, dy) > 2 };
       onCinemaCameraChange(nextCamera);

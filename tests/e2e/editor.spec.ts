@@ -779,8 +779,19 @@ test.describe("FlowLab editor workspace", () => {
     const canvas = page.getByTestId("cinema-canvas");
     await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.canvasRenderMode)).toBe("cinema");
     await expect.poll(() => canvas.evaluate((element) => Number((element as HTMLCanvasElement).dataset.cinemaObjectCount ?? 0))).toBeGreaterThan(10);
-    await page.getByLabel("3D view controls").getByRole("button", { name: "Top" }).click();
-    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.cinemaCameraPitch)).toBe("76");
+    // "Top" is now the XY plane in a named view-plane group that also offers the
+    // two elevations, which were previously reachable only by dragging. A plane
+    // keeps the camera's zoom and pan and only turns it, so the assertion is on
+    // the pitch it turns to: a true plan view, not the 76 degrees the old
+    // fixed-camera button happened to use.
+    const planes = page.getByRole("group", { name: "View plane" });
+    await planes.getByRole("button", { name: "XY" }).click();
+    await expect(planes.getByRole("button", { name: "XY" })).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.cinemaCameraPitch)).toBe("90");
+    await planes.getByRole("button", { name: "YZ" }).click();
+    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.cinemaCameraYaw)).toBe("90");
+    await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.cinemaCameraPitch)).toBe("0");
+    await planes.getByRole("button", { name: "XY" }).click();
 
     const sourcePoint = await canvas.evaluate((element) => {
       const positions = JSON.parse((element as HTMLCanvasElement).dataset.cinemaNodePositions ?? "{}") as Record<string, { x: number; y: number }>;
@@ -840,8 +851,13 @@ test.describe("FlowLab editor workspace", () => {
     await showStage(page, "Inspect");
     await page.getByTestId("result-import-file").setInputFiles("public/fixtures/venturi-result.vtk");
     await expect(page.getByText("Imported result — probe only", { exact: true }).first()).toBeVisible();
-    await page.getByRole("button", { name: "Use 2D projection fallback" }).click();
-    await expect(page.getByText("2D projection fallback — WebGL/accessibility/export", { exact: true })).toBeVisible();
+    // The escape hatch and its notice are unchanged in behaviour; both were
+    // relabelled out of developer language ("Use 2D projection fallback",
+    // "2D projection fallback — WebGL/accessibility/export"). The notice now
+    // also distinguishes the user turning 3-D off, which is this path, from a
+    // machine that cannot do 3-D at all.
+    await page.getByRole("button", { name: "Simplified view" }).click();
+    await expect(page.getByText("Simplified view — 3-D graphics turned off", { exact: true })).toBeVisible();
     await expect(page.getByTestId("cinema-canvas")).toHaveAttribute("data-canvas-render-mode", "projection");
 
     await page.getByLabel("Examples / Developer tooling").getByRole("button", { name: "Load fixture result" }).click();
@@ -866,6 +882,12 @@ test.describe("FlowLab editor workspace", () => {
     await page.getByRole("button", { name: "Run CFD case" }).click();
     await showStage(page, "Inspect");
     const controls = page.getByLabel("Steady streamline controls");
+    // Derive and the seed count both still exist and still do the same thing.
+    // The seeding parameters now sit behind a "Seeding and colour" group, so
+    // the panel opens on the two buttons rather than on six controls that a
+    // first derivation never touches. Opening the group is the deliberate
+    // action that reaches them.
+    await controls.getByRole("button", { name: "Seeding and colour" }).click();
     await controls.getByLabel("Streamline seed count").selectOption("256");
     await controls.getByRole("button", { name: "Derive" }).click();
     await expect(page.getByTestId("streamline-status")).toContainText("256 steady streamlines");
@@ -971,15 +993,22 @@ test.describe("FlowLab editor workspace", () => {
     await showStage(page, "Estimate");
     const canvas = page.getByTestId("schematic-canvas");
     await canvas.focus();
+    const cinema = page.getByTestId("cinema-canvas");
     const illustration = page.getByRole("button", { name: "Illustrative estimate animation—not CFD" });
     await expect(illustration).toHaveAttribute("aria-pressed", "false");
     const pausedPhase = await canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.previewPhase);
     await page.waitForTimeout(120);
     await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.previewPhase)).toBe(pausedPhase);
+    // The 3D pane builds its flow-tick point cloud once, at scene-build time.
+    // Nothing here used to check that pane, which is how the toggle came to
+    // animate only the 2D schematic while the larger view it sits beside
+    // stayed completely still.
+    await expect(cinema).toHaveAttribute("data-cinema-preview-ticks", "off");
 
     await illustration.click();
     await expect(illustration).toHaveAttribute("aria-pressed", "true");
     await expect.poll(() => canvas.evaluate((element) => (element as HTMLCanvasElement).dataset.previewPhase)).not.toBe(pausedPhase);
+    await expect(cinema).toHaveAttribute("data-cinema-preview-ticks", "on");
 
     await showStage(page, "Define");
     await page.getByTitle("Add pump").click();
@@ -1021,6 +1050,22 @@ test.describe("FlowLab editor workspace", () => {
     expect(performanceSnapshot?.p95["pointer-update"]).toBeLessThan(16);
     expect(performanceSnapshot?.p95["cinema-frame"]).toBeLessThan(16);
     expect(performanceSnapshot?.droppedFrames).toBeLessThan(performanceSnapshot?.counts["cinema-frame"] ?? 1);
+
+    // Orbiting used to accumulate yaw without bound, so a few turns left the
+    // camera at values like -572 while the yaw slider is min -180 / max 180 —
+    // the canvas and the slider stopped describing the same camera, which is
+    // what "negative yaw does not work" was. Drag several full turns and the
+    // yaw must stay inside the range the slider can express.
+    for (let turn = 0; turn < 6; turn += 1) {
+      await page.mouse.move(cameraStart.x + 320, cameraStart.y);
+      await page.mouse.down();
+      await page.mouse.move(cameraStart.x, cameraStart.y, { steps: 8 });
+      await page.mouse.up();
+    }
+    const wrappedYaw = await canvas.evaluate((element) => Number((element as HTMLCanvasElement).dataset.cinemaCameraYaw ?? 0));
+    expect(wrappedYaw).toBeGreaterThan(-181);
+    expect(wrappedYaw).toBeLessThanOrEqual(180);
+    expect(wrappedYaw).toBeLessThan(0);
   });
 
   test("keeps the compact desktop layout contained at 1100 pixels", async ({ page }) => {
@@ -1360,6 +1405,11 @@ test.describe("FlowLab editor workspace", () => {
 
     await expect(page.getByText(/Using pressure from venturi-result\.vtk/)).toBeVisible();
     await expect(page.getByLabel("3D result camera controls")).toContainText("Yaw");
+    // The camera is normally moved by dragging in the 3D pane, and the reset
+    // button stays in the panel. The numeric sliders are the precise/keyboard
+    // fallback and now sit behind a "Camera angles" group, so reaching them is
+    // one click. Everything they drive is asserted unchanged below.
+    await page.getByRole("button", { name: "Camera angles" }).click();
     await page.getByLabel("Result camera yaw").fill("50");
     await page.getByLabel("Result camera pitch").fill("32");
     await page.getByLabel("Result camera zoom").fill("1.4");

@@ -14,6 +14,10 @@ import {
   GitBranchPlus,
   Layers3,
   Move,
+  PanelBottomClose,
+  PanelBottomOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pause,
   Play,
   Plus,
@@ -28,7 +32,7 @@ import {
   Upload,
   Waves
 } from "lucide-react";
-import { SimulationCanvas } from "./components/SimulationCanvas";
+import { SimulationCanvas, cinemaCameraForPlane, cinemaViewPlaneOf } from "./components/SimulationCanvas";
 import { DualViewWorkspace } from "./components/DualViewWorkspace";
 import { GuidedFirstCase } from "./components/GuidedFirstCase";
 import { presets } from "./data/presets";
@@ -1208,6 +1212,66 @@ function InspectorSection({
   );
 }
 
+/**
+ * Progressive disclosure for a group of secondary controls.
+ *
+ * The rules it encodes, so no caller has to re-derive them:
+ *
+ * - The body stays in the DOM and is hidden with the `hidden` attribute rather
+ *   than unmounted. State inside a closed group survives, and the group can be
+ *   opened without rebuilding anything.
+ * - `alert` opens the group the moment the condition becomes true, whatever the
+ *   user last chose. Anything a user must act on — a blocker, a warning, a
+ *   failed run — is never the thing that stays folded away. The user can still
+ *   close it again afterwards, because a signal they have read and understood
+ *   is not one the interface should keep shouting.
+ * - The header always says how much is behind it (`summary`), so a closed group
+ *   advertises what it holds instead of hiding that it exists at all.
+ */
+function DisclosureBlock({
+  id,
+  title,
+  summary,
+  defaultOpen = false,
+  alert = false,
+  children
+}: {
+  id: string;
+  title: string;
+  summary?: string;
+  defaultOpen?: boolean;
+  alert?: boolean;
+  children: ReactNode;
+}) {
+  const [openOverride, setOpenOverride] = useState<boolean | null>(null);
+  const previousAlertRef = useRef(alert);
+  useEffect(() => {
+    if (alert && !previousAlertRef.current) setOpenOverride(null);
+    previousAlertRef.current = alert;
+  }, [alert]);
+  const open = openOverride ?? (alert || defaultOpen);
+  return (
+    <section className={`disclosure ${open ? "open" : "closed"}${alert ? " alert" : ""}`} data-disclosure={id}>
+      <button
+        type="button"
+        className="disclosure-header"
+        aria-expanded={open}
+        aria-controls={`disclosure-${id}`}
+        onClick={() => setOpenOverride(!open)}
+      >
+        <span>
+          <ChevronDown size={14} className={open ? "open" : ""} />
+          {title}
+        </span>
+        {summary ? <small>{summary}</small> : null}
+      </button>
+      <div className="disclosure-body" id={`disclosure-${id}`} hidden={!open}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const {
     project,
@@ -1345,6 +1409,23 @@ export default function App() {
       ? activeSnapshot?.dataset ?? null
       : null;
   const illustrativeAnimationActive = project.visualization.mode === "simulate" && illustrativeEstimateAnimation;
+  // Which side sections a stage actually has, derived from the same conditions
+  // the sections themselves use. 02 Estimate has none, and used to show a panel
+  // the width of the component palette with nothing at all inside it.
+  const stageSidePanels = useMemo(() => {
+    const mode = project.visualization.mode;
+    return [
+      mode === "design" ? "Components" : null,
+      mode === "design" ? "Project and layers" : null,
+      mode === "analyze" ? "Reference cases" : null,
+      mode === "sweep" || mode === "analyze" ? "Run status" : null
+    ].filter((entry): entry is string => entry !== null);
+  }, [project.visualization.mode]);
+  const stageHasSidePanels = stageSidePanels.length > 0;
+  const sidePanelsHidden = panelsCollapsed || !stageHasSidePanels;
+  const reviewedSurfaceCount = project.solver.reviewedGeometry
+    ? surfacesForGeometry(project.solver.reviewedGeometry).length
+    : 0;
   const visualProject = useMemo(
     () => ({
       ...project,
@@ -2464,7 +2545,7 @@ export default function App() {
   }
 
   return (
-    <main className={`app-shell workspace-shell ${inspectorOpen ? "inspector-overlay-open" : ""}${panelsCollapsed ? " panels-collapsed" : ""}${dockCollapsed ? " dock-collapsed" : ""}`} data-stage={project.visualization.mode}>
+    <main className={`app-shell workspace-shell ${inspectorOpen ? "inspector-overlay-open" : ""}${sidePanelsHidden ? " panels-collapsed" : ""}${dockCollapsed ? " dock-collapsed" : ""}`} data-stage={project.visualization.mode}>
       <header className="top-hud">
         <div className="toolbar-left">
           <div className="brand-lockup">
@@ -2561,14 +2642,28 @@ export default function App() {
               </button>
             );
           })}
+          {/*
+            This was a 10px button reading "Hide" with no icon and no border,
+            below four large stage buttons — it worked, but it did not read as a
+            control at all. It now carries the panel icon, names the panels it
+            acts on, and says so in words in both states.
+          */}
           <button
             type="button"
             className="panel-collapse-toggle"
-            aria-pressed={panelsCollapsed}
-            title={panelsCollapsed ? "Show the side panels" : "Hide the side panels"}
+            aria-pressed={!sidePanelsHidden}
+            disabled={!stageHasSidePanels}
+            title={
+              !stageHasSidePanels
+                ? `${workflowStages.find((stage) => stage.id === project.visualization.mode)?.label ?? "This step"} has no side panels.`
+                : panelsCollapsed
+                  ? `Show the side panels: ${stageSidePanels.join(", ")}`
+                  : "Hide the side panels and give the width to the views"
+            }
             onClick={() => setPanelsCollapsed((value) => !value)}
           >
-            {panelsCollapsed ? "Panels" : "Hide"}
+            {sidePanelsHidden ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+            <span>{sidePanelsHidden ? "Show panels" : "Hide panels"}</span>
           </button>
         </nav>
 
@@ -2789,6 +2884,92 @@ export default function App() {
               {previewAuthority.label}
               {project.visualization.mode === "analyze" && authoritySnapshot ? ` · ${activeResultLink.message}` : ""}
             </span>
+            {/*
+              Every stage now states its own job and carries its own primary
+              control in the same place, so "what do I do here" is answered by
+              the stage rather than by hunting the Inspector, the left panels
+              and the dock for the one button that moves the work forward. The
+              CFD bar below already worked this way; the other three did not
+              exist, which is why their controls were scattered.
+            */}
+            {project.visualization.mode === "design" ? (
+              <section className="stage-action-bar" aria-label="Define stage actions">
+                <div className="stage-action-copy">
+                  <strong>Draw the system</strong>
+                  <small>
+                    {Object.keys(project.edges).length === 0
+                      ? "Nothing drawn yet. Add a part from the palette on the left, then drag between ports to connect it."
+                      : `${Object.keys(project.nodes).length} node${Object.keys(project.nodes).length === 1 ? "" : "s"} · ${Object.keys(project.edges).length} pipe${Object.keys(project.edges).length === 1 ? "" : "s"}. Select one on the sheet to edit it in the Inspector.`}
+                  </small>
+                </div>
+                <div className="stage-action-controls">
+                  <button
+                    type="button"
+                    className="primary-action"
+                    onClick={() => {
+                      runInstant();
+                      setMode("simulate");
+                    }}
+                  >
+                    <CircleGauge size={16} />
+                    Estimate this system
+                  </button>
+                </div>
+              </section>
+            ) : null}
+            {project.visualization.mode === "simulate" ? (
+              <section className="stage-action-bar" aria-label="Estimate stage actions">
+                <div className="stage-action-copy">
+                  <strong>Instant 1D estimate</strong>
+                  <small>
+                    {`${formatNumber(totals.flow, 4)} m3/s · ${formatNumber(totals.pressureDrop / 1000)} kPa loss · Re ${formatNumber(totals.maxRe)}`}
+                  </small>
+                </div>
+                <div className="stage-action-controls">
+                  <button className="primary-action" onClick={runInstant}>
+                    <CircleGauge size={16} />
+                    Recompute estimate
+                  </button>
+                  {/*
+                    This toggle used to sit in the Inspector, two panels away
+                    from the two canvases it animates, which is a large part of
+                    why it read as doing nothing at all. It belongs beside the
+                    views it changes.
+                  */}
+                  <button
+                    type="button"
+                    className="stage-action-secondary illustrative-estimate-toggle"
+                    aria-pressed={illustrativeEstimateAnimation}
+                    title="Decorative motion along the pipes. It shows the direction of the browser-side estimate, and is not CFD."
+                    onClick={() => setIllustrativeEstimateAnimation((value) => !value)}
+                  >
+                    {illustrativeEstimateAnimation ? <Pause size={16} /> : <Play size={16} />}
+                    Illustrative estimate animation—not CFD
+                  </button>
+                  <button type="button" className="stage-action-secondary" onClick={() => setMode("sweep")}>
+                    Set up a CFD run
+                  </button>
+                </div>
+              </section>
+            ) : null}
+            {project.visualization.mode === "analyze" ? (
+              <section className="stage-action-bar" aria-label="Inspect stage actions">
+                <div className="stage-action-copy">
+                  <strong>Inspect results</strong>
+                  <small>
+                    {loadedResult
+                      ? `${activeSnapshot?.label ?? loadedResult.sourceName ?? "unnamed result"} · ${activeResultLink.message}`
+                      : "Nothing loaded. Import a VTK/VTU file, or open a completed run from Run status."}
+                  </small>
+                </div>
+                <div className="stage-action-controls">
+                  <button className="primary-action" onClick={() => resultFileRef.current?.click()}>
+                    <Upload size={16} />
+                    Import VTK/VTU
+                  </button>
+                </div>
+              </section>
+            ) : null}
             {project.visualization.mode === "sweep" ? (
               <section className="stage-action-bar" aria-label="CFD stage actions">
                 <div className="stage-action-copy">
@@ -2890,18 +3071,52 @@ export default function App() {
           <>
             <header className="workspace-view-header">
               <div><span>02</span><strong>{previewAuthority.label}</strong></div>
-              <small>{previewAuthority.description}</small>
+              {/* Truncates to one line in a narrow pane, so the whole sentence
+                  stays available on hover. */}
+              <small title={previewAuthority.description}>{previewAuthority.description}</small>
               <div className="workspace-view-tools" aria-label="3D view controls">
                 <button type="button" aria-label="Reset 3D camera" title="Reset 3D camera" onClick={() => setCinemaCamera(defaultCinemaCamera)}><RotateCcw size={13} /></button>
-                <button type="button" onClick={() => setCinemaCamera({ yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } })}>Iso</button>
-                <button type="button" onClick={() => setCinemaCamera({ yaw: 0, pitch: 76, zoom: 1.05, pan: { x: 0, y: 0 } })}>Top</button>
+                {/*
+                  Was Iso and Top only, so the plan view was the sole named
+                  plane and the two elevations could be reached only by
+                  dragging. Each button now turns the camera the user already
+                  has onto a named plane, keeping their zoom and pan, and shows
+                  which plane they are on.
+                */}
+                <div className="view-plane-group" role="group" aria-label="View plane">
+                  {([
+                    ["iso", "Iso", "Isometric view"],
+                    ["xy", "XY", "Plan view, looking down the Z axis"],
+                    ["xz", "XZ", "Front elevation, looking along the Y axis"],
+                    ["yz", "YZ", "Side elevation, looking along the X axis"]
+                  ] as const).map(([plane, label, description]) => (
+                    <button
+                      key={plane}
+                      type="button"
+                      title={description}
+                      aria-pressed={cinemaViewPlaneOf(cinemaCamera) === plane}
+                      className={cinemaViewPlaneOf(cinemaCamera) === plane ? "active" : ""}
+                      onClick={() => setCinemaCamera(cinemaCameraForPlane(plane, cinemaCamera))}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {/*
+                  Not a third camera orientation: it swaps the WebGL renderer
+                  for the flat canvas, for export and for machines or users that
+                  need it. Sitting inside the orientation cluster it read as one
+                  more view angle, so it stands on its own with a name.
+                */}
                 <button
                   type="button"
-                  aria-label="Use 2D projection fallback"
+                  className="simplified-view-toggle"
+                  aria-label="Simplified view"
                   aria-pressed={use2dProjection}
+                  title={use2dProjection ? "Back to the 3-D view" : "Draw a flat, simplified view instead of 3-D graphics"}
                   onClick={() => setUse2dProjection((value) => !value)}
                 >
-                  2D
+                  Simplified
                 </button>
               </div>
             </header>
@@ -2950,9 +3165,21 @@ export default function App() {
                 ariaLabel={`FlowLab ${previewAuthority.label}`}
                 statusId="cinema-canvas-status"
               />
+              {/*
+                Was "2D projection fallback — WebGL/accessibility/export": three
+                engineering reasons for the fallback, none of which tells a user
+                what they are looking at. The fallback itself is untouched —
+                `browserSupportsWebGL` still routes to the flat canvas on a
+                machine without WebGL — and the notice still fires in both
+                cases, but it now says which of the two happened, because "I
+                turned this on" and "this machine cannot do 3-D" call for
+                different responses.
+              */}
               {use2dProjection || cinemaRenderBackend === "2d" ? (
                 <div className="render-fallback-label" role="status">
-                  2D projection fallback — WebGL/accessibility/export
+                  {cinemaRenderBackend === "2d" && !use2dProjection
+                    ? "Simplified view — 3-D graphics are unavailable on this machine"
+                    : "Simplified view — 3-D graphics turned off"}
                 </div>
               ) : null}
               {previewAuthority.kind === "inspect-empty" ? (
@@ -2961,9 +3188,24 @@ export default function App() {
                   <span>Import VTK/VTU or open a completed local job.</span>
                 </div>
               ) : null}
+              {/*
+                This used to read "Legacy planar/source-strip preview retained
+                for regression only; it is not a UI authority." — a note written
+                for developers about which preview generator still exists in the
+                source tree. The signal it carries is load-bearing: with a case
+                generated but no 3D mesh to show, this pane is still the stylized
+                concept drawing, and a user must not read it as the mesh their
+                case will actually solve on. So the signal stays and the wording
+                becomes the fact a user needs, plus the setting that changes it.
+              */}
               {project.visualization.mode === "sweep" && caseRecord && previewAuthority.kind === "concept" ? (
                 <div className="legacy-preview-notice" role="status">
-                  Legacy planar/source-strip preview retained for regression only; it is not a UI authority.
+                  <strong>Not this case&rsquo;s mesh</strong>
+                  <span>
+                    {(!project.solver.meshMode || project.solver.meshMode === "planar-2d")
+                      ? "The case is meshed in planar 2D, which has no 3D preview, so this stays the concept drawing. Pick a 3D mesh mode in Solver settings to preview the real mesh."
+                      : "The generated case has not produced a mesh file to preview yet, so this stays the concept drawing."}
+                  </span>
                 </div>
               ) : null}
               <p id="cinema-canvas-status" className="sr-only" aria-live="polite">
@@ -3025,18 +3267,10 @@ export default function App() {
         {project.visualization.mode === "simulate" ? (
           <section className="inspector-section stage-inspector">
             <h2>Instant estimate</h2>
-            <p>Run the browser-side 1D model before deciding whether an experimental CFD case is needed.</p>
-            <button className="primary-action" onClick={runInstant}><CircleGauge size={16} />Recompute estimate</button>
-            <button
-              type="button"
-              className="secondary-action illustrative-estimate-toggle"
-              aria-pressed={illustrativeEstimateAnimation}
-              onClick={() => setIllustrativeEstimateAnimation((value) => !value)}
-            >
-              {illustrativeEstimateAnimation ? <Pause size={16} /> : <Play size={16} />}
-              Illustrative estimate animation—not CFD
-            </button>
-            <small className="preview-boundary-copy">Off by default. This decorative motion only reflects the browser-side instant estimate.</small>
+            {/* Recompute and the illustrative-motion toggle moved to the stage
+                action bar above the two canvases. What is left here is the
+                reading, which is what an inspector is for. */}
+            <p>A browser-side 1D model of the network as drawn. It costs nothing to rerun, and it is not CFD.</p>
             <dl className="readouts compact-readouts">
               <div><dt>Total flow</dt><dd>{formatNumber(totals.flow, 4)} m3/s</dd></div>
               <div><dt>Pressure loss</dt><dd>{formatNumber(totals.pressureDrop / 1000)} kPa</dd></div>
@@ -3047,8 +3281,9 @@ export default function App() {
         {project.visualization.mode === "analyze" ? (
           <section className="inspector-section stage-inspector">
             <h2>Inspect results</h2>
+            {/* Import moved to the stage action bar, beside the views it fills.
+                The file input stays here because it is never shown. */}
             <p>{loadedResult ? `Result loaded: ${activeSnapshot?.label ?? loadedResult.sourceName ?? "unnamed result"}.` : "Load a local VTK/VTU result or select a completed local run."}</p>
-            <button className="primary-action" onClick={() => resultFileRef.current?.click()}><Upload size={16} />Import VTK/VTU</button>
             <input
               ref={resultFileRef}
               aria-label="Result import file"
@@ -3196,32 +3431,60 @@ export default function App() {
               onSolverChange={updateSolverSettings}
               onMeshControlsChange={updateSolverMeshControls}
             />
-            <ReviewedGeometryPanel
-              reviewedGeometry={project.solver.reviewedGeometry}
-              onReviewedGeometryChange={(reviewedGeometry) => updateSolverSettings({ reviewedGeometry })}
-            />
-            <div className="solver-list">
-              {solvers.map((solver) => (
-                <div key={solver.id} className={solver.installed ? "solver-row installed" : "solver-row blocked"}>
-                  <span>{solver.label}</span>
-                  <small>{solver.installed ? solver.execution : "missing"}</small>
-                </div>
-              ))}
-            </div>
+            {/*
+              Both blockers stay outside every group: a run that cannot start
+              must say so where the settings are, not behind a title the user
+              has to think to open.
+            */}
             {blockingWarnings.length > 0 ? (
               <small className="job-error">
                 Fix {blockingWarnings.length} blocking network issue{blockingWarnings.length === 1 ? "" : "s"} before queueing a solver case.
               </small>
             ) : null}
-            <small className="backend-state">
-              Solver service: {backendOnline ? "online" : "offline"} · advanced jobs need Docker or native solvers
-            </small>
-            <RuntimeReadiness statuses={runtimeStatuses} activeSolver={project.solver.tier} backendOnline={backendOnline} />
             {activeRuntime && !activeRuntime.runnable ? (
               <small className="job-error">
                 {solverLabels[project.solver.tier]} cannot run locally yet: {activeRuntime.blockers[0] ?? "runtime dependency missing"}
               </small>
             ) : null}
+            {/*
+              Your own geometry is the optional path: the generated starter
+              needs none of it. It opens itself as soon as a surface exists.
+            */}
+            <DisclosureBlock
+              id="reviewed-geometry"
+              title="Your own geometry (STL)"
+              summary={reviewedSurfaceCount > 0 ? `${reviewedSurfaceCount} surface${reviewedSurfaceCount === 1 ? "" : "s"}` : "generated starter"}
+              defaultOpen={reviewedSurfaceCount > 0}
+            >
+              <ReviewedGeometryPanel
+                reviewedGeometry={project.solver.reviewedGeometry}
+                onReviewedGeometryChange={(reviewedGeometry) => updateSolverSettings({ reviewedGeometry })}
+              />
+            </DisclosureBlock>
+            {/*
+              A dependency read-out, not a setting. It opens itself whenever the
+              service is down or the chosen solver cannot run, which is the only
+              time it is the thing to look at.
+            */}
+            <DisclosureBlock
+              id="solver-runtime"
+              title="Solver service and installed solvers"
+              summary={backendOnline ? (activeRuntime?.runnable === false ? "not runnable" : "online") : "offline"}
+              alert={!backendOnline || activeRuntime?.runnable === false}
+            >
+              <small className="backend-state">
+                Solver service: {backendOnline ? "online" : "offline"} · advanced jobs need Docker or native solvers
+              </small>
+              <RuntimeReadiness statuses={runtimeStatuses} activeSolver={project.solver.tier} backendOnline={backendOnline} />
+              <div className="solver-list">
+                {solvers.map((solver) => (
+                  <div key={solver.id} className={solver.installed ? "solver-row installed" : "solver-row blocked"}>
+                    <span>{solver.label}</span>
+                    <small>{solver.installed ? solver.execution : "missing"}</small>
+                  </div>
+                ))}
+              </div>
+            </DisclosureBlock>
             <div className="result-state" aria-live="polite"><strong>Experimental case output</strong><span>{jobRecord ? `${jobRecord.status} · inspect loaded fields in Inspect` : "No local case is selected"}</span></div>
             {caseRecord ? (
               <CaseSummary
@@ -3269,15 +3532,6 @@ export default function App() {
       </aside>
 
       <footer className="bottom-dock">
-        <button
-          type="button"
-          className="dock-collapse-toggle"
-          aria-pressed={dockCollapsed}
-          title={dockCollapsed ? "Show the bottom panel" : "Hide the bottom panel"}
-          onClick={() => setDockCollapsed((value) => !value)}
-        >
-          {dockCollapsed ? "Show" : "Hide"}
-        </button>
         <nav className="dock-tabs" aria-label="Workspace panels">
           {dockPanelOptions.filter((panel) => dockPanelsByMode[project.visualization.mode].includes(panel.id)).map((panel) => (
             <button
@@ -3291,6 +3545,23 @@ export default function App() {
               {panel.id === "warnings" && activeWarnings.length > 0 ? <strong>{activeWarnings.length}</strong> : null}
             </button>
           ))}
+          {/*
+            This control used to be absolutely positioned at the bottom-left of
+            the footer. Collapsing the dock shrank the footer until the button
+            landed on top of the Warnings tab and its blocker count — the one
+            tab that must stay readable. It is now the last item of the tab
+            strip it belongs to, in flow, so it can never cover a sibling.
+          */}
+          <button
+            type="button"
+            className="dock-collapse-toggle"
+            aria-pressed={!dockCollapsed}
+            title={dockCollapsed ? "Show the bottom panel" : "Hide the bottom panel and give the height to the views"}
+            onClick={() => setDockCollapsed((value) => !value)}
+          >
+            {dockCollapsed ? <PanelBottomOpen size={14} /> : <PanelBottomClose size={14} />}
+            <span>{dockCollapsed ? "Show panel" : "Hide panel"}</span>
+          </button>
         </nav>
         <section className={`dock-panel field-viewer ${activeDockPanel === "field" ? "active" : ""}`} hidden={activeDockPanel !== "field"}>
           <div className="panel-title">
@@ -3311,47 +3582,63 @@ export default function App() {
                   <RotateCcw size={13} />
                 </button>
               </div>
-              <div className="camera-sliders">
-                <label>
-                  Yaw
-                  <input
-                    aria-label="Result camera yaw"
-                    type="range"
-                    min="-180"
-                    max="180"
-                    step="1"
-                    value={cinemaCamera.yaw}
-                    onChange={(event) => setCinemaCamera((camera) => ({ ...camera, yaw: Number(event.target.value) }))}
-                  />
-                  <strong>{Math.round(cinemaCamera.yaw)} deg</strong>
-                </label>
-                <label>
-                  Pitch
-                  <input
-                    aria-label="Result camera pitch"
-                    type="range"
-                    min="-80"
-                    max="80"
-                    step="1"
-                    value={cinemaCamera.pitch}
-                    onChange={(event) => setCinemaCamera((camera) => ({ ...camera, pitch: Number(event.target.value) }))}
-                  />
-                  <strong>{Math.round(cinemaCamera.pitch)} deg</strong>
-                </label>
-                <label>
-                  Zoom
-                  <input
-                    aria-label="Result camera zoom"
-                    type="range"
-                    min="0.5"
-                    max="2.2"
-                    step="0.05"
-                    value={cinemaCamera.zoom}
-                    onChange={(event) => setCinemaCamera((camera) => ({ ...camera, zoom: Number(event.target.value) }))}
-                  />
-                  <strong>{formatNumber(cinemaCamera.zoom, 2)}x</strong>
-                </label>
-              </div>
+              {/*
+                Dragging in the 3D pane is how a camera is normally moved, and
+                the reset above is the one control that has to be at hand. The
+                numeric sliders are the fallback for a keyboard or a precise
+                angle, so they sit one click away instead of taking three rows
+                at the top of the panel.
+              */}
+              <DisclosureBlock
+                id="result-camera"
+                title="Camera angles"
+                summary="yaw · pitch · zoom"
+              >
+                <div className="camera-sliders">
+                  <label>
+                    Yaw
+                    <input
+                      aria-label="Result camera yaw"
+                      type="range"
+                      min="-180"
+                      max="180"
+                      step="1"
+                      value={cinemaCamera.yaw}
+                      onChange={(event) => setCinemaCamera((camera) => ({ ...camera, yaw: Number(event.target.value) }))}
+                    />
+                    <strong>{Math.round(cinemaCamera.yaw)} deg</strong>
+                  </label>
+                  <label>
+                    Pitch
+                    {/* Widened to the full ±90 the view planes reach: the XY
+                        plane is a pitch of 90, which a slider stopping at 80
+                        could neither show nor return to. */}
+                    <input
+                      aria-label="Result camera pitch"
+                      type="range"
+                      min="-90"
+                      max="90"
+                      step="1"
+                      value={cinemaCamera.pitch}
+                      onChange={(event) => setCinemaCamera((camera) => ({ ...camera, pitch: Number(event.target.value) }))}
+                    />
+                    <strong>{Math.round(cinemaCamera.pitch)} deg</strong>
+                  </label>
+                  <label>
+                    Zoom
+                    <input
+                      aria-label="Result camera zoom"
+                      type="range"
+                      min="0.5"
+                      max="2.2"
+                      step="0.05"
+                      value={cinemaCamera.zoom}
+                      onChange={(event) => setCinemaCamera((camera) => ({ ...camera, zoom: Number(event.target.value) }))}
+                    />
+                    <strong>{formatNumber(cinemaCamera.zoom, 2)}x</strong>
+                  </label>
+                </div>
+              </DisclosureBlock>
             </div>
           ) : null}
           <label>
@@ -3472,6 +3759,17 @@ export default function App() {
                   </button>
                 )}
               </div>
+              {/*
+                Every one of these has a working default, and the two buttons —
+                Derive and Automatic inlet seeds — stay outside the group, so
+                the common path is press Derive and look at the result. The
+                seeding parameters are for the second attempt, not the first.
+              */}
+              <DisclosureBlock
+                id="streamline-seeding"
+                title="Seeding and colour"
+                summary={`plane ${["X", "Y", "Z"][streamlineSeedAxis]} · ${streamlineSeedCount} seeds`}
+              >
               <div className="streamline-grid">
                 <label>
                   Seed plane normal
@@ -3551,6 +3849,7 @@ export default function App() {
                   Passive tracer sprites
                 </label>
               </div>
+              </DisclosureBlock>
               <button
                 type="button"
                 disabled={!streamlineAuthorityAllowed || !inletManifestAvailable || streamlineBusy}
@@ -3682,52 +3981,6 @@ export default function App() {
               </div>
             </div>
           ) : null}
-          {resultFieldCoverage.totalSnapshots > 1 ? (
-            <div className="field-coverage" aria-label="Result field coverage">
-              <div className="field-coverage-header">
-                <strong>Coverage</strong>
-                <span>
-                  {resultFieldCoverage.presentSnapshots}/{resultFieldCoverage.totalSnapshots} snapshots
-                </span>
-              </div>
-              <small>
-                {resultFieldCoverage.missingSnapshots > 0
-                  ? `Missing ${resultFieldCoverage.missingSnapshots}: ${resultFieldCoverage.missingLabels.slice(0, 3).join(", ")}${resultFieldCoverage.missingLabels.length > 3 ? "..." : ""}`
-                  : "All loaded snapshots contain the active field"}
-              </small>
-              <small>
-                {resultFieldCoverage.fields.length > 0
-                  ? `${resultFieldCoverage.fields.join(", ")} · ${resultFieldCoverage.locations.join("/")} · ${resultFieldCoverage.kinds.map(formatFieldValueKind).join("/")} · ${resultFieldCoverage.units.map((unit) => unit.symbol).join("/")}`
-                  : "No matching field loaded across the result timeline"}
-              </small>
-            </div>
-          ) : null}
-          {fieldHistogram.length > 0 && fieldStats ? (
-            <div className="field-histogram" aria-label="Result field histogram">
-              <div className="field-histogram-header">
-                <strong>Distribution</strong>
-                <span>
-                  {formatFieldValueKind(fieldStats.kind)} · {fieldStats.location} · {fieldStats.unit.symbol}
-                </span>
-              </div>
-              <div className="field-histogram-bars">
-                {fieldHistogram.map((bin, index) => {
-                  const height = fieldHistogramMaxCount > 0 ? Math.max(8, (bin.count / fieldHistogramMaxCount) * 100) : 0;
-                  return (
-                    <span
-                      key={`${bin.min}-${bin.max}-${index}`}
-                      style={{ height: `${height}%` }}
-                      title={`${formatNumber(bin.min, 4)} to ${formatNumber(bin.max, 4)}: ${bin.count}`}
-                    />
-                  );
-                })}
-              </div>
-              <div className="field-histogram-scale">
-                <span>{formatNumber(fieldStats.min, 4)} {fieldStats.unit.symbol}</span>
-                <span>{formatNumber(fieldStats.max, 4)} {fieldStats.unit.symbol}</span>
-              </div>
-            </div>
-          ) : null}
           <div className="color-ramp" aria-label="Result color ramp" title={loadedResult ? `${activeColorMap.label} color map` : "Instant overlay color ramp"}>
             <span style={loadedResult ? { background: activeColorMap.gradient } : undefined} />
           </div>
@@ -3738,25 +3991,89 @@ export default function App() {
               <span>{formatNumber(fieldStats.max, 4)} {fieldStats.unit.symbol}</span>
             </div>
           ) : null}
-          {fieldStats ? (
-            <div className="field-stat-grid" aria-label="Field statistics">
-              <div>
-                <span>Mean</span>
-                <strong>{formatNumber(fieldStats.mean, 4)} {fieldStats.unit.symbol}</strong>
-              </div>
-              <div>
-                <span>Std</span>
-                <strong>{formatNumber(fieldStats.stdDev, 4)} {fieldStats.unit.symbol}</strong>
-              </div>
-              <div>
-                <span>P50</span>
-                <strong>{formatNumber(fieldStats.p50, 4)} {fieldStats.unit.symbol}</strong>
-              </div>
-              <div>
-                <span>P95</span>
-                <strong>{formatNumber(fieldStats.p95, 4)} {fieldStats.unit.symbol}</strong>
-              </div>
-            </div>
+          {/*
+            The ramp and the min/max above are the legend for what is on screen,
+            so they stay. Everything below is a second reading of the same field
+            — how it is distributed, and which snapshots carry it. Useful, but
+            not what the panel is for, so it is titled and folded.
+          */}
+          {fieldStats || resultFieldCoverage.totalSnapshots > 1 ? (
+            <DisclosureBlock
+              id="field-statistics"
+              title="Distribution and coverage"
+              summary={
+                fieldStats
+                  ? `mean ${formatNumber(fieldStats.mean, 3)} ${fieldStats.unit.symbol}`
+                  : `${resultFieldCoverage.presentSnapshots}/${resultFieldCoverage.totalSnapshots} snapshots`
+              }
+            >
+              {resultFieldCoverage.totalSnapshots > 1 ? (
+                <div className="field-coverage" aria-label="Result field coverage">
+                  <div className="field-coverage-header">
+                    <strong>Coverage</strong>
+                    <span>
+                      {resultFieldCoverage.presentSnapshots}/{resultFieldCoverage.totalSnapshots} snapshots
+                    </span>
+                  </div>
+                  <small>
+                    {resultFieldCoverage.missingSnapshots > 0
+                      ? `Missing ${resultFieldCoverage.missingSnapshots}: ${resultFieldCoverage.missingLabels.slice(0, 3).join(", ")}${resultFieldCoverage.missingLabels.length > 3 ? "..." : ""}`
+                      : "All loaded snapshots contain the active field"}
+                  </small>
+                  <small>
+                    {resultFieldCoverage.fields.length > 0
+                      ? `${resultFieldCoverage.fields.join(", ")} · ${resultFieldCoverage.locations.join("/")} · ${resultFieldCoverage.kinds.map(formatFieldValueKind).join("/")} · ${resultFieldCoverage.units.map((unit) => unit.symbol).join("/")}`
+                      : "No matching field loaded across the result timeline"}
+                  </small>
+                </div>
+              ) : null}
+              {fieldHistogram.length > 0 && fieldStats ? (
+                <div className="field-histogram" aria-label="Result field histogram">
+                  <div className="field-histogram-header">
+                    <strong>Distribution</strong>
+                    <span>
+                      {formatFieldValueKind(fieldStats.kind)} · {fieldStats.location} · {fieldStats.unit.symbol}
+                    </span>
+                  </div>
+                  <div className="field-histogram-bars">
+                    {fieldHistogram.map((bin, index) => {
+                      const height = fieldHistogramMaxCount > 0 ? Math.max(8, (bin.count / fieldHistogramMaxCount) * 100) : 0;
+                      return (
+                        <span
+                          key={`${bin.min}-${bin.max}-${index}`}
+                          style={{ height: `${height}%` }}
+                          title={`${formatNumber(bin.min, 4)} to ${formatNumber(bin.max, 4)}: ${bin.count}`}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div className="field-histogram-scale">
+                    <span>{formatNumber(fieldStats.min, 4)} {fieldStats.unit.symbol}</span>
+                    <span>{formatNumber(fieldStats.max, 4)} {fieldStats.unit.symbol}</span>
+                  </div>
+                </div>
+              ) : null}
+              {fieldStats ? (
+                <div className="field-stat-grid" aria-label="Field statistics">
+                  <div>
+                    <span>Mean</span>
+                    <strong>{formatNumber(fieldStats.mean, 4)} {fieldStats.unit.symbol}</strong>
+                  </div>
+                  <div>
+                    <span>Std</span>
+                    <strong>{formatNumber(fieldStats.stdDev, 4)} {fieldStats.unit.symbol}</strong>
+                  </div>
+                  <div>
+                    <span>P50</span>
+                    <strong>{formatNumber(fieldStats.p50, 4)} {fieldStats.unit.symbol}</strong>
+                  </div>
+                  <div>
+                    <span>P95</span>
+                    <strong>{formatNumber(fieldStats.p95, 4)} {fieldStats.unit.symbol}</strong>
+                  </div>
+                </div>
+              ) : null}
+            </DisclosureBlock>
           ) : null}
           {activeResultFieldWarning ? (
             <div className="result-field-warning" aria-label="Result field warning" role="status">
@@ -4940,6 +5257,18 @@ function MeshControlsPanel({
           </label>
         </div>
       ) : null}
+      {/*
+        Everything above answers "what shape of mesh, how fine" and every case
+        needs an answer. Everything below tunes that mesh, and every one of the
+        controls already carries a working default — twenty-odd numbers that a
+        first case never touches, which is what made this panel read as an
+        instrument rack rather than a setting. They are one titled click away.
+      */}
+      <DisclosureBlock
+        id="advanced-mesh"
+        title="Advanced mesh tuning"
+        summary="boundary layer · quality · adaptation"
+      >
       <label>
         Transverse cells
         <select
@@ -5189,6 +5518,7 @@ function MeshControlsPanel({
           Export adapted-state placeholder
         </label>
       </div>
+      </DisclosureBlock>
     </section>
   );
 }

@@ -1523,11 +1523,16 @@ dd {
   background: rgba(4, 11, 15, 0.46);
 }
 
+/* Three columns were sized here for a 2D/3D pair that no longer exists, so the
+   single reset control stretched across the whole dock as an unlabelled bar.
+   It now takes its own width. */
 .result-view-mode {
-  display: grid;
-  grid-template-columns: 1fr 1fr 34px;
+  display: flex;
+  flex-wrap: wrap;
   gap: 5px;
 }
+
+.result-view-mode button { min-width: 34px; }
 
 .canvas-render-mode {
   display: grid;
@@ -3088,7 +3093,12 @@ body {
      32px comes out of the schematic pane, which keeps well over its 420px
      minimum at 1440px. */
   grid-template-columns: minmax(218px, 242px) minmax(680px, 1fr) minmax(300px, 336px);
-  grid-template-rows: 56px minmax(0, 1fr) minmax(178px, 212px);
+  /* The header row was a hard 56px. The first-run guidance lives inside the
+     header and is 52px tall, so it overflowed the row and was painted behind
+     the panels below: the one piece of orientation copy in the product was
+     invisible at every desktop width. The row now grows for whatever the
+     header actually contains. */
+  grid-template-rows: minmax(56px, auto) minmax(0, 1fr) minmax(178px, 212px);
   gap: 8px;
   padding: 7px;
   background:
@@ -3718,9 +3728,14 @@ body {
   background: rgba(2, 8, 14, 0.56);
 }
 
+/* Three fixed grid columns clipped the right-hand tool cluster once it held the
+   four view planes as well as reset and the simplified-view switch. The header
+   row is a fixed 46px, so wrapping is not available: instead the title and the
+   description give up their width first and the controls keep theirs, because
+   a truncated sentence is readable and half a button is not. */
 .workspace-view-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -3729,7 +3744,16 @@ body {
   background: rgba(8, 19, 29, 0.58);
 }
 
-.workspace-view-header div {
+.workspace-view-header > div:first-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.workspace-view-header > small { flex: 1 1 0; }
+.workspace-view-header > .workspace-view-tools { margin-left: auto; }
+
+.workspace-view-header > div:first-child {
   display: flex;
   align-items: baseline;
   gap: 7px;
@@ -3741,6 +3765,10 @@ body {
   white-space: nowrap;
 }
 
+/* One line that gives up as much width as the row needs. The two-line clamp it
+   used to have could not shrink past its own longest word, which is what
+   pushed the tool cluster off the end of a 400px pane. The full sentence is
+   still on the element, so hovering it reads the whole thing. */
 .workspace-view-header small {
   min-width: 0;
   overflow: hidden;
@@ -3749,10 +3777,7 @@ body {
   line-height: 1.25;
   text-align: left;
   text-overflow: ellipsis;
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  white-space: nowrap;
 }
 
 .workspace-view-tools {
@@ -3775,6 +3800,36 @@ body {
 .workspace-view-tools button:focus-visible {
   color: #effbff;
   border-color: rgba(72, 170, 255, 0.5);
+}
+
+/* The four named view planes read as one control with one answer, which is what
+   makes the plane the camera is on legible at a glance. */
+.view-plane-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(154, 194, 220, 0.16);
+  border-radius: 6px;
+  background: rgba(3, 11, 18, 0.56);
+}
+
+.view-plane-group button {
+  min-width: 26px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.view-plane-group button.active {
+  color: #effbff;
+  border-color: rgba(72, 170, 255, 0.5);
+  background: rgba(30, 89, 143, 0.5);
+}
+
+/* Not a view angle: it swaps the renderer, so it sits apart from the planes. */
+.simplified-view-toggle[aria-pressed="true"] {
+  color: #ffe0a6;
+  border-color: rgba(243, 180, 73, 0.44);
+  background: rgba(38, 27, 8, 0.86);
 }
 
 .workspace-view-canvas {
@@ -3920,8 +3975,18 @@ body {
 
 .compact-readouts { margin-bottom: 0; }
 
+/* Lives in the Estimate stage action bar now, beside the two canvases it
+   animates, so it sizes to its own label instead of a panel column. */
 .illustrative-estimate-toggle {
-  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.illustrative-estimate-toggle[aria-pressed="true"] {
+  color: #062018;
+  border-color: rgba(98, 243, 189, 0.6);
+  background: linear-gradient(180deg, #9df7d6 0%, #62f3bd 100%);
 }
 
 .preview-boundary-copy {
@@ -3968,7 +4033,16 @@ body {
 }
 
 .legacy-preview-notice {
+  display: grid;
+  gap: 2px;
   bottom: 42px;
+  max-width: min(360px, calc(100% - 20px));
+  font-size: 10px;
+}
+
+.legacy-preview-notice strong {
+  color: #ffd489;
+  font-size: 11px;
 }
 
 .result-empty-authority {
@@ -4516,34 +4590,69 @@ body {
 .workflow-rail button:disabled small { color: var(--muted); }
 
 
-/* ---- Collapsible panels ---------------------------------------------- */
+/* ---- Collapsible panels ----------------------------------------------
+   Both of these existed and both worked, but neither read as a control: a
+   10px word with no border, no icon and no state, one of them floating in the
+   footer's dead space. They are now ordinary buttons that name what they do,
+   carry the matching panel glyph, and sit in the flow of the strip they
+   belong to. */
 .panel-collapse-toggle,
 .dock-collapse-toggle {
-  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
   padding: 0 8px;
-  border: 1px solid var(--line-subtle);
-  border-radius: 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
   color: var(--muted);
-  background: transparent;
+  background: rgba(9, 20, 30, 0.7);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
+  text-align: center;
 }
 
-.panel-collapse-toggle { margin-top: 6px; width: 100%; }
-.dock-collapse-toggle {
-  /* The footer is a two-column grid; without this the button lands in a row of
-     its own under the panel. Top-right collided with the panel's own status
-     badge, so it sits under the tab list, which is empty space. */
-  position: absolute;
-  z-index: 4;
-  left: 12px;
-  bottom: 12px;
+.panel-collapse-toggle svg,
+.dock-collapse-toggle svg { flex: 0 0 auto; }
+
+.dock-collapse-toggle span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The rail is 68px wide, so the label wraps onto a second line rather than
+   being cut to "Hide p…" — the words are the whole point of the change. */
+.panel-collapse-toggle {
+  margin-top: 8px;
+  width: 100%;
+  padding: 5px 4px;
+  line-height: 1.15;
+}
+
+.panel-collapse-toggle span { min-width: 0; }
+
+/* Sits apart from the panel tabs above it, because it switches the whole dock
+   rather than choosing which panel the dock shows. */
+.dock-tabs > .dock-collapse-toggle {
+  margin-top: 8px;
 }
 
 .bottom-dock { position: relative; }
 
-.panel-collapse-toggle:hover,
-.dock-collapse-toggle:hover { color: var(--text); background: var(--panel-raised); }
+.panel-collapse-toggle:hover:not(:disabled),
+.dock-collapse-toggle:hover {
+  color: var(--text);
+  border-color: rgba(72, 170, 255, 0.42);
+  background: var(--panel-raised);
+}
+
+.panel-collapse-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 /* The rail and the dock tabs stay visible, so there is always a way back. */
 .workspace-shell.panels-collapsed { grid-template-columns: 104px minmax(520px, 1fr) minmax(300px, 340px); }
@@ -4644,6 +4753,87 @@ body {
 /* Nothing sits flush against the bottom edge, so a partly scrolled panel reads
    as scrollable rather than as truncated content. */
 .inspector { padding-bottom: 26px; }
+
+/* ---- Progressive disclosure -------------------------------------------
+   Secondary controls sit behind a titled row that says what is inside and how
+   much of it. The body keeps its DOM node and is hidden with the `hidden`
+   attribute, so opening a group never resets a value the user has typed. */
+.disclosure {
+  margin-top: 8px;
+  border: 1px solid rgba(154, 194, 220, 0.14);
+  border-radius: 8px;
+  background: rgba(6, 15, 23, 0.5);
+  overflow: hidden;
+}
+
+.disclosure-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 0;
+  color: #cfe4f2;
+  background: rgba(11, 22, 32, 0.7);
+  font-size: 11px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.disclosure-header:hover {
+  color: #ffffff;
+  background: var(--cyan-soft);
+}
+
+/* The title never wraps or truncates; if the row runs out of room it is the
+   summary that shortens, because the summary is the hint and the title is the
+   thing the user is looking for. */
+.disclosure-header span {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.disclosure-header small {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 600;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disclosure-header svg {
+  flex: 0 0 auto;
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+
+.disclosure-header svg.open { transform: rotate(0deg); }
+
+.disclosure-body {
+  display: grid;
+  gap: 8px;
+  padding: 8px 9px 10px;
+}
+
+/* `display: grid` above beats the user-agent `[hidden] { display: none }`, so a
+   closed group would still paint. This is what actually closes it. */
+.disclosure-body[hidden] { display: none; }
+
+/* A group holding something the user has to act on announces itself, so an
+   opened-then-closed blocker is still visibly there rather than filed away. */
+.disclosure.alert { border-color: rgba(255, 158, 106, 0.44); }
+.disclosure.alert > .disclosure-header { color: #ffd0ad; }
+.disclosure.alert > .disclosure-header small { color: #ff9e6a; }
 
 /* ---- Run progress and solve outcome ----------------------------------- */
 /* A CFD run takes minutes to hours. These report only measured state: no
