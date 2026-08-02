@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { DecodedDerivedVisualization } from "../results/derived";
-import { fieldValuesForOverlay, fieldValuesForSelection, type ResultFieldSelection, type ResultVectorComponent } from "../results/vtk";
+import { datasetBounds, fieldValuesForOverlay, fieldValuesForSelection, type ResultFieldSelection, type ResultVectorComponent } from "../results/vtk";
+import { maxAbsoluteOf } from "../numeric";
 import type {
   FluidNode,
   FluidProject,
@@ -479,27 +480,6 @@ function createPipeMesh(start: THREE.Vector3, end: THREE.Vector3, radius: number
   return mesh;
 }
 
-export function datasetBounds(dataset: VtkResultDataset) {
-  // Spreading a per-point array into Math.min throws RangeError once the array
-  // passes the engine's argument limit, around 100k points. That is precisely
-  // the size of result this view exists to show, so this walks the points.
-  const min: [number, number, number] = [Infinity, Infinity, Infinity];
-  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
-  for (const point of dataset.points) {
-    for (let axis = 0; axis < 3; axis += 1) {
-      const value = point[axis];
-      if (value < min[axis]) min[axis] = value;
-      if (value > max[axis]) max[axis] = value;
-    }
-  }
-  return {
-    min,
-    max,
-    center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2] as [number, number, number],
-    span: Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-9)
-  };
-}
-
 /* --- Saying what the domain is ------------------------------------------------
  *
  * The caption is measured off the dataset, never off `project.solver.meshMode`.
@@ -707,12 +687,7 @@ function addResultSurfaceMesh(
   const fieldValues = resultFieldSelection ? fieldValuesForSelection(dataset, resultFieldSelection, resultVectorComponent) : fieldValuesForOverlay(dataset, overlay);
   if (!fieldValues || dataset.cells.length === 0 || dataset.points.length === 0) return null;
   const bounds = datasetBounds(dataset);
-  // Same argument-limit hazard as datasetBounds: one value per point.
-  let maxValue = 1e-9;
-  for (const value of fieldValues.values) {
-    const magnitude = Math.abs(value);
-    if (magnitude > maxValue) maxValue = magnitude;
-  }
+  const maxValue = maxAbsoluteOf(fieldValues.values, 1e-9);
   const positions: number[] = [];
   const colors: number[] = [];
   const meshScale = worldSpan / bounds.span;

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { ResultColorMap } from "../types";
+import { maximumOf, minimumOf } from "../numeric";
 import { STREAMLINE_LIMITS, type StreamlineDisplayOptions, type StreamlineLine, type StreamlineResult } from "./types";
 
 type ResultBounds = {
@@ -22,8 +23,10 @@ export type PassiveSprite = {
 export function streamlineFieldExtent(result: StreamlineResult, field: StreamlineDisplayOptions["colorField"]) {
   const values = result.lines.flatMap((line) => line.vertices.map((vertex) => vertex.fields[field])).filter(Number.isFinite);
   return {
-    min: values.length > 0 ? Math.min(...values) : 0,
-    max: values.length > 0 ? Math.max(...values) : 1
+    // Capped at maxTotalVertices (65_536), which is inside the band where a
+    // spread overflows on tighter stacks even though Node clears it.
+    min: values.length > 0 ? minimumOf(values) : 0,
+    max: values.length > 0 ? maximumOf(values) : 1
   };
 }
 

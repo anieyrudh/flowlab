@@ -1,6 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent, type PointerEvent, type WheelEvent } from "react";
 import type { DecodedDerivedVisualization } from "../results/derived";
 import {
+  datasetBounds,
   fieldValuesForOverlay,
   fieldValuesForSelection,
   formatFieldValueKind,
@@ -8,6 +9,7 @@ import {
   type ResultFieldSelection,
   type ResultVectorComponent
 } from "../results/vtk";
+import { maxAbsoluteOf, maximumOf, minimumOf } from "../numeric";
 import type {
   EdgeResult,
   CanvasRenderMode,
@@ -464,20 +466,6 @@ function vectorMagnitude(vector: [number, number, number]) {
   return Math.hypot(vector[0], vector[1], vector[2]);
 }
 
-function datasetBounds(dataset: VtkResultDataset) {
-  const xs = dataset.points.map((point) => point[0]);
-  const ys = dataset.points.map((point) => point[1]);
-  const zs = dataset.points.map((point) => point[2]);
-  const min: [number, number, number] = [Math.min(...xs), Math.min(...ys), Math.min(...zs)];
-  const max: [number, number, number] = [Math.max(...xs), Math.max(...ys), Math.max(...zs)];
-  return {
-    min,
-    max,
-    center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2] as [number, number, number],
-    span: Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-9)
-  };
-}
-
 function makeCameraProjection(dataset: VtkResultDataset, camera: ResultCamera, canvasWidth: number, canvasHeight: number) {
   const bounds = datasetBounds(dataset);
   const yaw = degreesToRadians(camera.yaw);
@@ -590,7 +578,7 @@ function drawResultDataset(
   const vectors = fieldValues.location === "cell" ? dataset.cellData.vectors[fieldValues.field] : dataset.pointData.vectors[fieldValues.field];
 
   const values = fieldValues.values;
-  const maxValue = Math.max(...values.map((value) => Math.abs(value)), 1e-9);
+  const maxValue = maxAbsoluteOf(values, 1e-9);
   if (resultViewMode === "3d") {
     const projection = makeCameraProjection(dataset, resultCamera, canvasWidth, canvasHeight);
     const projectedCells = dataset.cells
@@ -606,8 +594,8 @@ function drawResultDataset(
       .sort((left, right) => left.averageDepth - right.averageDepth);
 
     const depths = projectedCells.map((cell) => cell.averageDepth);
-    const minDepth = Math.min(...depths, 0);
-    const maxDepth = Math.max(...depths, 1);
+    const minDepth = minimumOf(depths, 0);
+    const maxDepth = maximumOf(depths, 1);
     const depthRange = Math.max(maxDepth - minDepth, 1e-9);
 
     context.save();

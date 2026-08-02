@@ -1,4 +1,5 @@
 import type { JobArtifactPreview, VtkResultDataset } from "../types";
+import { maximumOf, minimumOf, pointExtent } from "../numeric";
 
 const VTK_POLYGON = 7;
 const supportedCellTypes = new Set([5, VTK_POLYGON, 9, 10, 12, 13, 14]);
@@ -556,8 +557,8 @@ export function fieldHistogramForValues(values: number[], binCount = 12): Result
   const finiteValues = values.filter(Number.isFinite);
   if (finiteValues.length === 0) return [];
   const bins = Math.max(1, Math.min(32, Math.floor(binCount)));
-  const min = Math.min(...finiteValues);
-  const max = Math.max(...finiteValues);
+  const min = minimumOf(finiteValues);
+  const max = maximumOf(finiteValues);
   if (min === max) return [{ min, max, count: finiteValues.length }];
   const width = (max - min) / bins;
   const histogram = Array.from({ length: bins }, (_, index) => ({
@@ -628,8 +629,8 @@ function fieldInventoryGroup(
       location,
       kind,
       tupleCount: tuples.length,
-      min: values.length ? Math.min(...values) : 0,
-      max: values.length ? Math.max(...values) : 0,
+      min: values.length ? minimumOf(values) : 0,
+      max: values.length ? maximumOf(values) : 0,
       overlay: overlayForField(field),
       unit: inferResultFieldUnit(field, kind)
     };
@@ -690,8 +691,8 @@ export function timelineStatsForSnapshots(
       field: fieldValues.field,
       location: fieldValues.location,
       kind: fieldValues.kind,
-      min: Math.min(...fieldValues.values),
-      max: Math.max(...fieldValues.values),
+      min: minimumOf(fieldValues.values),
+      max: maximumOf(fieldValues.values),
       mean: sum / fieldValues.values.length,
       unit: fieldValues.unit
     };
@@ -718,13 +719,30 @@ export function fieldCoverageForSnapshots(
   };
 }
 
+/**
+ * Bounding box of a dataset's points, with the centre and overall extent the
+ * renderers scale by.
+ *
+ * Both the 3D and the 2D canvas renderer used to carry their own byte-identical
+ * copy of this, which is how one spread-overflow bug came to need fixing twice.
+ * It lives here now, next to the dataset it measures.
+ */
+export function datasetBounds(dataset: VtkResultDataset) {
+  const { min, max } = pointExtent(dataset.points);
+  return {
+    min,
+    max,
+    center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2] as [number, number, number],
+    // Floored because callers divide by this: a flat mesh would otherwise
+    // scale the surface by infinity.
+    span: Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-9)
+  };
+}
+
 export function projectDatasetToCanvas(dataset: VtkResultDataset, canvasWidth: number, canvasHeight: number) {
-  const xs = dataset.points.map((point) => point[0]);
-  const ys = dataset.points.map((point) => point[1]);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
+  const { min, max } = pointExtent(dataset.points);
+  const [minX, minY] = min;
+  const [maxX, maxY] = max;
   const rawFitsCanvas = minX >= 0 && minY >= 0 && maxX <= canvasWidth && maxY <= canvasHeight;
   const padding = 120;
   const fitScale = Math.min(
