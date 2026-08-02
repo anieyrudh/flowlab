@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Beaker,
@@ -221,6 +221,7 @@ const CLIENT_ARTIFACT_LOAD_LIMIT = 4_000_000;
 const CLIENT_ARTIFACT_CHUNK_SIZE = 262_144;
 const PREVIEW_SEQUENCE_LIMIT = 24;
 const ACTIVE_JOB_STORAGE_KEY = "flowlab.active-job.v1";
+const FIRST_RUN_STORAGE_KEY = "flowlab.first-run-seen.v1";
 const resultPlaybackRates = [0.5, 1, 2, 4] as const;
 const vectorComponentOptions: { id: ResultVectorComponent; label: string }[] = [
   { id: "magnitude", label: "Magnitude" },
@@ -977,6 +978,14 @@ export default function App() {
   const [cinemaRenderBackend, setCinemaRenderBackend] = useState<"pending" | "webgl" | "2d">("pending");
   const [use2dProjection, setUse2dProjection] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  // Show the four workflow steps once, so a new user is not left to infer them.
+  const [firstRunSeen, setFirstRunSeen] = useState(
+    () => typeof window === "undefined" || window.localStorage.getItem(FIRST_RUN_STORAGE_KEY) === "true"
+  );
+  const dismissFirstRun = useCallback(() => {
+    setFirstRunSeen(true);
+    if (typeof window !== "undefined") window.localStorage.setItem(FIRST_RUN_STORAGE_KEY, "true");
+  }, []);
   const [resultFieldFilter, setResultFieldFilter] = useState("");
   const [probeTarget, setProbeTarget] = useState<ProbeTarget | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
@@ -2131,7 +2140,23 @@ export default function App() {
             />
           </div>
         </div>
+        {firstRunSeen ? null : (
+          <section className="first-run-note" aria-label="How FlowLab works">
+            <div className="first-run-copy">
+              <strong>FlowLab has four steps. Do them in sequence.</strong>
+              <small>
+                <b>01 Define</b> builds the system. <b>02 Estimate</b> gives an
+                immediate 1D result. <b>03 CFD</b> runs a full case, and needs
+                Docker. <b>04 Inspect</b> shows the result fields.
+              </small>
+            </div>
+            <button type="button" className="first-run-dismiss" onClick={dismissFirstRun}>
+              Got it
+            </button>
+          </section>
+        )}
       </header>
+
 
       <aside className="left-sidebar cinema-sidebar">
         <nav className="workflow-rail" aria-label="FlowLab workflow stages">
@@ -2344,6 +2369,7 @@ export default function App() {
         </div>
       </aside>
 
+
       <DualViewWorkspace
         header={
           <>
@@ -2369,6 +2395,47 @@ export default function App() {
               {previewAuthority.label}
               {project.visualization.mode === "analyze" && authoritySnapshot ? ` · ${activeResultLink.message}` : ""}
             </span>
+            {project.visualization.mode === "sweep" ? (
+              <section className="stage-action-bar" aria-label="CFD stage actions">
+                <div className="stage-action-copy">
+                  <strong>Run a CFD case</strong>
+                  <small id="cfd-stage-action-reason" aria-live="polite">
+                    {cfdQueueBlocker
+                      ? cfdQueueBlocker
+                      : `Ready: ${solverLabels[project.solver.tier]} · ${project.solver.meshMode === "planar-2d" || !project.solver.meshMode ? "planar 2D mesh" : project.solver.meshMode} · ${project.solver.runMode === "steady" ? "steady run" : "transient starter run"}`}
+                  </small>
+                </div>
+                <div className="stage-action-controls">
+                  {project.solver.tier === "instant-1d" ? (
+                    <button
+                      type="button"
+                      className="stage-action-fix"
+                      onClick={() => setSolverTier("openfoam")}
+                    >
+                      Use OpenFOAM
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="primary-action"
+                    onClick={launchAdvancedCase}
+                    disabled={!canQueueCfd}
+                    aria-describedby="cfd-stage-action-reason"
+                  >
+                    <Box size={16} />
+                    Generate and queue experimental CFD case
+                  </button>
+                  <button
+                    type="button"
+                    className="stage-action-secondary"
+                    aria-expanded={inspectorOpen}
+                    onClick={() => setInspectorOpen(true)}
+                  >
+                    Solver settings
+                  </button>
+                </div>
+              </section>
+            ) : null}
           </>
         }
         schematic={
@@ -2560,7 +2627,7 @@ export default function App() {
             <dl className="readouts compact-readouts">
               <div><dt>Total flow</dt><dd>{formatNumber(totals.flow, 4)} m3/s</dd></div>
               <div><dt>Pressure loss</dt><dd>{formatNumber(totals.pressureDrop / 1000)} kPa</dd></div>
-              <div><dt>Max Reynolds</dt><dd>{formatNumber(totals.maxRe)}</dd></div>
+              <div><dt>Max Reynolds</dt><dd>{formatNumber(totals.maxRe)}{totals.maxRe >= 2300 ? <span className="metric-flag" title="FlowLab's accuracy evidence covers laminar flow only. Above Reynolds 2300 the flow is not laminar."> outside laminar evidence</span> : null}</dd></div>
             </dl>
           </section>
         ) : null}
@@ -2723,16 +2790,11 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <button className="primary-action" onClick={launchAdvancedCase} disabled={!canQueueCfd}>
-              <Box size={16} />
-              Generate and queue experimental CFD case
-            </button>
             {blockingWarnings.length > 0 ? (
               <small className="job-error">
                 Fix {blockingWarnings.length} blocking network issue{blockingWarnings.length === 1 ? "" : "s"} before queueing a solver case.
               </small>
             ) : null}
-            {cfdQueueBlocker ? <small className="job-error">{cfdQueueBlocker}</small> : null}
             <small className="backend-state">
               Solver service: {backendOnline ? "online" : "offline"} · advanced jobs need Docker or native solvers
             </small>
@@ -3315,7 +3377,14 @@ export default function App() {
             </div>
             <div>
               <dt>Max Reynolds</dt>
-              <dd>{formatNumber(totals.maxRe)}</dd>
+              <dd>
+                {formatNumber(totals.maxRe)}
+                {totals.maxRe >= 2300 ? (
+                  <span className="metric-flag" title="FlowLab's accuracy evidence covers laminar flow only. Above Reynolds 2300 the flow is not laminar.">
+                    {" "}outside laminar evidence
+                  </span>
+                ) : null}
+              </dd>
             </div>
             <div>
               <dt>Cavitation</dt>
