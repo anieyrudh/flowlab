@@ -1,6 +1,16 @@
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
 export const DUAL_VIEW_WORKSPACE_STORAGE_KEY = "flowlab.workspace.dual-view.v1";
+export const WORKSPACE_VIEW_MODE_STORAGE_KEY = "flowlab.workspace.view-mode.v1";
+
+/** The 3D pane is not useful to every user at every stage, so it can be turned off. */
+export type WorkspaceViewMode = "schematic" | "split" | "cinema";
+const VIEW_MODES: WorkspaceViewMode[] = ["schematic", "split", "cinema"];
+const DEFAULT_VIEW_MODE: WorkspaceViewMode = "split";
+
+export function readWorkspaceViewMode(raw: string | null): WorkspaceViewMode {
+  return VIEW_MODES.includes(raw as WorkspaceViewMode) ? (raw as WorkspaceViewMode) : DEFAULT_VIEW_MODE;
+}
 const DEFAULT_SPLIT = 50;
 const MIN_SPLIT = 40;
 const MAX_SPLIT = 60;
@@ -35,12 +45,18 @@ type Props = {
 export function DualViewWorkspace({ header, schematic, cinema }: Props) {
   const [split, setSplit] = useState(DEFAULT_SPLIT);
   const [ready, setReady] = useState(false);
-  const [narrowView, setNarrowView] = useState<"schematic" | "cinema">("schematic");
+  const [viewMode, setViewMode] = useState<WorkspaceViewMode>(DEFAULT_VIEW_MODE);
 
   useEffect(() => {
     setSplit(readWorkspaceSplit(window.localStorage.getItem(DUAL_VIEW_WORKSPACE_STORAGE_KEY)));
+    setViewMode(readWorkspaceViewMode(window.localStorage.getItem(WORKSPACE_VIEW_MODE_STORAGE_KEY)));
     setReady(true);
   }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    window.localStorage.setItem(WORKSPACE_VIEW_MODE_STORAGE_KEY, viewMode);
+  }, [ready, viewMode]);
 
   useEffect(() => {
     if (!ready) return;
@@ -64,18 +80,25 @@ export function DualViewWorkspace({ header, schematic, cinema }: Props) {
     <section
       className="canvas-region dual-view-workspace"
       data-testid="dual-view-workspace"
-      data-narrow-view={narrowView}
+      data-view-mode={viewMode}
       style={{ "--schematic-ratio": `${split}%` } as CSSProperties}
     >
-      <header className="dual-workspace-header">{header}</header>
-      <div className="narrow-view-switcher" aria-label="Workspace view">
-        <button type="button" className={narrowView === "schematic" ? "active" : ""} aria-pressed={narrowView === "schematic"} onClick={() => setNarrowView("schematic")}>
-          Schematic
-        </button>
-        <button type="button" className={narrowView === "cinema" ? "active" : ""} aria-pressed={narrowView === "cinema"} onClick={() => setNarrowView("cinema")}>
-          3D view
-        </button>
-      </div>
+      <header className="dual-workspace-header">
+        {header}
+        <div className="workspace-view-switcher" role="group" aria-label="Workspace view">
+          {VIEW_MODES.map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={viewMode === mode ? "active" : ""}
+              aria-pressed={viewMode === mode}
+              onClick={() => setViewMode(mode)}
+            >
+              {mode === "schematic" ? "Schematic" : mode === "split" ? "Split" : "3D view"}
+            </button>
+          ))}
+        </div>
+      </header>
       <div className="dual-view-panes">
         <section className="workspace-view schematic-view" data-testid="schematic-pane" aria-label="Linked schematic view">
           {schematic}

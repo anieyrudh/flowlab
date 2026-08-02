@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DUAL_VIEW_WORKSPACE_STORAGE_KEY,
   DualViewWorkspace,
-  readWorkspaceSplit
+  WORKSPACE_VIEW_MODE_STORAGE_KEY,
+  readWorkspaceSplit,
+  readWorkspaceViewMode
 } from "./DualViewWorkspace";
 
 beforeEach(() => {
@@ -84,5 +86,34 @@ describe("DualViewWorkspace", () => {
     expect(readWorkspaceSplit(JSON.stringify({ version: 2, schematicRatio: 45 }))).toBe(50);
     expect(readWorkspaceSplit(JSON.stringify({ version: 1, schematicRatio: 39.6 }))).toBe(40);
     expect(readWorkspaceSplit(JSON.stringify({ version: 1, schematicRatio: 59.6 }))).toBe(60);
+  });
+
+  it("falls back to split for an unknown or absent view mode", () => {
+    expect(readWorkspaceViewMode(null)).toBe("split");
+    expect(readWorkspaceViewMode("")).toBe("split");
+    expect(readWorkspaceViewMode("cinema-view")).toBe("split");
+    expect(readWorkspaceViewMode("schematic")).toBe("schematic");
+    expect(readWorkspaceViewMode("cinema")).toBe("cinema");
+  });
+
+  it("hides a pane on demand and remembers the choice", async () => {
+    renderWorkspace();
+    const workspace = screen.getByTestId("dual-view-workspace");
+    expect(workspace).toHaveAttribute("data-view-mode", "split");
+
+    expect(screen.getByRole("group", { name: "Workspace view" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Schematic" }));
+    expect(workspace).toHaveAttribute("data-view-mode", "schematic");
+    expect(screen.queryByTestId("workspace-divider")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem(WORKSPACE_VIEW_MODE_STORAGE_KEY)).toBe("schematic");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "3D view" }));
+    expect(workspace).toHaveAttribute("data-view-mode", "cinema");
+    await waitFor(() => {
+      expect(window.localStorage.getItem(WORKSPACE_VIEW_MODE_STORAGE_KEY)).toBe("cinema");
+    });
   });
 });

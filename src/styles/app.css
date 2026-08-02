@@ -3702,7 +3702,7 @@ body {
 .dual-workspace-header {
   z-index: 3;
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(150px, auto) minmax(180px, 1fr);
+  grid-template-columns: minmax(150px, 1fr) minmax(150px, auto) minmax(180px, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -3924,7 +3924,47 @@ body {
 .workspace-divider:hover span,
 .workspace-divider:focus-visible span { background: var(--yellow); }
 
-.narrow-view-switcher { display: none; }
+/* Segmented Schematic / Split / 3D control. Visible at every width: the 3D
+   pane is not useful to every user, and it used to be impossible to hide. */
+.workspace-view-switcher {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  background: rgba(3, 10, 17, 0.6);
+}
+
+.workspace-view-switcher button {
+  min-height: 26px;
+  padding: 0 9px;
+  border-color: transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.workspace-view-switcher button:hover { color: var(--text); }
+
+.workspace-view-switcher button.active {
+  color: #effbff;
+  background: rgba(30, 89, 143, 0.6);
+}
+
+/* Single-pane modes, at every width. */
+.dual-view-workspace[data-view-mode="schematic"] .cinema-view,
+.dual-view-workspace[data-view-mode="cinema"] .schematic-view,
+.dual-view-workspace:not([data-view-mode="split"]) .workspace-divider { display: none; }
+
+.dual-view-workspace:not([data-view-mode="split"]) .dual-view-panes {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* The link state describes the 3D pane, so it is noise when that pane is off. */
+.dual-view-workspace[data-view-mode="schematic"] .workspace-link-state { display: none; }
 
 .inspector-toggle { display: none; }
 
@@ -4099,35 +4139,12 @@ body {
 
   .workspace-view { height: 100%; }
 
-  .dual-view-workspace[data-narrow-view="schematic"] .cinema-view,
-  .dual-view-workspace[data-narrow-view="cinema"] .schematic-view { display: none; }
+  .dual-view-workspace[data-view-mode="split"] .cinema-view { display: none; }
 
-  .narrow-view-switcher {
-    position: absolute;
-    z-index: 6;
-    right: 10px;
-    bottom: 10px;
-    display: inline-flex;
-    gap: 4px;
-    padding: 4px;
-    border: 1px solid rgba(154, 194, 220, 0.18);
-    border-radius: 8px;
-    background: rgba(3, 10, 17, 0.82);
+  .dual-view-workspace[data-view-mode="split"] .dual-view-panes {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .narrow-view-switcher button {
-    min-height: 28px;
-    padding: 0 8px;
-    border-color: transparent;
-    color: var(--muted);
-    background: transparent;
-    font-size: 10px;
-  }
-
-  .narrow-view-switcher button.active {
-    color: #effbff;
-    background: rgba(30, 89, 143, 0.52);
-  }
 }
 
 @media (max-width: 680px) {
