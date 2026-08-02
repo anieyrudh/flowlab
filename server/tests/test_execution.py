@@ -6048,3 +6048,52 @@ def test_job_cancellation_terminates_running_process(tmp_path: Path, monkeypatch
     assert cancelled.status == "cancelled"
     assert process.terminated is True
     assert any("Cancellation requested" in line for line in cancelled.logs)
+
+
+def test_oversized_converted_result_is_verified_on_disk_not_reported_as_failure(
+    tmp_path: Path,
+) -> None:
+    """Regression: a large successful solve was reported as failed.
+
+    The native time-directory converter dropped any converted result larger than
+    the embedding cap, so `solver_output_quality_error` saw no parseable fields
+    and marked an exit-zero OpenFOAM job failed. A 19,968-cell level hits this,
+    because its converted result is 2.8 MB against a 2 MB cap. The cap bounds the
+    job response; it is not a judgement about whether the solve produced fields.
+    """
+
+    from server.flowlab.execution import solver_output_quality_error
+
+    # Small enough to embed: text present, so it counts as parseable.
+    embedded = {
+        "path": "postProcessing/flowlabNative/time_100.vtk",
+        "size": 1024,
+        "text": "# vtk DataFile Version 3.0\n",
+        "fieldSummary": {"fields": [{"name": "U"}]},
+    }
+    assert solver_output_quality_error("openfoam", [], [embedded]) is None
+
+    # Too large to embed, but verified from disk: still a completed job.
+    verified = {
+        "path": "postProcessing/flowlabNative/time_2000.vtk",
+        "size": 2_848_240,
+        "skipped": "file too large",
+        "fieldSummary": {"fields": [{"name": "U"}, {"name": "p"}]},
+        "verifiedOnDisk": True,
+    }
+    assert solver_output_quality_error("openfoam", [], [verified]) is None
+
+    # Skipped without verification must still fail closed.
+    unverified = {
+        "path": "postProcessing/flowlabNative/time_2000.vtk",
+        "size": 2_848_240,
+        "skipped": "file too large",
+    }
+    assert "no parseable" in (
+        solver_output_quality_error("openfoam", [], [unverified]) or ""
+    )
+
+    # NaN found during disk verification must fail, even without inline text.
+    nan_flagged = dict(verified)
+    nan_flagged["nanDetected"] = True
+    assert "NaN" in (solver_output_quality_error("openfoam", [], [nan_flagged]) or "")

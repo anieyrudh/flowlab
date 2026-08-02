@@ -80,6 +80,10 @@ MAX_RESULT_FILES = 8
 MAX_RESULT_FILE_BYTES = 2_000_000
 MAX_ARTIFACT_CHUNK_BYTES = 262_144
 MAX_RESULT_PREVIEW_FILE_BYTES = 8_000_000
+# Upper bound for reading an oversized result off disk purely to confirm it
+# contains fields and no NaN. Nothing this large is ever embedded in a job
+# response; it is read once, summarized, and released.
+MAX_RESULT_VERIFICATION_FILE_BYTES = 64_000_000
 MAX_RESULT_COLLECTION_FILE_BYTES = 1_000_000
 MAX_RESULT_COLLECTION_DATASETS = 500
 MAX_DIAGNOSTIC_FILES = 12
@@ -824,7 +828,31 @@ def collect_result_files(case_dir: Path) -> list[dict[str, Any]]:
             overflow_bytes += size
             continue
         if size > MAX_RESULT_FILE_BYTES:
-            results.append({"path": relative_path, "size": size, "skipped": "file too large"})
+            entry: dict[str, Any] = {
+                "path": relative_path,
+                "size": size,
+                "skipped": "file too large",
+            }
+            # An oversized result is still real evidence. The size cap exists to
+            # keep the job response small enough to embed, not to judge whether
+            # the solve produced fields, so verify the file from disk without
+            # embedding its text. Without this, an exit-zero solve whose only
+            # result exceeds the cap is reported as failed - which is what a
+            # 19,968-cell level does, since its single result is 2.8 MB against
+            # a 1 MB cap.
+            if size <= MAX_RESULT_VERIFICATION_FILE_BYTES:
+                try:
+                    oversized_text = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    oversized_text = None
+                if oversized_text is not None:
+                    summary = summarize_vtk_result_text(oversized_text)
+                    if isinstance(summary, dict) and summary.get("fields"):
+                        entry["fieldSummary"] = summary
+                        entry["verifiedOnDisk"] = True
+                    if NAN_TOKEN_RE.search(oversized_text):
+                        entry["nanDetected"] = True
+            results.append(entry)
             continue
         try:
             text = path.read_text(encoding="utf-8")
@@ -1085,7 +1113,33 @@ def _collect_openfoam_native_time_results(case_dir: Path, limit: int) -> list[di
         relative_path = f"postProcessing/flowlabNative/{_safe_time_file_stem(time_dir.name)}.vtk"
         size = len(vtk_text.encode("utf-8"))
         if size > MAX_RESULT_FILE_BYTES:
-            converted.append({"path": relative_path, "size": size, "skipped": "file too large"})
+            # The converted result is real evidence, and downstream evaluation
+            # reads it from disk, so still write it and confirm its fields here.
+            # Only the inline text is withheld: the size cap bounds the job
+            # response, it does not judge whether the solve produced fields.
+            # Without this, an exit-zero solve whose converted result exceeds the
+            # cap is reported as failed and the file is never written at all -
+            # which is what a 19,968-cell level does, since its converted result
+            # is 2.8 MB against a 2 MB cap.
+            oversized: dict[str, Any] = {
+                "path": relative_path,
+                "size": size,
+                "skipped": "file too large",
+                "time": time_value,
+                "timeText": time_dir.name,
+                "timeSource": "openfoam-time-directory",
+                "sourceFields": field_names,
+            }
+            oversized_path = case_dir / relative_path
+            oversized_path.parent.mkdir(parents=True, exist_ok=True)
+            oversized_path.write_text(vtk_text, encoding="utf-8")
+            oversized_summary = summarize_vtk_result_text(vtk_text)
+            if isinstance(oversized_summary, dict) and oversized_summary.get("fields"):
+                oversized["fieldSummary"] = oversized_summary
+                oversized["verifiedOnDisk"] = True
+            if NAN_TOKEN_RE.search(vtk_text):
+                oversized["nanDetected"] = True
+            converted.append(oversized)
             continue
         output_path = case_dir / relative_path
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2617,13 +2671,21 @@ def solver_output_quality_error(solver: str, logs: list[str], result_files: list
         text = result.get("text")
         if isinstance(text, str) and NAN_TOKEN_RE.search(text):
             return f"OpenFOAM produced NaN values in result file `{result.get('path', 'unknown')}`."
+        # Oversized results are verified from disk rather than embedded, so their
+        # NaN verdict arrives as a flag instead of inline text.
+        if result.get("nanDetected") is True:
+            return f"OpenFOAM produced NaN values in result file `{result.get('path', 'unknown')}`."
 
+    # A result counts as parseable when its fields were confirmed, whether it was
+    # small enough to embed or was verified on disk because it exceeded the
+    # embedding cap. The guarantee this preserves is unchanged: an exit-zero job
+    # is only complete once real field data has actually been parsed.
     parseable_results = [
         result
         for result in result_files
-        if isinstance(result.get("text"), str)
-        and isinstance(result.get("fieldSummary"), dict)
+        if isinstance(result.get("fieldSummary"), dict)
         and result.get("fieldSummary", {}).get("fields")
+        and (isinstance(result.get("text"), str) or result.get("verifiedOnDisk") is True)
     ]
     if not parseable_results:
         skipped = [str(result.get("skipped")) for result in result_files if result.get("skipped")]
