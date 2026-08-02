@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { VtkResultDataset } from "../types";
 import {
+  datasetBounds,
   datasetFromPreview,
   fieldDescriptiveStats,
   fieldHistogramForValues,
@@ -10,6 +12,7 @@ import {
   listResultFields,
   parseAsciiVtuResult,
   parseLegacyVtkResult,
+  projectDatasetToCanvas,
   sampleDatasetAtCanvasPoint,
   sampleDatasetAtWorldPoint,
   timelineStatsForSnapshots
@@ -522,5 +525,125 @@ U 3 1 float
     expect(fieldStatsForOverlay(parsed, "pressure")).toMatchObject({ field: "Pressure", min: 1, max: 4 });
     expect(fieldStatsForOverlay(parsed, "velocity")).toMatchObject({ field: "Velocity", min: 1, max: 4 });
     expect(fieldStatsForOverlay(parsed, "temperature")).toMatchObject({ field: "Temperature", min: 10, max: 40 });
+  });
+});
+
+function boundsFixture(points: [number, number, number][]): VtkResultDataset {
+  return {
+    format: "legacy-vtk-ascii-v1",
+    points,
+    cells: [],
+    cellTypes: [],
+    pointData: { scalars: {}, vectors: {} },
+    cellData: { scalars: {}, vectors: {} },
+    fields: []
+  };
+}
+
+/**
+ * The pre-fix implementation, kept as an oracle. It cannot run on a real mesh
+ * — it threw RangeError past ~100k points — but on small inputs the fold that
+ * replaced it has to agree exactly.
+ */
+function spreadBounds(points: [number, number, number][]) {
+  const xs = points.map((point) => point[0]);
+  const ys = points.map((point) => point[1]);
+  const zs = points.map((point) => point[2]);
+  const min: [number, number, number] = [Math.min(...xs), Math.min(...ys), Math.min(...zs)];
+  const max: [number, number, number] = [Math.max(...xs), Math.max(...ys), Math.max(...zs)];
+  return {
+    min,
+    max,
+    center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2] as [number, number, number],
+    span: Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-9)
+  };
+}
+
+describe("Dataset bounds", () => {
+  it("measures a solver-sized mesh instead of overflowing the stack", () => {
+    // 200k is well past the ~100k arguments a spread managed before throwing.
+    // Extremes sit mid-array, so the fold has to carry them.
+    const count = 200_000;
+    const points: [number, number, number][] = new Array(count);
+    for (let index = 0; index < count; index += 1) {
+      points[index] = [(index % 97) / 97, (index % 89) / 89, (index % 83) / 83];
+    }
+    points[Math.floor(count / 3)] = [-2, -7, -4];
+    points[Math.floor((count * 2) / 3)] = [5, 3, 11];
+    const volume = boundsFixture(points);
+
+    expect(() => datasetBounds(volume)).not.toThrow();
+
+    const bounds = datasetBounds(volume);
+    expect(bounds.min).toEqual([-2, -7, -4]);
+    expect(bounds.max).toEqual([5, 3, 11]);
+    expect(bounds.center).toEqual([1.5, -2, 3.5]);
+    expect(bounds.span).toBe(15);
+  });
+
+  it.each([
+    {
+      name: "a unit cube",
+      points: [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] as [number, number, number][]
+    },
+    { name: "a single point", points: [[3, -4, 5]] as [number, number, number][] },
+    { name: "coincident points", points: [[2, 2, 2], [2, 2, 2]] as [number, number, number][] },
+    {
+      name: "an off-origin box",
+      points: [[-3.5, 10, -0.25], [1.5, -2, 8.75], [0, 4, 3]] as [number, number, number][]
+    }
+  ])("returns exactly what the spread returned for $name", ({ points }) => {
+    expect(datasetBounds(boundsFixture(points))).toEqual(spreadBounds(points));
+  });
+
+  it("floors the span, so a flat mesh cannot scale the surface by infinity", () => {
+    // Renderers divide by span, so a zero extent would divide by zero.
+    expect(datasetBounds(boundsFixture([[2, 2, 2]])).span).toBe(1e-9);
+  });
+
+  it("reproduces the spread's empty-dataset answer rather than inventing one", () => {
+    const empty = datasetBounds(boundsFixture([]));
+
+    expect(empty).toEqual(spreadBounds([]));
+    expect(empty.min).toEqual([Infinity, Infinity, Infinity]);
+    expect(empty.max).toEqual([-Infinity, -Infinity, -Infinity]);
+    expect(empty.span).toBe(1e-9);
+  });
+});
+
+describe("Canvas projection", () => {
+  it("passes a dataset that already fits through unscaled", () => {
+    const projection = projectDatasetToCanvas(boundsFixture([[10, 20, 0], [300, 400, 0]]), 800, 600);
+
+    expect(projection.coordinates([10, 20, 0])).toEqual({ x: 10, y: 20 });
+    expect(projection.point(1)).toEqual({ x: 300, y: 400 });
+  });
+
+  it("fits an oversized dataset to the padded canvas along its limiting axis", () => {
+    const projection = projectDatasetToCanvas(boundsFixture([[0, 0, 0], [2000, 1000, 0]]), 800, 600);
+    const near = projection.point(0);
+    const far = projection.point(1);
+
+    // x is the tighter axis here, so it fills the padded width exactly ...
+    expect(far.x - near.x).toBeCloseTo(800 - 240, 6);
+    // ... and y, scaled by the same factor, stays inside the padded height.
+    expect(far.y - near.y).toBeLessThan(600 - 240);
+  });
+
+  it("stops shrinking at the 0.2 floor rather than vanishing", () => {
+    const projection = projectDatasetToCanvas(boundsFixture([[0, 0, 0], [8000, 6000, 0]]), 800, 600);
+    const spread = projection.point(1).x - projection.point(0).x;
+
+    // The scale clamp means a hugely oversized mesh overflows the canvas by
+    // design instead of collapsing to an unreadable speck.
+    expect(spread).toBeCloseTo(8000 * 0.2, 6);
+  });
+
+  it("projects a solver-sized mesh instead of overflowing the stack", () => {
+    const count = 200_000;
+    const points: [number, number, number][] = new Array(count);
+    for (let index = 0; index < count; index += 1) points[index] = [index % 500, index % 300, 0];
+
+    expect(() => projectDatasetToCanvas(boundsFixture(points), 800, 600)).not.toThrow();
   });
 });

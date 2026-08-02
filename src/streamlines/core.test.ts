@@ -3,6 +3,7 @@ import type { VtkResultDataset } from "../types";
 import {
   assertFullStreamlineDataset,
   datasetSeedPlane,
+  datasetSpatialDimension,
   generatePlaneSeeds,
   integrateSteadyStreamlines
 } from "./core";
@@ -263,5 +264,24 @@ describe("steady solver-derived streamlines", () => {
     const plane = datasetSeedPlane(volume, 0, 0.25, 64);
     expect(plane).toMatchObject({ origin: [2.5, -0.96, -1.92], countU: 8, countV: 8 });
     expect(generatePlaneSeeds(plane)).toHaveLength(64);
+  });
+});
+
+describe("Dataset spatial dimension", () => {
+  it("calls a mesh with no thickness 2D and a boxy one 3D", () => {
+    const flat: Point[] = [[0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0]];
+    const boxy: Point[] = [...flat, [0, 0, 5], [4, 0, 5], [4, 3, 5], [0, 3, 5]];
+
+    expect(datasetSpatialDimension(dataset(flat, [], []))).toBe(2);
+    expect(datasetSpatialDimension(dataset(boxy, [], []))).toBe(3);
+  });
+
+  it("measures a solver-sized mesh instead of overflowing the stack", () => {
+    const count = 200_000;
+    const points: Point[] = new Array(count);
+    for (let index = 0; index < count; index += 1) points[index] = [index % 500, index % 300, 0];
+
+    expect(() => datasetSpatialDimension(dataset(points, [], []))).not.toThrow();
+    expect(datasetSpatialDimension(dataset(points, [], []))).toBe(2);
   });
 });

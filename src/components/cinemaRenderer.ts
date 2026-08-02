@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { DecodedDerivedVisualization } from "../results/derived";
-import { fieldValuesForOverlay, fieldValuesForSelection, type ResultFieldSelection, type ResultVectorComponent } from "../results/vtk";
+import { datasetBounds, fieldValuesForOverlay, fieldValuesForSelection, type ResultFieldSelection, type ResultVectorComponent } from "../results/vtk";
+import { maxAbsoluteOf } from "../numeric";
 import type {
   FluidNode,
   FluidProject,
@@ -491,20 +492,6 @@ function createPipeMesh(start: THREE.Vector3, end: THREE.Vector3, radius: number
   return mesh;
 }
 
-function datasetBounds(dataset: VtkResultDataset) {
-  const xs = dataset.points.map((point) => point[0]);
-  const ys = dataset.points.map((point) => point[1]);
-  const zs = dataset.points.map((point) => point[2]);
-  const min: [number, number, number] = [Math.min(...xs), Math.min(...ys), Math.min(...zs)];
-  const max: [number, number, number] = [Math.max(...xs), Math.max(...ys), Math.max(...zs)];
-  return {
-    min,
-    max,
-    center: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2] as [number, number, number],
-    span: Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1e-9)
-  };
-}
-
 export type ExteriorCellFace = {
   pointIndices: number[];
   ownerCellIndex: number;
@@ -607,7 +594,7 @@ function addResultSurfaceMesh(
   const fieldValues = resultFieldSelection ? fieldValuesForSelection(dataset, resultFieldSelection, resultVectorComponent) : fieldValuesForOverlay(dataset, overlay);
   if (!fieldValues || dataset.cells.length === 0 || dataset.points.length === 0) return null;
   const bounds = datasetBounds(dataset);
-  const maxValue = Math.max(...fieldValues.values.map((value) => Math.abs(value)), 1e-9);
+  const maxValue = maxAbsoluteOf(fieldValues.values, 1e-9);
   const positions: number[] = [];
   const colors: number[] = [];
   const meshScale = worldSpan / bounds.span;

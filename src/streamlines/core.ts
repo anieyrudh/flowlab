@@ -1,4 +1,5 @@
 import type { VtkResultDataset } from "../types";
+import { maximumOf, pointExtent, pointSpans } from "../numeric";
 import {
   STREAMLINE_LIMITS,
   type StreamlineInterpolationMethod,
@@ -179,8 +180,7 @@ function locatorKey(x: number, y: number, z: number) {
 }
 
 function buildCellLocator(dataset: VtkResultDataset): CellLocator {
-  const minimum = [0, 1, 2].map((axis) => Math.min(...dataset.points.map((point) => point[axis]))) as StreamlineVec3;
-  const maximum = [0, 1, 2].map((axis) => Math.max(...dataset.points.map((point) => point[axis]))) as StreamlineVec3;
+  const { min: minimum, max: maximum } = pointExtent(dataset.points);
   const spans = maximum.map((value, axis) => value - minimum[axis]) as StreamlineVec3;
   const activeDimensions = Math.max(1, spans.filter((span) => span > EPSILON).length);
   const division = Math.min(64, Math.max(1, Math.ceil(dataset.cells.length ** (1 / activeDimensions))));
@@ -409,11 +409,8 @@ function setFinalTermination(vertices: StreamlineVertex[], reason: StreamlineTer
 }
 
 function defaultStepSize(dataset: VtkResultDataset) {
-  const spans = [0, 1, 2].map((axis) => {
-    const values = dataset.points.map((point) => point[axis]);
-    return Math.max(...values) - Math.min(...values);
-  });
-  return Math.max(...spans, EPSILON) / 200;
+  const spans = pointSpans(dataset.points);
+  return maximumOf(spans, EPSILON) / 200;
 }
 
 export function assertFullStreamlineDataset(dataset: VtkResultDataset) {
@@ -460,8 +457,7 @@ export function datasetSeedPlane(
   normalizedPosition: number,
   seedCount: number = STREAMLINE_LIMITS.defaultSeeds
 ): StreamlineSeedPlane {
-  const minimum = [0, 1, 2].map((axis) => Math.min(...dataset.points.map((point) => point[axis]))) as StreamlineVec3;
-  const maximum = [0, 1, 2].map((axis) => Math.max(...dataset.points.map((point) => point[axis]))) as StreamlineVec3;
+  const { min: minimum, max: maximum } = pointExtent(dataset.points);
   const spans = maximum.map((value, axis) => value - minimum[axis]) as StreamlineVec3;
   const tangents = ([0, 1, 2] as const).filter((axis) => axis !== normalAxis && spans[axis] > EPSILON);
   const firstAxis = tangents[0] ?? ((normalAxis + 1) % 3 as 0 | 1 | 2);
@@ -484,10 +480,7 @@ export function datasetSeedPlane(
 }
 
 export function datasetSpatialDimension(dataset: VtkResultDataset): 2 | 3 {
-  const spans = [0, 1, 2].map((axis) => {
-    const values = dataset.points.map((point) => point[axis]);
-    return Math.max(...values) - Math.min(...values);
-  });
+  const spans = pointSpans(dataset.points);
   return spans.filter((span) => span > EPSILON).length <= 2 ? 2 : 3;
 }
 
