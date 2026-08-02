@@ -16,9 +16,12 @@ from .mesh import VTK_HEXAHEDRON
 
 
 FULL_OGRID_PROFILE_SCHEMA = "flowlab.full-ogrid-profile.v1"
+FULL_OGRID_PATH_PROFILE_SCHEMA = "flowlab.full-ogrid-path-profile.v1"
 FULL_OGRID_VERIFICATION_SCHEMA = "flowlab.full-ogrid-verification-contract.v1"
 FULL_OGRID_PREVIEW_FORMAT = "flowlab-full-ogrid-preview-v1"
+FULL_OGRID_PATH_PREVIEW_FORMAT = "flowlab-full-ogrid-path-preview-v1"
 FULL_OGRID_REPRESENTATION = "full-revolution-five-block-ogrid"
+FULL_OGRID_PATH_REPRESENTATION = "full-revolution-multi-segment-five-block-ogrid"
 
 
 def _positive_finite(value: float, label: str) -> float:
@@ -451,6 +454,434 @@ def preview_mesh(spec: FullOGridSpec, profile: dict[str, Any] | None = None) -> 
         "points": points,
         "cells": cells,
         "cellTypes": [VTK_HEXAHEDRON for _ in cells],
+        "topology": spec.topology_manifest(),
+        "volumeQuality": {
+            "positiveVolume": True,
+            "zeroVolumeCellCount": 0,
+            "minimumCellVolumeM3": min(volumes),
+            "maximumCellVolumeM3": max(volumes),
+            "totalCellVolumeM3": sum(volumes),
+        },
+    }
+
+
+@dataclass(frozen=True)
+class FullOGridPathSegment:
+    """One linear-radius portion of a conformal full-revolution path."""
+
+    edge_id: str
+    edge_type: str
+    length_m: float
+    inlet_radius_m: float
+    outlet_radius_m: float
+    axial_cells: int
+
+    def __post_init__(self) -> None:
+        if not self.edge_id.strip():
+            raise ValueError("full O-grid path segments require non-empty edge IDs.")
+        _positive_finite(self.length_m, "full O-grid path segment length")
+        _positive_finite(self.inlet_radius_m, "full O-grid path inlet radius")
+        _positive_finite(self.outlet_radius_m, "full O-grid path outlet radius")
+        _integer_at_least(
+            self.axial_cells,
+            1,
+            "full O-grid path segment axialCells",
+        )
+
+
+@dataclass(frozen=True)
+class FullOGridPathSpec:
+    """Conformal full-revolution O-grid for a straight multi-edge path."""
+
+    segments: tuple[FullOGridPathSegment, ...]
+    annular_radial_cells: int
+    circumferential_cells: int
+    core_cells_per_side: int
+
+    def __post_init__(self) -> None:
+        if not self.segments:
+            raise ValueError("full O-grid path requires at least one segment.")
+        _integer_at_least(
+            self.annular_radial_cells,
+            2,
+            "full O-grid path annularRadialCells",
+        )
+        _integer_at_least(
+            self.circumferential_cells,
+            16,
+            "full O-grid path circumferentialCells",
+        )
+        _integer_at_least(
+            self.core_cells_per_side,
+            4,
+            "full O-grid path coreCellsPerSide",
+        )
+        if self.circumferential_cells % 4 != 0:
+            raise ValueError(
+                "full O-grid path circumferentialCells must be divisible by four."
+            )
+        if self.core_cells_per_side != self.circumferential_cells // 4:
+            raise ValueError(
+                "full O-grid path coreCellsPerSide must equal "
+                "circumferentialCells/4."
+            )
+        for previous, current in zip(self.segments, self.segments[1:], strict=False):
+            if not math.isclose(
+                previous.outlet_radius_m,
+                current.inlet_radius_m,
+                rel_tol=1.0e-9,
+                abs_tol=1.0e-12,
+            ):
+                raise ValueError(
+                    "full O-grid path radii must be continuous between segments."
+                )
+
+    @property
+    def cross_section_cell_count(self) -> int:
+        core = self.core_cells_per_side
+        return (
+            core * core
+            + self.circumferential_cells * self.annular_radial_cells
+        )
+
+    @property
+    def total_axial_cells(self) -> int:
+        return sum(segment.axial_cells for segment in self.segments)
+
+    @property
+    def total_length_m(self) -> float:
+        return sum(segment.length_m for segment in self.segments)
+
+    @property
+    def cell_count(self) -> int:
+        return self.cross_section_cell_count * self.total_axial_cells
+
+    def topology_manifest(self) -> dict[str, Any]:
+        edge_ids = list(dict.fromkeys(segment.edge_id for segment in self.segments))
+        return {
+            "representation": FULL_OGRID_PATH_REPRESENTATION,
+            "spatialDimension": 3,
+            "cellTypes": ["hex"],
+            "geometrySegmentCount": len(self.segments),
+            "blockCount": 5 * len(self.segments),
+            "pathEdgeIds": edge_ids,
+            "resolution": {
+                "totalAxialCells": self.total_axial_cells,
+                "annularRadialCells": self.annular_radial_cells,
+                "circumferentialCells": self.circumferential_cells,
+                "circumferentialCellsPerQuadrant": (
+                    self.circumferential_cells // 4
+                ),
+                "coreCellsPerSide": self.core_cells_per_side,
+                "crossSectionCellCount": self.cross_section_cell_count,
+                "cellCount": self.cell_count,
+            },
+            "interfaces": {
+                "crossSectionBlockInterfaces": 4 * len(self.segments),
+                "axialSegmentInterfaces": len(self.segments) - 1,
+                "treatment": "conformal-internal-faces",
+                "boundaryPatchCount": 0,
+            },
+            "patches": {
+                "inlet": {
+                    "role": "inlet",
+                    "type": "patch",
+                    "faceCount": self.cross_section_cell_count,
+                },
+                "outlet": {
+                    "role": "outlet",
+                    "type": "patch",
+                    "faceCount": self.cross_section_cell_count,
+                },
+                "walls": {
+                    "role": "wall",
+                    "type": "wall",
+                    "faceCount": (
+                        self.circumferential_cells * self.total_axial_cells
+                    ),
+                },
+            },
+            "collapsedAxisCells": 0,
+            "connectorCellCount": 0,
+        }
+
+
+def _path_slice_vertices(x_m: float, radius_m: float) -> list[tuple[float, float, float]]:
+    core_radius = radius_m / 4.0
+    return [
+        (x_m, core_radius, 0.0),
+        (x_m, 0.0, core_radius),
+        (x_m, -core_radius, 0.0),
+        (x_m, 0.0, -core_radius),
+        (x_m, radius_m, 0.0),
+        (x_m, 0.0, radius_m),
+        (x_m, -radius_m, 0.0),
+        (x_m, 0.0, -radius_m),
+    ]
+
+
+def path_block_mesh_dict(spec: FullOGridPathSpec) -> str:
+    """Return a conformal five-block-per-segment OpenFOAM dictionary."""
+
+    boundary_stations: list[tuple[float, float]] = [(0.0, spec.segments[0].inlet_radius_m)]
+    cumulative_x = 0.0
+    for segment in spec.segments:
+        cumulative_x += segment.length_m
+        boundary_stations.append((cumulative_x, segment.outlet_radius_m))
+
+    vertices = [
+        point
+        for x_m, radius_m in boundary_stations
+        for point in _path_slice_vertices(x_m, radius_m)
+    ]
+    vertex_text = "\n".join(
+        f"    ({_foam_number(x)} {_foam_number(y)} {_foam_number(z)})"
+        for x, y, z in vertices
+    )
+
+    quadrant = spec.circumferential_cells // 4
+    blocks: list[str] = []
+    for index, segment in enumerate(spec.segments):
+        low = 8 * index
+        high = low + 8
+        axial = segment.axial_cells
+        radial = spec.annular_radial_cells
+        core = spec.core_cells_per_side
+        blocks.extend(
+            [
+                (
+                    f"    hex ({low} {high} {high + 1} {low + 1} "
+                    f"{low + 3} {high + 3} {high + 2} {low + 2}) "
+                    f"({axial} {core} {core}) simpleGrading (1 1 1)"
+                ),
+                (
+                    f"    hex ({low} {high} {high + 4} {low + 4} "
+                    f"{low + 1} {high + 1} {high + 5} {low + 5}) "
+                    f"({axial} {radial} {quadrant}) simpleGrading (1 1 1)"
+                ),
+                (
+                    f"    hex ({low + 1} {high + 1} {high + 5} {low + 5} "
+                    f"{low + 2} {high + 2} {high + 6} {low + 6}) "
+                    f"({axial} {radial} {quadrant}) simpleGrading (1 1 1)"
+                ),
+                (
+                    f"    hex ({low + 2} {high + 2} {high + 6} {low + 6} "
+                    f"{low + 3} {high + 3} {high + 7} {low + 7}) "
+                    f"({axial} {radial} {quadrant}) simpleGrading (1 1 1)"
+                ),
+                (
+                    f"    hex ({low + 3} {high + 3} {high + 7} {low + 7} "
+                    f"{low} {high} {high + 4} {low + 4}) "
+                    f"({axial} {radial} {quadrant}) simpleGrading (1 1 1)"
+                ),
+            ]
+        )
+
+    arcs: list[str] = []
+    for index, (x_m, radius_m) in enumerate(boundary_stations):
+        base = 8 * index
+        diagonal = radius_m / math.sqrt(2.0)
+        x = _foam_number(x_m)
+        d = _foam_number(diagonal)
+        arcs.extend(
+            [
+                f"    arc {base + 4} {base + 5} ({x} {d} {d})",
+                f"    arc {base + 5} {base + 6} ({x} -{d} {d})",
+                f"    arc {base + 6} {base + 7} ({x} -{d} -{d})",
+                f"    arc {base + 7} {base + 4} ({x} {d} -{d})",
+            ]
+        )
+
+    first = 0
+    last = 8 * (len(boundary_stations) - 1)
+    wall_faces: list[str] = []
+    for index in range(len(spec.segments)):
+        low = 8 * index
+        high = low + 8
+        wall_faces.extend(
+            [
+                f"            ({low + 4} {high + 4} {high + 5} {low + 5})",
+                f"            ({low + 5} {high + 5} {high + 6} {low + 6})",
+                f"            ({low + 6} {high + 6} {high + 7} {low + 7})",
+                f"            ({low + 7} {high + 7} {high + 4} {low + 4})",
+            ]
+        )
+    return f"""/* FlowLab bounded full-revolution multi-segment O-grid */
+FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}}
+
+convertToMeters 1;
+
+vertices
+(
+{vertex_text}
+);
+
+blocks
+(
+{chr(10).join(blocks)}
+);
+
+edges
+(
+{chr(10).join(arcs)}
+);
+
+boundary
+(
+    inlet
+    {{
+        type patch;
+        faces
+        (
+            ({first} {first + 3} {first + 2} {first + 1})
+            ({first} {first + 1} {first + 5} {first + 4})
+            ({first + 1} {first + 2} {first + 6} {first + 5})
+            ({first + 2} {first + 3} {first + 7} {first + 6})
+            ({first + 3} {first} {first + 4} {first + 7})
+        );
+    }}
+    outlet
+    {{
+        type patch;
+        faces
+        (
+            ({last} {last + 1} {last + 2} {last + 3})
+            ({last} {last + 4} {last + 5} {last + 1})
+            ({last + 1} {last + 5} {last + 6} {last + 2})
+            ({last + 2} {last + 6} {last + 7} {last + 3})
+            ({last + 3} {last + 7} {last + 4} {last})
+        );
+    }}
+    walls
+    {{
+        type wall;
+        faces
+        (
+{chr(10).join(wall_faces)}
+        );
+    }}
+);
+
+mergePatchPairs
+(
+);
+"""
+
+
+def path_preview_mesh(
+    spec: FullOGridPathSpec,
+    profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the full-volume preview with explicit contiguous edge ranges."""
+
+    axial_stations: list[tuple[float, float]] = []
+    intervals: list[tuple[str, str]] = []
+    cumulative_x = 0.0
+    for segment_index, segment in enumerate(spec.segments):
+        for local_index in range(segment.axial_cells + 1):
+            if segment_index > 0 and local_index == 0:
+                continue
+            fraction = local_index / segment.axial_cells
+            axial_stations.append(
+                (
+                    cumulative_x + fraction * segment.length_m,
+                    segment.inlet_radius_m
+                    + fraction
+                    * (segment.outlet_radius_m - segment.inlet_radius_m),
+                )
+            )
+        intervals.extend(
+            [(segment.edge_id, segment.edge_type)] * segment.axial_cells
+        )
+        cumulative_x += segment.length_m
+
+    slice_points: list[list[tuple[float, float]]] = []
+    slice_cells: list[list[list[int]]] = []
+    slice_areas: list[list[float]] = []
+    points: list[list[float]] = []
+    for x_m, radius_m in axial_stations:
+        local_spec = FullOGridSpec(
+            length_m=1.0,
+            radius_m=radius_m,
+            axial_cells=4,
+            annular_radial_cells=spec.annular_radial_cells,
+            circumferential_cells=spec.circumferential_cells,
+            core_cells_per_side=spec.core_cells_per_side,
+        )
+        cross_points, cross_cells, cross_areas = _cross_section(local_spec)
+        slice_points.append(cross_points)
+        slice_cells.append(cross_cells)
+        slice_areas.append(cross_areas)
+        points.extend([[x_m, y, z] for y, z in cross_points])
+
+    points_per_slice = len(slice_points[0])
+    if any(len(candidate) != points_per_slice for candidate in slice_points):
+        raise ValueError("full O-grid path cross-section topology is inconsistent.")
+    cells: list[list[int]] = []
+    volumes: list[float] = []
+    regions: list[dict[str, Any]] = []
+    for interval_index, (edge_id, edge_type) in enumerate(intervals):
+        low_offset = interval_index * points_per_slice
+        high_offset = (interval_index + 1) * points_per_slice
+        dx = axial_stations[interval_index + 1][0] - axial_stations[interval_index][0]
+        interval_cell_start = len(cells)
+        for local_cell_index, low_cell in enumerate(slice_cells[interval_index]):
+            high_cell = slice_cells[interval_index + 1][local_cell_index]
+            cells.append(
+                [
+                    *(low_offset + point for point in low_cell),
+                    *(high_offset + point for point in high_cell),
+                ]
+            )
+            volumes.append(
+                0.5
+                * (
+                    slice_areas[interval_index][local_cell_index]
+                    + slice_areas[interval_index + 1][local_cell_index]
+                )
+                * dx
+            )
+        interval_count = len(cells) - interval_cell_start
+        if regions and regions[-1]["edgeId"] == edge_id:
+            regions[-1]["cellCount"] += interval_count
+            regions[-1]["segmentCount"] += 1
+        else:
+            regions.append(
+                {
+                    "edgeId": edge_id,
+                    "edgeType": edge_type,
+                    "cellStart": interval_cell_start,
+                    "cellCount": interval_count,
+                    "segmentCount": 1,
+                    "transverseDivisions": spec.cross_section_cell_count,
+                }
+            )
+
+    spans = [
+        max(point[axis] for point in points) - min(point[axis] for point in points)
+        for axis in range(3)
+    ]
+    if len(cells) != spec.cell_count or any(volume <= 0.0 for volume in volumes):
+        raise ValueError("full O-grid path preview failed its positive-volume contract.")
+    return {
+        "format": FULL_OGRID_PATH_PREVIEW_FORMAT,
+        "coordinateSystem": "physical-x-y-z-si",
+        "spatialDimension": 3,
+        "representation": "pre-solve-blockMesh-equivalent-full-ogrid-path",
+        "runtimeSolverMesh": False,
+        "proxyGeometry": False,
+        "profileSchema": None if profile is None else profile.get("schema"),
+        "boundsSpanM": [round(value, 12) for value in spans],
+        "points": points,
+        "cells": cells,
+        "cellTypes": [VTK_HEXAHEDRON for _ in cells],
+        "regions": regions,
         "topology": spec.topology_manifest(),
         "volumeQuality": {
             "positiveVolume": True,

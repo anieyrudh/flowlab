@@ -3200,6 +3200,39 @@ def test_collect_result_files_ignores_mesh_artifacts_case_insensitively(tmp_path
     assert [result["path"] for result in results] == ["RESU/run-001/field.vtk"]
 
 
+def test_collect_result_files_identity_contract_requires_controlled_native_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case_dir = tmp_path / "case"
+    (case_dir / "constant").mkdir(parents=True)
+    (case_dir / "constant" / "flowlab_result_identity_contract.json").write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
+    (case_dir / "VTK").mkdir()
+    (case_dir / "VTK" / "case_0001.vtk").write_text(
+        "# vtk DataFile Version 3.0\nlegacy ordering\n",
+        encoding="utf-8",
+    )
+    controlled = [
+        {
+            "path": "postProcessing/flowlabNative/time_1.vtk",
+            "size": 12,
+            "sourceCellIdentity": {"verified": True},
+        }
+    ]
+    monkeypatch.setattr(
+        execution,
+        "_collect_openfoam_native_time_results",
+        lambda received_case_dir, limit: controlled,
+    )
+
+    results = collect_result_files(case_dir)
+
+    assert results == controlled
+
+
 def test_collect_result_files_reports_overflow_after_collection_limit(tmp_path: Path) -> None:
     case_dir = tmp_path / "case"
     result_dir = case_dir / "VTK"

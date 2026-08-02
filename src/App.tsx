@@ -799,9 +799,26 @@ export function verifiedResultComponentLink(
   }
 
   const sourceCellIndices = snapshot.dataset.sourceCellIndices;
+  const sourceCellIdentity = snapshot.dataset.sourceCellIdentity;
+  let identityContractHash: unknown;
+  try {
+    const manifest = JSON.parse(solverCase.files["flowlab_case_manifest.json"] ?? "{}") as {
+      files?: Record<string, { sha256?: unknown }>;
+    };
+    identityContractHash = manifest.files?.["constant/flowlab_result_identity_contract.json"]?.sha256;
+  } catch {
+    identityContractHash = undefined;
+  }
   if (
     !Number.isInteger(binding.sourceCellCount)
     || binding.sourceCellCount <= 0
+    || binding.identitySchema !== "flowlab.openfoam-source-cell-identity.v1"
+    || binding.identityField !== "flowlabSourceCellId"
+    || identityContractHash !== binding.identityContractSha256
+    || sourceCellIdentity?.verified !== true
+    || sourceCellIdentity.schema !== binding.identitySchema
+    || sourceCellIdentity.field !== binding.identityField
+    || sourceCellIdentity.sourceCellCount !== binding.sourceCellCount
     || snapshot.dataset.sourceCellCount !== binding.sourceCellCount
     || !Array.isArray(sourceCellIndices)
     || sourceCellIndices.length !== snapshot.dataset.cells.length

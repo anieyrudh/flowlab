@@ -1,0 +1,31 @@
+{
+  "schema": "flowlab.axisymmetric-geometry-experimental-qualification-contract-revision.v1",
+  "revisionId": "axisymmetric-generated-geometry-experimental-qualification-v2",
+  "frozenOn": "2026-07-31",
+  "status": "prospective-frozen-before-v2-retained-scientific-execution",
+  "baseContract": {
+    "path": "EXPERIMENTAL_QUALIFICATION_CONTRACT_V1.json",
+    "sha256": "b0a2cceaf4a83f95d3f30c9318496f06ec0f12e1c90c71066c48a99f8b3f83bb"
+  },
+  "v1Disposition": {
+    "campaignDirectory": "benchmarks/cases/axisymmetric-geometry/campaigns/2026-07-31-v1-r1",
+    "classification": "retained-evaluator-and-result-identity-infrastructure-failure",
+    "scientificGatesEvaluated": false,
+    "evidenceMayBeEditedOrReused": false
+  },
+  "rationale": "The first v1 retained attempt completed the coarse OpenFOAM solve but stopped before scientific evaluation. The checkMesh parser accepted trailing punctuation as part of a number, and exact physical vertex coordinates could not map blockMesh cells after prospective axial grading. V2 changes no geometry, physics, threshold, grid, trend, status, or product gate. It prospectively replaces exact coordinate equality with unique axisymmetric logical vertex signatures for fresh v2 outputs.",
+  "mergePatch": {
+    "schema": "flowlab.axisymmetric-geometry-experimental-qualification-contract.v2",
+    "status": "prospective-frozen-before-v2-retained-scientific-execution",
+    "identity": {
+      "algorithm": "axisymmetric-logical-cell-vertex-signature-v2"
+    },
+    "prospectiveRevision": {
+      "revisionId": "axisymmetric-generated-geometry-experimental-qualification-v2",
+      "baseContractSha256": "b0a2cceaf4a83f95d3f30c9318496f06ec0f12e1c90c71066c48a99f8b3f83bb",
+      "scientificGateChanges": false,
+      "geometryOrPhysicsChanges": false,
+      "validatedOrPromotedStatusChanges": false
+    }
+  }
+}

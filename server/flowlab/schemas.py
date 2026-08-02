@@ -98,6 +98,9 @@ class ResultComponentCellBinding(BaseModel):
     artifactName: str
     scope: Literal["cell-ranges"]
     sourceCellCount: int = Field(gt=0)
+    identitySchema: Literal["flowlab.openfoam-source-cell-identity.v1"]
+    identityField: Literal["flowlabSourceCellId"]
+    identityContractSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     cellRanges: list[ResultComponentCellRange] = Field(default_factory=list)
 
 

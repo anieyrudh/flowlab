@@ -4,6 +4,11 @@ import xml.etree.ElementTree as ET
 import math
 from typing import Any
 
+from .result_identity import (
+    SOURCE_CELL_ID_FIELD,
+    SOURCE_IDENTITY_REPORT_SCHEMA,
+)
+
 VTK_POLYGON = 7
 SUPPORTED_CELL_TYPES = {5, VTK_POLYGON, 9, 10, 12, 13, 14}
 MAX_PREVIEW_FIELDS = 12
@@ -45,6 +50,16 @@ def preview_vtk_dataset(dataset: dict[str, Any], point_limit: int = 500, cell_li
         if all(index in point_index_lookup for index in cells[cell_index])
     ]
     preview_cell_types = [cell_types[index] for index in cell_indices if index < len(cell_types)]
+    source_cell_indices = (
+        dataset.get("sourceCellIndices")
+        if isinstance(dataset.get("sourceCellIndices"), list)
+        else None
+    )
+    selected_source_cell_indices = (
+        [source_cell_indices[index] for index in cell_indices]
+        if source_cell_indices is not None
+        else cell_indices
+    )
 
     return {
         "schema": "flowlab.result_preview.v1",
@@ -57,12 +72,13 @@ def preview_vtk_dataset(dataset: dict[str, Any], point_limit: int = 500, cell_li
         "cellLimit": cell_limit,
         "truncated": len(point_indices) < len(points) or len(preview_cells) < len(cells),
         "pointIndices": point_indices,
-        "cellIndices": cell_indices[: len(preview_cells)],
+        "cellIndices": selected_source_cell_indices[: len(preview_cells)],
         "points": [points[index] for index in point_indices],
         "cells": preview_cells,
         "cellTypes": preview_cell_types[: len(preview_cells)],
         "fieldSummary": summarize_vtk_dataset(dataset),
         "fieldSamples": _field_samples(dataset, point_indices, cell_indices[: len(preview_cells)]),
+        "sourceCellIdentity": dataset.get("sourceCellIdentity"),
     }
 
 
@@ -163,6 +179,40 @@ def summarize_vtk_dataset(dataset: dict[str, Any]) -> dict[str, Any]:
         "pointCount": len(dataset.get("points", [])),
         "cellCount": len(dataset.get("cells", [])),
         "fields": fields,
+        "sourceCellIdentity": dataset.get("sourceCellIdentity"),
+    }
+
+
+def _extract_source_cell_identity(
+    cell_scalars: dict[str, list[float]],
+    cell_count: int,
+) -> tuple[list[int] | None, dict[str, Any] | None]:
+    raw_ids = cell_scalars.pop(SOURCE_CELL_ID_FIELD, None)
+    if raw_ids is None:
+        return None, None
+    if len(raw_ids) != cell_count:
+        raise ValueError(
+            f"{SOURCE_CELL_ID_FIELD} count must match the result cell count."
+        )
+    source_ids: list[int] = []
+    for value in raw_ids:
+        number = float(value)
+        if not math.isfinite(number) or not number.is_integer() or number < 0:
+            raise ValueError(
+                f"{SOURCE_CELL_ID_FIELD} must contain finite non-negative integers."
+            )
+        source_ids.append(int(number))
+    if len(set(source_ids)) != cell_count or sorted(source_ids) != list(range(cell_count)):
+        raise ValueError(
+            f"{SOURCE_CELL_ID_FIELD} must be a unique complete source-cell permutation."
+        )
+    return source_ids, {
+        "schema": SOURCE_IDENTITY_REPORT_SCHEMA,
+        "field": SOURCE_CELL_ID_FIELD,
+        "sourceCellCount": cell_count,
+        "unique": True,
+        "complete": True,
+        "verified": True,
     }
 
 
@@ -309,6 +359,11 @@ def parse_legacy_vtk_result(text: str) -> dict[str, Any]:
         else:
             raise ValueError(f"Unsupported VTK data section: {section}")
 
+    source_cell_indices, source_cell_identity = _extract_source_cell_identity(
+        cell_scalars,
+        cell_count,
+    )
+
     return {
         "format": "legacy-vtk-polydata-ascii-v1" if dataset_type == "POLYDATA" else "legacy-vtk-ascii-v1",
         "points": points,
@@ -317,6 +372,15 @@ def parse_legacy_vtk_result(text: str) -> dict[str, Any]:
         "pointData": {"scalars": point_scalars, "vectors": point_vectors},
         "cellData": {"scalars": cell_scalars, "vectors": cell_vectors},
         "fields": sorted({*point_scalars.keys(), *point_vectors.keys(), *cell_scalars.keys(), *cell_vectors.keys()}),
+        **(
+            {
+                "sourceCellIndices": source_cell_indices,
+                "sourceCellCount": cell_count,
+                "sourceCellIdentity": source_cell_identity,
+            }
+            if source_cell_indices is not None and source_cell_identity is not None
+            else {}
+        ),
     }
 
 
@@ -408,6 +472,11 @@ def parse_vtu_result(text: str) -> dict[str, Any]:
             else:
                 raise ValueError(f"Unsupported VTU CellData component count for {name}: {item_components}")
 
+    source_cell_indices, source_cell_identity = _extract_source_cell_identity(
+        cell_scalars,
+        declared_cells,
+    )
+
     return {
         "format": "vtu-ascii-v1",
         "points": points,
@@ -416,6 +485,15 @@ def parse_vtu_result(text: str) -> dict[str, Any]:
         "pointData": {"scalars": scalars, "vectors": vectors},
         "cellData": {"scalars": cell_scalars, "vectors": cell_vectors},
         "fields": sorted({*scalars.keys(), *vectors.keys(), *cell_scalars.keys(), *cell_vectors.keys()}),
+        **(
+            {
+                "sourceCellIndices": source_cell_indices,
+                "sourceCellCount": declared_cells,
+                "sourceCellIdentity": source_cell_identity,
+            }
+            if source_cell_indices is not None and source_cell_identity is not None
+            else {}
+        ),
     }
 
 

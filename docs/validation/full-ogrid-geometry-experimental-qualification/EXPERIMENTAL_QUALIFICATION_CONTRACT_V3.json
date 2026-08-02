@@ -1,0 +1,284 @@
+{
+  "schema": "flowlab.full-ogrid-geometry-experimental-qualification-contract.v3",
+  "contractId": "full-ogrid-generated-geometry-experimental-qualification-v3",
+  "frozenOn": "2026-07-31",
+  "status": "prospective-frozen-before-v3-retained-scientific-execution",
+  "claim": {
+    "candidate": "FlowLab can deterministically generate and execute a bounded straight-axis circular path with a conformal full-revolution multi-segment five-block O-grid while retaining explicit solver-cell-to-source-edge identity.",
+    "qualificationClass": "experimental-software-geometry-only",
+    "included": [
+      "generation-only Venturi",
+      "generation-only contraction",
+      "generation-only expansion",
+      "generation-only nozzle",
+      "one five-edge straight-axis contraction-throat-expansion-recovery runtime path",
+      "OpenFOAM generated-case, JobManager, full and preview result loading, and schematic-selection pipeline"
+    ],
+    "excluded": [
+      "constant straight-pipe verification status changes",
+      "independent experimental validation",
+      "benchmark or fixture promotion",
+      "validated preset changes",
+      "registry or campaign pointer changes",
+      "product promotion",
+      "release authorization",
+      "turbulence",
+      "transient flow",
+      "multiphase flow",
+      "compressible flow",
+      "branches",
+      "elbows",
+      "arbitrary CAD",
+      "SU2 full-O-grid execution"
+    ]
+  },
+  "predecessorDisposition": {
+    "wedgeV1Contract": "docs/validation/axisymmetric-geometry-experimental-qualification/EXPERIMENTAL_QUALIFICATION_CONTRACT_V1.json",
+    "wedgeV2Contract": "docs/validation/axisymmetric-geometry-experimental-qualification/EXPERIMENTAL_QUALIFICATION_CONTRACT_V2.json",
+    "classification": "immutable retained evidence plus prospectively discovered topology-contract blocker",
+    "scientificThresholdsChanged": false,
+    "freshV1OrV2ExecutionAuthorized": false,
+    "v3IsIndependentTopology": true,
+    "rationale": "The wedge route cannot satisfy its frozen requirement for three geometric directions. V3 uses a full-revolution conformal multi-segment O-grid and does not reinterpret, weaken, or rerun either wedge contract."
+  },
+  "existingStraightPipeCampaigns": {
+    "axisymmetricModule": "server/flowlab/axisymmetric_straight_pipe_campaign.py",
+    "fullOGridModule": "server/flowlab/full_ogrid_straight_pipe_campaign.py",
+    "mustRemainByteUnchanged": true,
+    "thresholdsMayNotBeReusedOrWeakened": true,
+    "statusMayNotChange": true
+  },
+  "runtime": {
+    "solver": "OpenFOAM through FlowLab JobManager",
+    "imageTag": "flowlab/openfoam11-gmsh:2026-07-13",
+    "imageIdRequired": true,
+    "physics": "steady incompressible laminar",
+    "meshMode": "full-ogrid",
+    "topology": "full-revolution-multi-segment-five-block-ogrid",
+    "maxIterations": 2000,
+    "qoiHistoryWriteIntervalIterations": 1,
+    "freshOutputDirectoryRequired": true,
+    "overwriteAllowed": false
+  },
+  "physicalCase": {
+    "id": "contraction-throat-recovery",
+    "densityKgPerM3": 1000.0,
+    "dynamicViscosityPaS": 0.001,
+    "volumetricFlowRateM3PerS": 0.000005,
+    "edges": [
+      {
+        "id": "inlet-pipe",
+        "type": "pipe",
+        "lengthM": 0.06,
+        "inletDiameterM": 0.012,
+        "outletDiameterM": 0.012
+      },
+      {
+        "id": "contraction",
+        "type": "contraction",
+        "lengthM": 0.03,
+        "inletDiameterM": 0.012,
+        "outletDiameterM": 0.006
+      },
+      {
+        "id": "throat",
+        "type": "pipe",
+        "lengthM": 0.03,
+        "inletDiameterM": 0.006,
+        "outletDiameterM": 0.006
+      },
+      {
+        "id": "expansion",
+        "type": "expansion",
+        "lengthM": 0.06,
+        "inletDiameterM": 0.006,
+        "outletDiameterM": 0.012
+      },
+      {
+        "id": "recovery",
+        "type": "pipe",
+        "lengthM": 0.12,
+        "inletDiameterM": 0.012,
+        "outletDiameterM": 0.012
+      }
+    ],
+    "expectedTrends": {
+      "contraction": [
+        "mean axial velocity exceeds the inlet-pipe mean axial velocity",
+        "mean kinematic pressure is below the inlet-pipe mean kinematic pressure"
+      ],
+      "throat": [
+        "mean axial velocity exceeds the inlet-pipe mean axial velocity",
+        "mean kinematic pressure is below the inlet-pipe mean kinematic pressure"
+      ],
+      "recovery": [
+        "mean axial velocity is below the throat mean axial velocity",
+        "mean kinematic pressure exceeds the throat mean kinematic pressure"
+      ]
+    }
+  },
+  "levels": [
+    {
+      "id": "coarse",
+      "annularRadialCells": 2,
+      "circumferentialCells": 16,
+      "coreCellsPerSide": 4,
+      "axialCellsByEdge": {
+        "inlet-pipe": 8,
+        "contraction": 8,
+        "throat": 8,
+        "expansion": 12,
+        "recovery": 16
+      },
+      "expectedCellCount": 2496,
+      "refinementRatioFromPrevious": null
+    },
+    {
+      "id": "medium",
+      "annularRadialCells": 4,
+      "circumferentialCells": 32,
+      "coreCellsPerSide": 8,
+      "axialCellsByEdge": {
+        "inlet-pipe": 16,
+        "contraction": 16,
+        "throat": 16,
+        "expansion": 24,
+        "recovery": 32
+      },
+      "expectedCellCount": 19968,
+      "refinementRatioFromPrevious": 2.0
+    },
+    {
+      "id": "fine",
+      "annularRadialCells": 8,
+      "circumferentialCells": 64,
+      "coreCellsPerSide": 16,
+      "axialCellsByEdge": {
+        "inlet-pipe": 32,
+        "contraction": 32,
+        "throat": 32,
+        "expansion": 48,
+        "recovery": 64
+      },
+      "expectedCellCount": 159744,
+      "refinementRatioFromPrevious": 2.0
+    }
+  ],
+  "generationOnlyCases": [
+    {
+      "id": "venturi",
+      "edgeType": "venturi",
+      "lengthM": 0.06,
+      "inletDiameterM": 0.012,
+      "throatDiameterM": 0.006,
+      "outletDiameterM": 0.012
+    },
+    {
+      "id": "contraction",
+      "edgeType": "contraction",
+      "lengthM": 0.06,
+      "inletDiameterM": 0.012,
+      "outletDiameterM": 0.006
+    },
+    {
+      "id": "expansion",
+      "edgeType": "expansion",
+      "lengthM": 0.06,
+      "inletDiameterM": 0.006,
+      "outletDiameterM": 0.012
+    },
+    {
+      "id": "nozzle",
+      "edgeType": "nozzle",
+      "lengthM": 0.06,
+      "inletDiameterM": 0.012,
+      "outletDiameterM": 0.006
+    }
+  ],
+  "identity": {
+    "contractSchema": "flowlab.source-cell-identity-contract.v1",
+    "runtimeReportSchema": "flowlab.openfoam-source-cell-identity.v1",
+    "identityField": "flowlabSourceCellId",
+    "algorithm": "full-ogrid-normalized-logical-vertex-signature-v3",
+    "generatedMeshAndPolyMeshMustMatchOneToOne": true,
+    "orderingAssumptionAllowed": false,
+    "uniqueExplicitEdgeOwnershipRequired": true,
+    "connectorCellCount": 0,
+    "unsupportedOrAmbiguousIdentityFailsClosed": true,
+    "allowedArtifactPattern": "postProcessing/flowlabNative/*.vtk"
+  },
+  "gates": {
+    "determinism": {
+      "independentBuildCount": 2,
+      "allGeneratedFileHashesMustMatch": true
+    },
+    "meshPerLevel": {
+      "spatialDimension": 3,
+      "minimumCellVolumeM3ExclusiveLowerBound": 0.0,
+      "blockMeshExitCode": 0,
+      "checkMeshExitCode": 0,
+      "meshOk": true,
+      "connectedRegions": 1,
+      "solutionDirections": 3,
+      "geometricDirections": 3,
+      "allCellsHex": true,
+      "collapsedAxisCells": 0,
+      "requiredPatches": {
+        "inlet": "patch",
+        "outlet": "patch",
+        "walls": "wall"
+      },
+      "unexpectedBoundaryPatchesAllowed": false,
+      "exactCellCountRequired": true
+    },
+    "solverPerLevel": {
+      "finitePressureAndVelocityRequired": true,
+      "exitCode": 0,
+      "normalTerminationRequired": true,
+      "maximumRelativeMassFlowImbalance": 0.001,
+      "tailSampleCount": 100,
+      "maximumPressureDropRelativeSpan": 0.005,
+      "maximumMeasuredFlowRateRelativeSpan": 0.001
+    },
+    "sequence": {
+      "refinementRatio": 2.0,
+      "minimumObservedOrder": 0.5,
+      "maximumObservedOrder": 4.0,
+      "maximumFineGridGciPercent": 5.0,
+      "mathematicallyInvalidGciPasses": false
+    },
+    "geometryTrends": {
+      "fineGridOnly": true,
+      "allExpectedTrendsRequired": true
+    },
+    "resultPipeline": {
+      "generatedCaseRequired": true,
+      "completedJobArtifactRequired": true,
+      "fullResultLoadRequired": true,
+      "boundedPreviewLoadRequired": true,
+      "sourceCellIdentityRequired": true,
+      "schematicSelectionRequired": true,
+      "connectorsMustRemainUnowned": true
+    }
+  },
+  "su2": {
+    "axisymmetricMeshModeSupported": false,
+    "fullOGridMeshModeSupported": false,
+    "unsupportedRequestsFailClosed": true,
+    "fallbackToPlanarAllowed": false
+  },
+  "retention": {
+    "rawCampaignLocation": "ignored benchmarks/cases/full-ogrid-geometry/campaigns tree",
+    "rawCampaignTreeIgnoredByGit": true,
+    "editRetainedEvidenceInPlaceAllowed": false,
+    "trackedEvidenceMutationAuthorized": false,
+    "fixturePointerMutationAuthorized": false,
+    "registryMutationAuthorized": false
+  },
+  "review": {
+    "validatedStatusChangeAuthorized": false,
+    "promotionAuthorized": false,
+    "releaseAuthorized": false
+  },
+  "promotionAuthorized": false
+}
