@@ -1,13 +1,15 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import type { FluidProject, Vec2, VtkResultDataset } from "../types";
+import type { VtkResultDataset } from "../types";
 import {
   CINEMA_VIEW_HEIGHT,
-  DEFAULT_RESULT_WORLD_SPAN,
   RESULT_SURFACE_Z_OFFSET,
+  SOLVED_DOMAIN_VIEW_FILL,
+  SOLVED_DOMAIN_WORLD_SPAN,
   applyCinemaCamera,
   buildSweptTubeGeometry,
   cinemaFitZoom,
+  cinemaFitZoomForBox,
   cinemaOrthographicFrustum,
   clampCinemaZoom,
   createCinemaAmbientLight,
@@ -17,10 +19,11 @@ import {
   createResultBoundaryMaterial,
   createResultSurfaceMaterial,
   createSchematicPipeMaterials,
+  describeSolvedDomain,
   exteriorTriangleCount,
   extractExteriorCellFaces,
   resultSurfaceTriangles,
-  resultWorldSpanForNetwork,
+  solvedDomainCaptionPlacement,
   steppedTone
 } from "./cinemaRenderer";
 
@@ -436,31 +439,252 @@ describe("Schematic network presentation", () => {
 });
 
 describe("Solved domain scale", () => {
-  const project = (positions: Vec2[]) =>
-    ({
-      nodes: Object.fromEntries(positions.map((position, index) => [`n${index}`, { id: `n${index}`, position }]))
-    }) as unknown as FluidProject;
-
-  it("matches the extent of the drawn network so both read at a comparable size", () => {
-    const span = resultWorldSpanForNetwork(project([{ x: 0, y: 0 }, { x: 370, y: 120 }]), 74);
-
-    expect(span).toBeCloseTo((370 / 74) * 0.92, 6);
+  it("sizes the domain against what the camera frames, not against the drawn network", () => {
+    expect(SOLVED_DOMAIN_WORLD_SPAN).toBeCloseTo(CINEMA_VIEW_HEIGHT * SOLVED_DOMAIN_VIEW_FILL, 9);
+    // A single constant is the point: nothing about the user's layout can reach it,
+    // so a measured extent can no longer change with how far apart two icons sit.
+    expect(SOLVED_DOMAIN_WORLD_SPAN).toBeLessThan(CINEMA_VIEW_HEIGHT);
+    expect(SOLVED_DOMAIN_WORLD_SPAN).toBeGreaterThan(CINEMA_VIEW_HEIGHT / 2);
   });
 
-  it("clamps a tiny network up and a sprawling one down", () => {
-    const tiny = resultWorldSpanForNetwork(project([{ x: 0, y: 0 }, { x: 10, y: 0 }]), 74);
-    const sprawling = resultWorldSpanForNetwork(project([{ x: 0, y: 0 }, { x: 4000, y: 0 }]), 74);
-
-    expect(tiny).toBeGreaterThan(10 / 74);
-    expect(tiny).toBeLessThan(sprawling);
-    expect(sprawling).toBeLessThan(2 * DEFAULT_RESULT_WORLD_SPAN);
+  it("keeps a margin around the domain at zoom 1, so an orbit cannot swing a corner out of frame", () => {
+    expect(SOLVED_DOMAIN_VIEW_FILL).toBeLessThan(1);
+    expect(CINEMA_VIEW_HEIGHT - SOLVED_DOMAIN_WORLD_SPAN).toBeGreaterThan(0.3);
   });
 
-  it.each([
-    { name: "no nodes", positions: [] as Vec2[] },
-    { name: "a single node", positions: [{ x: 40, y: 40 }] },
-    { name: "coincident nodes", positions: [{ x: 40, y: 40 }, { x: 40, y: 40 }] }
-  ])("falls back to the default extent for $name", ({ positions }) => {
-    expect(resultWorldSpanForNetwork(project(positions), 74)).toBe(DEFAULT_RESULT_WORLD_SPAN);
+  it("is framed by Fit without cropping", () => {
+    expect(CINEMA_VIEW_HEIGHT / cinemaFitZoom(SOLVED_DOMAIN_WORLD_SPAN)).toBeGreaterThanOrEqual(SOLVED_DOMAIN_WORLD_SPAN);
+  });
+});
+
+describe("Framing the solved domain", () => {
+  const square = { yaw: 0, pitch: 0 } as const;
+  /** Screen-space half-extents of a box under a fit, as a fraction of the framed view. */
+  const framed = (half: [number, number, number], settings: { yaw: number; pitch: number }, width: number, height: number) => {
+    const zoom = cinemaFitZoomForBox(half, settings, width, height);
+    const frustum = cinemaOrthographicFrustum(width, height, zoom);
+    const camera = createCinemaCamera(width, height, { ...settings, zoom, pan: { x: 0, y: 0 } });
+    camera.updateMatrixWorld();
+    let widest = 0;
+    let tallest = 0;
+    [-1, 1].forEach((sx) =>
+      [-1, 1].forEach((sy) =>
+        [-1, 1].forEach((sz) => {
+          const corner = new THREE.Vector3(half[0] * sx, half[1] * sy, half[2] * sz).applyMatrix4(camera.matrixWorldInverse);
+          widest = Math.max(widest, Math.abs(corner.x));
+          tallest = Math.max(tallest, Math.abs(corner.y));
+        })
+      )
+    );
+    return { zoom, width: widest / frustum.right, height: tallest / frustum.top };
+  };
+
+  it("fills the frame with a long strip instead of fitting a cube around it", () => {
+    const strip: [number, number, number] = [2.98, 0.18, 0];
+    const wide = framed(strip, square, 1200, 700);
+    // The strip is the subject, so it takes most of the frame it lies along ...
+    expect(wide.width).toBeGreaterThan(0.85);
+    // ... and stays inside it.
+    expect(wide.width).toBeLessThanOrEqual(1);
+    expect(wide.height).toBeLessThanOrEqual(1);
+    // The cube-shaped fit this replaced would have zoomed out instead of in.
+    expect(wide.zoom).toBeGreaterThan(cinemaFitZoom(SOLVED_DOMAIN_WORLD_SPAN));
+  });
+
+  it("keeps the domain inside the frame from any orbit and canvas shape", () => {
+    const domain: [number, number, number] = [2.4, 1.6, 0.9];
+    [
+      { yaw: 0, pitch: 0 },
+      { yaw: -32, pitch: 24 },
+      { yaw: 118, pitch: 76 },
+      { yaw: -175, pitch: -12 }
+    ].forEach((settings) => {
+      [
+        [1200, 700],
+        [520, 900]
+      ].forEach(([width, height]) => {
+        const placed = framed(domain, settings, width, height);
+        expect(placed.width).toBeLessThanOrEqual(1);
+        expect(placed.height).toBeLessThanOrEqual(1);
+      });
+    });
+  });
+
+  it("zooms in on a small domain and out on a large one, within the usable range", () => {
+    const small = cinemaFitZoomForBox([0.4, 0.4, 0.4], square, 1200, 700);
+    const large = cinemaFitZoomForBox([9, 9, 9], square, 1200, 700);
+
+    expect(small).toBeGreaterThan(large);
+    expect(small).toBe(clampCinemaZoom(small));
+    expect(large).toBe(clampCinemaZoom(large));
+  });
+
+  it("survives a degenerate domain rather than returning an unusable zoom", () => {
+    expect(Number.isFinite(cinemaFitZoomForBox([0, 0, 0], square, 1200, 700))).toBe(true);
+    expect(cinemaFitZoomForBox([0, 0, 0], square, 1200, 700)).toBe(clampCinemaZoom(Infinity));
+  });
+});
+
+describe("Solved domain caption placement", () => {
+  const caption = { cssWidth: 420, cssHeight: 96 };
+  const place = (viewWidth: number, viewHeight: number, zoom: number) =>
+    solvedDomainCaptionPlacement({ ...caption, viewWidth, viewHeight, zoom });
+
+  /** Where the caption's edges land on screen, in CSS pixels from the bottom-left. */
+  const onScreen = (viewWidth: number, viewHeight: number, zoom: number) => {
+    const placement = place(viewWidth, viewHeight, zoom);
+    const frustum = cinemaOrthographicFrustum(viewWidth, viewHeight, zoom);
+    const perPixel = (frustum.top - frustum.bottom) / viewHeight;
+    return {
+      width: placement.width / perPixel,
+      height: placement.height / perPixel,
+      left: (placement.x - placement.width / 2 - frustum.left) / perPixel,
+      bottom: (placement.y - placement.height / 2 - frustum.bottom) / perPixel
+    };
+  };
+
+  it("renders the caption at its authored pixel size, whatever the scene is zoomed to", () => {
+    const wide = onScreen(1200, 700, 1);
+    const zoomedIn = onScreen(1200, 700, 1.8);
+    const zoomedOut = onScreen(1200, 700, 0.45);
+
+    expect(wide.width).toBeCloseTo(420, 6);
+    expect(wide.height).toBeCloseTo(96, 6);
+    // A label that grew as the data was zoomed would be competing with it again.
+    expect(zoomedIn.width).toBeCloseTo(420, 6);
+    expect(zoomedOut.width).toBeCloseTo(420, 6);
+  });
+
+  it("holds the same corner inset at every zoom", () => {
+    [0.45, 1, 1.8].forEach((zoom) => {
+      const placed = onScreen(1200, 700, zoom);
+      expect(placed.left).toBeCloseTo(18, 6);
+      expect(placed.bottom).toBeCloseTo(18, 6);
+    });
+  });
+
+  it("scales itself down rather than spilling across a narrow canvas", () => {
+    const narrow = onScreen(420, 700, 1);
+
+    expect(narrow.width).toBeLessThanOrEqual(420 * 0.52 + 1e-9);
+    // Shrinks in proportion, so the type ramp inside it stays intact.
+    expect(narrow.height / narrow.width).toBeCloseTo(96 / 420, 6);
+  });
+
+  it("stays inside the frame it was placed in", () => {
+    [
+      [1200, 700],
+      [420, 700],
+      [900, 400]
+    ].forEach(([width, height]) => {
+      const placement = place(width, height, 1);
+      const frustum = cinemaOrthographicFrustum(width, height, 1);
+      expect(placement.x - placement.width / 2).toBeGreaterThanOrEqual(frustum.left);
+      expect(placement.x + placement.width / 2).toBeLessThanOrEqual(frustum.right);
+      expect(placement.y - placement.height / 2).toBeGreaterThanOrEqual(frustum.bottom);
+      expect(placement.y + placement.height / 2).toBeLessThanOrEqual(frustum.top);
+    });
+  });
+});
+
+describe("Naming the solved domain", () => {
+  /** Two stacked quad rows: a surface mesh with no thickness at all. */
+  const sheet = dataset(
+    [
+      [0, 0, 0],
+      [600, 0, 0],
+      [600, 36, 0],
+      [0, 36, 0]
+    ],
+    [[0, 1, 2, 3]],
+    [9]
+  );
+
+  /** One cell thick across z: what the default `planar-2d` mesh mode produces. */
+  const slab = dataset(hexPoints.map(([x, y, z]) => [x * 300, y * 20, z * 0.5] as [number, number, number]), [[0, 1, 2, 3, 4, 5, 6, 7]], [12]);
+
+  it("calls a zero-thickness dataset a flat 2-D surface", () => {
+    const description = describeSolvedDomain(sheet);
+
+    expect(description.shape).toBe("sheet");
+    expect(description.thinAxis).toBe(2);
+    expect(description.extent).toEqual([600, 36, 0]);
+    expect(description.lines[1]).toMatch(/flat 2-d domain/i);
+  });
+
+  it("calls a one-cell-thick dataset a flat 2-D domain and says it is not the drawn pipe", () => {
+    const description = describeSolvedDomain(slab);
+
+    expect(description.shape).toBe("slab");
+    expect(description.layers).toBe(2);
+    expect(description.lines[1]).toMatch(/one cell thick/i);
+    expect(description.lines[2]).toMatch(/not the round pipe drawn in the schematic/i);
+  });
+
+  it("calls a domain resolved across all three axes a volume, and does not deny the pipe twice", () => {
+    // A 2 x 2 x 2 block of hexahedra: three distinct coordinates on every axis.
+    const lattice: [number, number, number][] = [];
+    for (let z = 0; z < 3; z += 1) for (let y = 0; y < 3; y += 1) for (let x = 0; x < 3; x += 1) lattice.push([x, y, z]);
+    const at = (x: number, y: number, z: number) => z * 9 + y * 3 + x;
+    const cells: number[][] = [];
+    for (let z = 0; z < 2; z += 1) {
+      for (let y = 0; y < 2; y += 1) {
+        for (let x = 0; x < 2; x += 1) {
+          cells.push([
+            at(x, y, z), at(x + 1, y, z), at(x + 1, y + 1, z), at(x, y + 1, z),
+            at(x, y, z + 1), at(x + 1, y, z + 1), at(x + 1, y + 1, z + 1), at(x, y + 1, z + 1)
+          ]);
+        }
+      }
+    }
+    const description = describeSolvedDomain(dataset(lattice, cells, cells.map(() => 12)));
+
+    expect(description.shape).toBe("volume");
+    expect(description.layers).toBe(3);
+    expect(description.lines[1]).toMatch(/3-d volume domain/i);
+    expect(description.lines[2]).not.toMatch(/round pipe/i);
+    expect(description.lines[3]).toBe("2 × 2 × 2 in dataset units · 8 cells");
+  });
+
+  it("names the object and reports the measured extent and cell count, in dataset units", () => {
+    const description = describeSolvedDomain(sheet);
+
+    expect(description.lines[0]).toBe("SOLVED DOMAIN");
+    expect(description.lines[3]).toBe("600 × 36 × 0 in dataset units · 1 cell");
+    // No unit is asserted anywhere: a loaded VTK carries no units, and the
+    // bundled fixture is authored in schematic pixels rather than metres.
+    expect(description.lines.join(" ")).not.toMatch(/\bm\b|metre|meter|\bmm\b/i);
+  });
+
+  it("classifies by shape rather than by which axis happens to be thin", () => {
+    const acrossX = dataset(
+      [
+        [0, 0, 0],
+        [0, 600, 0],
+        [0, 600, 36],
+        [0, 0, 36]
+      ],
+      [[0, 1, 2, 3]],
+      [9]
+    );
+
+    expect(describeSolvedDomain(acrossX).thinAxis).toBe(0);
+    expect(describeSolvedDomain(acrossX).shape).toBe("sheet");
+  });
+
+  it("reads a millimetre-scale domain the same way as a metre-scale one", () => {
+    const millimetres = dataset(hexPoints.map(([x, y, z]) => [x * 300, y * 20, z * 0.5] as [number, number, number]), [[0, 1, 2, 3, 4, 5, 6, 7]], [12]);
+    const metres = dataset(hexPoints.map(([x, y, z]) => [x * 0.3, y * 0.02, z * 0.0005] as [number, number, number]), [[0, 1, 2, 3, 4, 5, 6, 7]], [12]);
+
+    expect(describeSolvedDomain(metres).shape).toBe(describeSolvedDomain(millimetres).shape);
+    expect(describeSolvedDomain(metres).layers).toBe(2);
+  });
+
+  it("survives an empty dataset instead of describing geometry that is not there", () => {
+    const empty = describeSolvedDomain(dataset([], [], []));
+
+    expect(empty.extent).toEqual([0, 0, 0]);
+    expect(empty.layers).toBe(0);
+    expect(empty.lines).toHaveLength(4);
   });
 });
