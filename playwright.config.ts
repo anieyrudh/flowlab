@@ -19,13 +19,15 @@ export default defineConfig({
     {
       command: `${testPython} -m uvicorn server.app:app --host 127.0.0.1 --port ${backendPort}`,
       url: `http://127.0.0.1:${backendPort}/api/health`,
-      reuseExistingServer: true,
+      // Reusing a stray dev server silently tests a different checkout.
+    reuseExistingServer: false,
       timeout: 20_000
     },
     {
       command: `npm run dev -- --port ${frontendPort}`,
       url: `http://127.0.0.1:${frontendPort}`,
-      reuseExistingServer: true,
+      // Reusing a stray dev server silently tests a different checkout.
+    reuseExistingServer: false,
       timeout: 20_000
     }
   ],

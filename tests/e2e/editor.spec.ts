@@ -692,7 +692,7 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByLabel("Full O-grid core cells per side")).toHaveValue("16");
 
     const generatedRequest = page.waitForRequest((request) => request.url().endsWith("/api/cases/generate"));
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
     const request = await generatedRequest;
     const payload = request.postDataJSON() as {
       project: {
@@ -733,7 +733,7 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByLabel("Curved-elbow core cells per side")).toHaveValue("4");
 
     const generatedRequest = page.waitForRequest((request) => request.url().endsWith("/api/cases/generate"));
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
     const request = await generatedRequest;
     const payload = request.postDataJSON() as {
       project: {
@@ -813,7 +813,7 @@ test.describe("FlowLab editor workspace", () => {
     await showStage(page, "CFD");
     await page.getByLabel("Mesh mode").selectOption("full-ogrid");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
     await expect(page.getByText("Generated-case mesh preview", { exact: true }).first()).toBeVisible();
   });
 
@@ -821,7 +821,7 @@ test.describe("FlowLab editor workspace", () => {
     await openFresh(page, "passed", { runnableOpenfoam: true });
     await showStage(page, "CFD");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
     await expect(page.getByText("Solver-produced mesh", { exact: true }).first()).toBeVisible();
   });
 
@@ -831,7 +831,7 @@ test.describe("FlowLab editor workspace", () => {
     await showStage(page, "CFD");
     await page.getByLabel("Mesh mode").selectOption("full-ogrid");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
     await page.getByRole("button", { name: "Index field files" }).click();
     await page.getByLabel("Indexed result artifacts").getByRole("button", { name: "Preview" }).click();
     await expect(page.getByText("Thinned artifact preview — surface only", { exact: true }).first()).toBeVisible();
@@ -863,7 +863,7 @@ test.describe("FlowLab editor workspace", () => {
     await openFresh(page, "passed", { keepCinema: true, runnableOpenfoam: true, verifiedMultiEdgeLink: true });
     await showStage(page, "CFD");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
     await showStage(page, "Inspect");
     const controls = page.getByLabel("Steady streamline controls");
     await controls.getByLabel("Streamline seed count").selectOption("256");
@@ -901,7 +901,7 @@ test.describe("FlowLab editor workspace", () => {
 
     await showStage(page, "CFD");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
     await showStage(page, "Inspect");
     await expect(page.getByText(/Verified per-cell case link/i).first()).toBeVisible();
 
@@ -1111,7 +1111,7 @@ test.describe("FlowLab editor workspace", () => {
     await showStage(page, "CFD");
 
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
 
     await expect(page.getByText("Job complete")).toBeVisible();
     await expect(page.getByText(/Final artifacts: 1 field, 1 diagnostic/)).toBeVisible();
@@ -1260,7 +1260,7 @@ test.describe("FlowLab editor workspace", () => {
 
     await showStage(page, "CFD");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
 
     await expect(page.getByLabel("Mesh QA panel")).toContainText("Ready");
     await expect(page.getByLabel("Mesh QA panel")).toContainText("approved");
@@ -1272,7 +1272,7 @@ test.describe("FlowLab editor workspace", () => {
     await showStage(page, "CFD");
 
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
 
     await expect(page.getByLabel("Mesh QA panel")).toContainText("Blocked");
     await expect(page.getByLabel("Native mesh command list")).toContainText("surfaceFeatureExtract");
@@ -1285,7 +1285,7 @@ test.describe("FlowLab editor workspace", () => {
     await showStage(page, "CFD");
 
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
 
     await expect(page.getByLabel("Mesh QA panel")).toContainText("Blocked");
     await expect(page.getByLabel("checkMesh metrics")).toContainText("2");
@@ -1347,7 +1347,7 @@ test.describe("FlowLab editor workspace", () => {
     await openFresh(page, "passed", { runnableOpenfoam: true, verifiedMultiEdgeLink: true });
     await showStage(page, "CFD");
     await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
-    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await page.getByRole("button", { name: "Run CFD case" }).click();
     await showStage(page, "Inspect");
 
     await page.getByRole("button", { name: "Build derived volume" }).click();
