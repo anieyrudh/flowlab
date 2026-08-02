@@ -76,35 +76,39 @@ const resultColorPalettes: Record<ResultColorMap, string[]> = {
   grayscale: ["#17212b", "#4b5d70", "#8da1b5", "#d6e2ec", "#ffffff"]
 };
 
-// --- Solved domain vs. schematic network -------------------------------------
-//
-// Two unrelated things share this scene and used to look alike:
-//   * the SOLVED DOMAIN - the VTK dataset the solver actually produced. Under
-//     the default `planar-2d` mesh mode that domain genuinely is a one-cell-thick
-//     channel, so a flat coloured slab is the honest picture of it.
-//   * the SCHEMATIC NETWORK - the pipe layout the user drew. It illustrates the
-//     layout; it is never a solved field.
-// Everything below keeps the two apart by construction: measured data is opaque,
-// unlit, un-fogged and outlined, while the drawn network is a ghosted wireframe.
+/* --- One subject at a time ----------------------------------------------------
+ *
+ * Two unrelated things used to share this scene:
+ *   * the SOLVED DOMAIN - the VTK dataset the solver actually produced. Under
+ *     the default `planar-2d` mesh mode that domain genuinely is a one-cell-thick
+ *     channel, so a flat coloured slab is the honest picture of it.
+ *   * the SCHEMATIC NETWORK - the pipe layout the user drew. It illustrates the
+ *     layout; it is never a solved field, and no solver ever meshed it.
+ *
+ * Styling them differently was not enough. Drawn together they invited the only
+ * reading a viewer can take from two objects sharing one space: that they are
+ * the same object seen two ways, at one scale, in one frame of reference. For a
+ * `planar-2d` case that reading is simply false - a flat slab is not the round
+ * bent pipe beside it - and the slab was additionally *stretched to the drawing's
+ * bounding box*, which manufactured the correspondence rather than merely
+ * implying it.
+ *
+ * So the scene now has one subject at a time. Before a result exists the drawn
+ * network is all there is and it is the subject. The moment a solved surface
+ * exists the network is not drawn at all: the data is the subject, it is sized
+ * to what the camera frames rather than to the drawing, and an in-scene caption
+ * says what the domain is and what it is not. Nothing is lost by dropping the
+ * network here - `SimulationCanvas` already refuses to pick schematic geometry
+ * once a result is loaded, so by then it was decoration that could not even be
+ * clicked. The layout is still one click away in the Schematic and Split views.
+ */
 
 /**
- * World-space Z the solved surface is lifted to. Negative so the measured data
- * sits *under* the drawn network rather than being hidden by it, and still well
- * clear of the reference grid. `probeAt` and the derived overlay reuse this so
- * physical coordinates round-trip exactly.
+ * World-space Z the solved surface is lifted to. `probeAt` and the derived
+ * overlay reuse it so physical coordinates round-trip exactly, and it keeps the
+ * data clear of the ground reference drawn beneath the schematic.
  */
 export const RESULT_SURFACE_Z_OFFSET = -0.24;
-
-/** Largest world extent of the solved domain when there is no network to match. */
-export const DEFAULT_RESULT_WORLD_SPAN = 5.2;
-
-/**
- * Bounds on the solved domain's world extent, so it is never a speck and never
- * overruns the default framing. The upper bound sits just inside the ~6.5 world
- * units the default camera sees, which is why a sprawling network does not drag
- * the solved slab off-screen with it.
- */
-const RESULT_WORLD_SPAN_RANGE: readonly [number, number] = [2.4, 5.8];
 
 /** Above this triangle count the boundary outline is skipped to protect frame time. */
 const MAX_OUTLINE_TRIANGLES = 120_000;
@@ -312,22 +316,6 @@ export function createSchematicPipeMaterials(color: THREE.Color, active: boolean
   return { cage, core, outline };
 }
 
-/**
- * Size the solved domain to the drawn network so the two read at a comparable
- * scale in one frame instead of one dwarfing the other. `fitCamera` frames the
- * network, so tying the domain to the same extent keeps both in view.
- */
-export function resultWorldSpanForNetwork(project: FluidProject, worldScale: number): number {
-  const nodes = Object.values(project.nodes);
-  if (nodes.length < 2) return DEFAULT_RESULT_WORLD_SPAN;
-  const xs = nodes.map((node) => node.position.x);
-  const ys = nodes.map((node) => node.position.y);
-  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / worldScale;
-  if (!Number.isFinite(span) || span <= 0) return DEFAULT_RESULT_WORLD_SPAN;
-  const [minimum, maximum] = RESULT_WORLD_SPAN_RANGE;
-  return Math.max(minimum, Math.min(maximum, span * 0.92));
-}
-
 function degreesToRadians(degrees: number) {
   return (degrees * Math.PI) / 180;
 }
@@ -505,6 +493,111 @@ function datasetBounds(dataset: VtkResultDataset) {
   };
 }
 
+/* --- Saying what the domain is ------------------------------------------------
+ *
+ * The caption is measured off the dataset, never off `project.solver.meshMode`.
+ * A loaded result is not always the project's own mesh - it can be an import or
+ * the bundled fixture - so a caption written from the *settings* would confidently
+ * describe geometry that is not on screen. Counting the dataset's own layers and
+ * extent can only ever describe what is actually being drawn, and for a genuine
+ * `planar-2d` run it arrives at the same sentence the mesh mode would have:
+ * one cell thick, and not the round pipe in the drawing.
+ */
+
+export type SolvedDomainShape =
+  /** Zero extent across one axis: a surface mesh with no thickness at all. */
+  | "sheet"
+  /** One cell across its thinnest axis: the default `planar-2d` channel. */
+  | "slab"
+  /** Resolved across all three axes. */
+  | "volume";
+
+export type SolvedDomainDescription = {
+  shape: SolvedDomainShape;
+  /** Distinct point coordinates along the thinnest axis. 1 is flat, 2 is one cell thick. */
+  layers: number;
+  /** Extent along each axis, in the dataset's own coordinates. */
+  extent: [number, number, number];
+  /** Index of the thinnest axis: 0 = x, 1 = y, 2 = z. */
+  thinAxis: 0 | 1 | 2;
+  /** Caption lines, most significant first. */
+  lines: string[];
+};
+
+/** Three significant figures, with no trailing zeroes and no invented precision. */
+function formatDatasetLength(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return "0";
+  return String(Number(value.toPrecision(3)));
+}
+
+/**
+ * Distinct coordinates along one axis, counted up to `limit`.
+ *
+ * Stops early because the only question asked of it is "one layer, two, or more
+ * than two", and a solved dataset can carry hundreds of thousands of points.
+ */
+function distinctAxisValues(dataset: VtkResultDataset, axis: 0 | 1 | 2, tolerance: number, limit = 3): number {
+  const seen: number[] = [];
+  for (const point of dataset.points) {
+    const value = point[axis];
+    if (seen.some((existing) => Math.abs(existing - value) <= tolerance)) continue;
+    seen.push(value);
+    if (seen.length >= limit) break;
+  }
+  return seen.length;
+}
+
+/**
+ * What the solved domain actually is, measured from the dataset itself.
+ *
+ * Everything here is an observation about the points on screen, so the caption
+ * it produces cannot overstate what the solver did.
+ */
+export function describeSolvedDomain(dataset: VtkResultDataset): SolvedDomainDescription {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (const point of dataset.points) {
+    for (let axis = 0; axis < 3; axis += 1) {
+      if (point[axis] < min[axis]) min[axis] = point[axis];
+      if (point[axis] > max[axis]) max[axis] = point[axis];
+    }
+  }
+  const extent = ([0, 1, 2] as const).map((axis) =>
+    Number.isFinite(min[axis]) && Number.isFinite(max[axis]) ? max[axis] - min[axis] : 0
+  ) as [number, number, number];
+  const widest = Math.max(...extent);
+  const thinAxis = (extent[0] <= extent[1] && extent[0] <= extent[2] ? 0 : extent[1] <= extent[2] ? 1 : 2) as 0 | 1 | 2;
+  // Relative tolerance: a mesh authored in millimetres and one authored in metres
+  // describe the same shape, so "distinct" has to mean distinct at this domain's
+  // own scale rather than at a fixed absolute one.
+  const layers = dataset.points.length === 0 ? 0 : distinctAxisValues(dataset, thinAxis, Math.max(widest, 1e-12) * 1e-9);
+
+  const shape: SolvedDomainShape = extent[thinAxis] === 0 ? "sheet" : layers <= 2 ? "slab" : "volume";
+  const headline =
+    shape === "sheet"
+      ? "Flat 2-D domain — a surface with no thickness"
+      : shape === "slab"
+        ? "Flat 2-D domain — one cell thick"
+        : "3-D volume domain";
+  const disclaimer =
+    shape === "volume"
+      ? "Solver mesh · the schematic pipe drawing is not shown"
+      : "This is not the round pipe drawn in the schematic";
+
+  return {
+    shape,
+    layers,
+    extent,
+    thinAxis,
+    lines: [
+      "SOLVED DOMAIN",
+      headline,
+      disclaimer,
+      `${extent.map(formatDatasetLength).join(" × ")} in dataset units · ${dataset.cells.length.toLocaleString("en-US")} cell${dataset.cells.length === 1 ? "" : "s"}`
+    ]
+  };
+}
+
 export type ExteriorCellFace = {
   pointIndices: number[];
   ownerCellIndex: number;
@@ -653,6 +746,136 @@ function addResultSurfaceMesh(
   return { surface, triangles, bounds, meshScale };
 }
 
+/** Supersampling factor for the caption texture, so its type stays crisp when zoomed in. */
+const CAPTION_SUPERSAMPLE = 3;
+
+/**
+ * Type ramp for the caption, in CSS pixels. Ordered to match
+ * `SolvedDomainDescription.lines`: an eyebrow that names the object, the headline
+ * that says what shape it is, then two lines of qualification.
+ */
+const CAPTION_LINE_STYLES: readonly { size: number; weight: number; color: string; tracking: number; gap: number }[] = [
+  { size: 11, weight: 700, color: "#79a4c0", tracking: 1.8, gap: 8 },
+  { size: 19, weight: 600, color: "#f2f8ff", tracking: 0, gap: 6 },
+  { size: 13, weight: 500, color: "#c6d8e6", tracking: 0, gap: 3 },
+  { size: 12, weight: 400, color: "#8ba4b6", tracking: 0, gap: 0 }
+];
+
+const CAPTION_FONT_STACK = `"Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif`;
+
+/** Fraction of the canvas the caption may occupy before it is scaled down to fit. */
+const CAPTION_MAX_WIDTH_FRACTION = 0.52;
+/** Gap between the caption and the bottom-left corner of the canvas, in CSS pixels. */
+const CAPTION_SCREEN_MARGIN = 18;
+
+export type SolvedDomainCaption = {
+  sprite: THREE.Sprite;
+  texture: THREE.Texture;
+  /** Authored size in CSS pixels, which `layoutCaption` reproduces on screen 1:1. */
+  cssWidth: number;
+  cssHeight: number;
+};
+
+/**
+ * The caption, drawn to a texture and parented to the camera.
+ *
+ * A `Sprite` because it must stay square to the reader at every yaw and pitch: a
+ * label that shears with the orbit stops being readable exactly when the viewer
+ * is trying hardest to work out what they are looking at. Parented to the camera
+ * rather than placed in the scene because "just under the domain" is only under
+ * it at one yaw - at any other the label lands across the data it is describing.
+ *
+ * Returns null rather than throwing when no 2D context is available, so a
+ * headless or canvas-less environment loses the label and keeps the data.
+ */
+export function createSolvedDomainCaption(lines: readonly string[]): SolvedDomainCaption | null {
+  if (lines.length === 0) return null;
+  const canvas = document.createElement("canvas");
+  const measuring = canvas.getContext("2d");
+  if (!measuring) return null;
+
+  const styled = lines.map((text, index) => ({ text, ...(CAPTION_LINE_STYLES[index] ?? CAPTION_LINE_STYLES[CAPTION_LINE_STYLES.length - 1]) }));
+  const fontFor = (line: (typeof styled)[number]) => `${line.weight} ${line.size}px ${CAPTION_FONT_STACK}`;
+  const widthOf = (line: (typeof styled)[number]) => {
+    measuring.font = fontFor(line);
+    return measuring.measureText(line.text).width + line.tracking * Math.max(0, line.text.length - 1);
+  };
+
+  // Wide enough for the halo below to fall inside the texture rather than being
+  // clipped at its edge, which would leave a hard corner on the glow.
+  const padding = 7;
+  const contentWidth = Math.max(...styled.map(widthOf));
+  const contentHeight = styled.reduce((total, line) => total + line.size * 1.2 + line.gap, 0);
+  const cssWidth = Math.max(1, Math.ceil(contentWidth + padding * 2));
+  const cssHeight = Math.max(1, Math.ceil(contentHeight + padding * 2));
+  canvas.width = cssWidth * CAPTION_SUPERSAMPLE;
+  canvas.height = cssHeight * CAPTION_SUPERSAMPLE;
+
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.scale(CAPTION_SUPERSAMPLE, CAPTION_SUPERSAMPLE);
+  context.textBaseline = "top";
+  // A halo rather than a plate. Wherever the domain reaches into the corner the
+  // caption has to stay readable, but a filled backdrop would hide the very data
+  // it is annotating - a glow off the background colour costs no pixels of it.
+  context.shadowColor = "rgba(2, 7, 13, 0.92)";
+  context.shadowBlur = 5;
+  let y = padding;
+  for (const line of styled) {
+    context.font = fontFor(line);
+    context.fillStyle = line.color;
+    if (line.tracking === 0) {
+      context.fillText(line.text, padding, y);
+    } else {
+      // `letterSpacing` is not universal, so tracking is applied by hand.
+      let x = padding;
+      for (const character of line.text) {
+        context.fillText(character, x, y);
+        x += context.measureText(character).width + line.tracking;
+      }
+    }
+    y += line.size * 1.2 + line.gap;
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+  material.fog = false;
+  material.toneMapped = false;
+  const sprite = new THREE.Sprite(material);
+  sprite.name = "Solved domain caption";
+  sprite.renderOrder = 6;
+  return { sprite, texture, cssWidth, cssHeight };
+}
+
+/**
+ * Where the caption sits in the camera's own space, so that it renders at its
+ * authored pixel size in the bottom-left corner whatever the zoom or canvas size.
+ *
+ * Pure and free of renderer state: the caption's placement is arithmetic on the
+ * orthographic frustum, which is the part worth pinning down in a test.
+ */
+export function solvedDomainCaptionPlacement(options: {
+  cssWidth: number;
+  cssHeight: number;
+  viewWidth: number;
+  viewHeight: number;
+  zoom: number;
+}): { width: number; height: number; x: number; y: number } {
+  const { left, bottom, top } = cinemaOrthographicFrustum(options.viewWidth, options.viewHeight, options.zoom);
+  // World units per CSS pixel for this frustum, which is what makes the caption
+  // hold its size on screen while the scene around it zooms.
+  const perPixel = (top - bottom) / Math.max(options.viewHeight, 1);
+  const fit = Math.min(1, (Math.max(options.viewWidth, 1) * CAPTION_MAX_WIDTH_FRACTION) / Math.max(options.cssWidth, 1));
+  const width = options.cssWidth * fit * perPixel;
+  const height = options.cssHeight * fit * perPixel;
+  const margin = CAPTION_SCREEN_MARGIN * perPixel;
+  return { width, height, x: left + margin + width / 2, y: bottom + margin + height / 2 };
+}
+
 function canvasNdc(canvas: HTMLCanvasElement, event: Pick<PointerEvent, "clientX" | "clientY">) {
   const rect = canvas.getBoundingClientRect();
   return new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1));
@@ -690,6 +913,21 @@ export const CINEMA_VIEW_HEIGHT = 6.48;
  */
 export const CINEMA_CAMERA_DISTANCE = 16;
 
+/**
+ * Fraction of the framed height the solved domain's longest axis fills at zoom 1.
+ *
+ * The domain used to be scaled to the drawn network's bounding box, which made a
+ * measured extent depend on how far apart the user happened to drag two icons.
+ * Sizing it against what the camera frames instead means the data arrives already
+ * centred and already the subject. It stays under 1 so that a domain seen square
+ * on still has margin around it, and so an orbit cannot swing a corner out of
+ * frame; the caption needs no share of this, being pinned to the canvas instead.
+ */
+export const SOLVED_DOMAIN_VIEW_FILL = 0.92;
+
+/** Longest world extent of the solved domain. Set by the camera, not by the drawing. */
+export const SOLVED_DOMAIN_WORLD_SPAN = CINEMA_VIEW_HEIGHT * SOLVED_DOMAIN_VIEW_FILL;
+
 /** Usable zoom range. Unchanged from the perspective rig, so the controls still feel the same. */
 export function clampCinemaZoom(zoom: number): number {
   return Math.max(0.45, Math.min(1.8, zoom));
@@ -714,6 +952,51 @@ export function cinemaOrthographicFrustum(width: number, height: number, zoom: n
 export function cinemaFitZoom(worldSpan: number): number {
   const required = Math.max(CINEMA_VIEW_HEIGHT / 2, Math.max(worldSpan, 0) * 1.3);
   return Math.max(0.25, Math.min(4, CINEMA_VIEW_HEIGHT / required));
+}
+
+/**
+ * The camera's own axes for a yaw and pitch, matching `applyCinemaCamera`.
+ *
+ * Returned as `three.js` builds them in `lookAt`: `depth` runs from the target
+ * back towards the eye, `right` and `up` span the image plane.
+ */
+function cinemaViewBasis(settings: Pick<CinemaCameraState, "yaw" | "pitch">) {
+  const yaw = degreesToRadians(settings.yaw);
+  const pitch = degreesToRadians(Math.max(-12, Math.min(78, settings.pitch)));
+  const worldUp = new THREE.Vector3(0, 0, 1);
+  const depth = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), -Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch)).normalize();
+  const right = new THREE.Vector3().crossVectors(worldUp, depth).normalize();
+  const up = new THREE.Vector3().crossVectors(depth, right).normalize();
+  return { right, up, depth };
+}
+
+/**
+ * Zoom that frames a box of these half-extents, seen from this yaw and pitch.
+ *
+ * `cinemaFitZoom` fits a single number and so has to assume the worst case in
+ * every direction, which for the solved domain means fitting a cube around a
+ * strip and leaving most of the frame empty. Projecting the box's own corners
+ * onto the image plane instead measures how much room the domain actually needs
+ * from where the viewer is standing, so Fit fills the frame with the data.
+ */
+export function cinemaFitZoomForBox(
+  halfExtents: readonly [number, number, number],
+  settings: Pick<CinemaCameraState, "yaw" | "pitch">,
+  width: number,
+  height: number,
+  fill = SOLVED_DOMAIN_VIEW_FILL
+): number {
+  const { right, up } = cinemaViewBasis(settings);
+  // A box's silhouette half-width along any screen axis is the sum of its
+  // half-extents projected onto that axis, whichever corner happens to be furthest.
+  const project = (axis: THREE.Vector3) =>
+    halfExtents[0] * Math.abs(axis.x) + halfExtents[1] * Math.abs(axis.y) + halfExtents[2] * Math.abs(axis.z);
+  const halfScreenWidth = project(right);
+  const halfScreenHeight = project(up);
+  const aspect = Math.max(width, 1) / Math.max(height, 1);
+  const byWidth = (CINEMA_VIEW_HEIGHT * aspect * fill) / Math.max(2 * halfScreenWidth, 1e-9);
+  const byHeight = (CINEMA_VIEW_HEIGHT * fill) / Math.max(2 * halfScreenHeight, 1e-9);
+  return clampCinemaZoom(Math.min(byWidth, byHeight));
 }
 
 export function createCinemaCamera(width: number, height: number, settings: CinemaCameraState): THREE.OrthographicCamera {
@@ -871,16 +1154,6 @@ export function buildCinemaScene(options: {
 
   scene.add(createCinemaAmbientLight());
 
-  // The grid alone carries the ground reference. The dark PlaneGeometry that
-  // used to sit here was a large flat rectangle directly beneath the solved
-  // slab, and the two rectangles read as one washed-out gradient backdrop.
-  const grid = new THREE.GridHelper(12, 24, 0x2b4d63, 0x16293a);
-  grid.rotation.x = Math.PI / 2;
-  grid.position.z = -0.62;
-  grid.name = "Schematic ground reference";
-  scene.add(grid);
-
-  const resultWorldSpan = resultWorldSpanForNetwork(project, worldScale);
   const resultSurface = resultDataset
     ? addResultSurfaceMesh(
         scene,
@@ -889,9 +1162,55 @@ export function buildCinemaScene(options: {
         resultFieldSelection,
         resultVectorComponent,
         resultColorMap,
-        resultWorldSpan
+        SOLVED_DOMAIN_WORLD_SPAN
       )
     : null;
+
+  /**
+   * Whether the drawn network is the subject. It is, right up until there is
+   * measured data to look at; after that it is not drawn at all rather than
+   * drawn quietly, because a second object in the frame is read as a second view
+   * of the same thing however faintly it is rendered.
+   */
+  const schematicIsSubject = resultSurface === null;
+
+  if (schematicIsSubject) {
+    // The ground reference belongs to the drawing. Its squares are world units,
+    // which measure nothing in the dataset, so leaving it under a solved domain
+    // would offer a scale cue that means nothing - the caption's measured extent
+    // is the honest replacement.
+    const grid = new THREE.GridHelper(12, 24, 0x2b4d63, 0x16293a);
+    grid.rotation.x = Math.PI / 2;
+    grid.position.z = -0.62;
+    grid.name = "Schematic ground reference";
+    scene.add(grid);
+  }
+
+  // Says what the domain is, in the corner of the frame, for as long as there is
+  // a domain to describe. Parented to the camera below, so orbiting the data
+  // never swings the label across it.
+  const caption = resultSurface && resultDataset ? createSolvedDomainCaption(describeSolvedDomain(resultDataset).lines) : null;
+  if (caption) {
+    scene.add(camera);
+    camera.add(caption.sprite);
+  }
+
+  /** Holds the caption at its authored pixel size in the corner, at any zoom or canvas size. */
+  function layoutCaption() {
+    if (!caption) return;
+    const placement = solvedDomainCaptionPlacement({
+      cssWidth: caption.cssWidth,
+      cssHeight: caption.cssHeight,
+      viewWidth,
+      viewHeight,
+      zoom: currentCamera.zoom
+    });
+    caption.sprite.scale.set(placement.width, placement.height, 1);
+    // Just inside the near plane, so the label is never clipped by it.
+    caption.sprite.position.set(placement.x, placement.y, -1);
+  }
+  layoutCaption();
+
   const streamlineScene = streamlines && resultSurface
     ? addStreamlineScene(scene, streamlines, resultSurface.bounds, resultSurface.meshScale, streamlineDisplay)
     : null;
@@ -903,7 +1222,7 @@ export function buildCinemaScene(options: {
     if (physicalBounds) {
       // Share the solved surface's own scale and lift, so derived overlays stay
       // registered with the data they were derived from.
-      const meshScale = resultSurface?.meshScale ?? resultWorldSpan / physicalBounds.span;
+      const meshScale = resultSurface?.meshScale ?? SOLVED_DOMAIN_WORLD_SPAN / physicalBounds.span;
       derivedPresentation.group.scale.setScalar(meshScale);
       derivedPresentation.group.position.set(
         -physicalBounds.center[0] * meshScale,
@@ -931,7 +1250,13 @@ export function buildCinemaScene(options: {
 
   const initialRoutes = routesByEdge(project);
 
-  Object.values(project.edges).forEach((edge) => {
+  // Empty once the data is the subject, which is what silences the drawn network:
+  // no pipes, no fittings, no vessels, no flow ticks, and nothing left in
+  // `edgeVisuals`/`nodeVisuals` for `updateModel` to keep in step.
+  const schematicEdges = schematicIsSubject ? Object.values(project.edges) : [];
+  const schematicNodes = schematicIsSubject ? Object.values(project.nodes) : [];
+
+  schematicEdges.forEach((edge) => {
     const route = initialRoutes.get(edge.id);
     const solved = result.edgeResults[edge.id];
     if (!route || !solved) return;
@@ -1075,7 +1400,7 @@ export function buildCinemaScene(options: {
     scene.add(particlePoints);
   }
 
-  Object.values(project.nodes).forEach((node) => {
+  schematicNodes.forEach((node) => {
     const position = worldFromNetwork(node.position, center, worldScale, 0.08);
     const active = selectedKind === "node" && selectedId === node.id;
     const nodeGroup = new THREE.Group();
@@ -1234,6 +1559,15 @@ export function buildCinemaScene(options: {
   }
 
   function fitCamera(settings: CinemaCameraState, nextProject: FluidProject): CinemaCameraState {
+    // Fit frames whatever the subject is. With a result loaded that is the solved
+    // domain, which is already centred on the origin, so fitting it is a zoom
+    // against its own silhouette rather than a search through the drawing.
+    if (resultSurface) {
+      const halfExtents = ([0, 1, 2] as const).map(
+        (axis) => ((resultSurface.bounds.max[axis] - resultSurface.bounds.min[axis]) / 2) * resultSurface.meshScale
+      ) as [number, number, number];
+      return { ...settings, zoom: cinemaFitZoomForBox(halfExtents, settings, viewWidth, viewHeight), pan: { x: 0, y: 0 } };
+    }
     const nodes = Object.values(nextProject.nodes);
     if (nodes.length === 0) return { ...settings, zoom: 1, pan: { x: 0, y: 0 } };
     const minX = Math.min(...nodes.map((node) => node.position.x));
@@ -1355,14 +1689,20 @@ export function buildCinemaScene(options: {
     // Orthographic scale lives in the frustum, so a resize has to re-derive it
     // from the current zoom rather than just changing an aspect ratio.
     applyCinemaCamera(camera, currentCamera, viewWidth, viewHeight);
+    layoutCaption();
     camera.updateMatrixWorld();
   }
 
   function dispose() {
     derivedPresentation?.dispose();
+    // The caption's texture is owned by the caption, not by its material, so
+    // disposing the material alone would leave the glyph atlas on the GPU.
+    caption?.texture.dispose();
     scene.traverse((object: THREE.Object3D) => {
       const mesh = object as THREE.Mesh;
-      if (mesh.geometry) mesh.geometry.dispose();
+      // Every `Sprite` in three.js shares one module-level quad; disposing it
+      // here would pull that quad out from under every other scene on the page.
+      if (mesh.geometry && !(object as THREE.Object3D as THREE.Sprite).isSprite) mesh.geometry.dispose();
       const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
       if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
       else material?.dispose();
@@ -1389,6 +1729,7 @@ export function buildCinemaScene(options: {
     updateCamera(settings: CinemaCameraState) {
       currentCamera = settings;
       applyCinemaCamera(camera, settings, viewWidth, viewHeight);
+      layoutCaption();
       camera.updateMatrixWorld();
       Object.assign(projectedPositions, projectedNodePositions(currentProject, center, worldScale, camera, viewWidth, viewHeight));
       renderer.render(scene, camera);
