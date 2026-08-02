@@ -3,13 +3,14 @@
 Status: **visualization-only software feature; no scientific, promotion, or release state change**
 
 FlowLab derives bounded presentation products from complete VTK/VTU solver
-artifacts. It does not solve or alter the governing equations, generate a new
-CFD solution, reinterpret a campaign gate, or modify retained solver evidence.
+artifacts. It does not solve or change the governing equations, generate a new
+CFD solution, reinterpret a campaign gate, or change retained solver evidence.
+
 The backend is authoritative for parsing, hashes, topology, units, timestamps,
 interpolation, source-cell provenance, deterministic pathlines, budgets, and
-cache admission. The browser is authoritative only for bounded binary
-decoding, GPU textures, transfer functions, raymarch presentation, internal
-cut planes, presentation-only iso extraction, and animation.
+cache admission. The browser is authoritative only for bounded binary decoding,
+GPU textures, transfer functions, raymarch presentation, internal cut planes,
+presentation-only iso extraction, and animation.
 
 ## Request examples
 
@@ -46,8 +47,8 @@ A steady volume request uses exactly one complete artifact:
 }
 ```
 
-A transient pathline request preserves artifact order and requires strictly
-increasing timestamps:
+A transient pathline request keeps the artifact order. It needs timestamps that
+increase strictly:
 
 ```json
 {
@@ -79,11 +80,11 @@ increasing timestamps:
 }
 ```
 
-Generated-job requests use `POST /api/jobs/{jobId}/derived`. The endpoint
-requires every full source artifact to match exactly one explicit
+Generated-job requests use `POST /api/jobs/{jobId}/derived`. At this endpoint,
+every full source artifact must match exactly one explicit
 `resultComponentMap` binding. The reserved `POST /api/derived/import` surface
-fails closed with HTTP 409 because imported artifacts have no generated-case
-component authority; imported results remain probe-only.
+fails closed with HTTP 409. Imported artifacts have no generated-case component
+authority, thus imported results stay probe-only.
 
 ## Manifest and blobs
 
@@ -99,8 +100,8 @@ The response schema is `flowlab.derived_visualization_manifest.v1`. It records:
 - one descriptor per little-endian binary blob, including type, component
   count, tuple count, byte length, and SHA-256.
 
-An abbreviated volume manifest looks like this (the real response also carries
-the full field, interpolation, limit, and blob descriptor lists):
+This is an abbreviated volume manifest. The real response also carries the full
+field, interpolation, limit, and blob descriptor lists.
 
 ```json
 {
@@ -159,15 +160,17 @@ Volume products contain:
 
 Pathline products contain positions, timestamps, path offsets, source-cell IDs,
 subcell IDs, barycentric weights, and ambiguity flags for every retained
-vertex. Integration is deterministic RK4 in space with linear interpolation
+vertex. Integration uses deterministic RK4 in space. It interpolates linearly
 between compatible timestamped velocity frames.
 
-Point fields use barycentric interpolation on prospectively fixed tetrahedral
-decompositions of linear tetrahedron, hexahedron, wedge, and pyramid cells.
-Cell fields remain source-cell constant. A sample that lies on more than one
-source cell has a deterministic value but is marked ambiguous and remains
-probe-only. Schematic selection is permitted only when a non-ambiguous source
-cell has exactly one owner in the explicit component map.
+Point fields use barycentric interpolation. That interpolation uses
+prospectively fixed tetrahedral decompositions of linear tetrahedron,
+hexahedron, wedge, and pyramid cells. Cell fields stay source-cell constant.
+
+A sample can lie on more than one source cell. Such a sample has a
+deterministic value, but FlowLab marks it as ambiguous and keeps it probe-only.
+FlowLab permits schematic selection only if a non-ambiguous source cell has
+exactly one owner in the explicit component map.
 
 ## Compatibility gates
 
@@ -182,9 +185,13 @@ Volume derivation rejects:
 - artifact paths outside the case or under `mesh/`;
 - artifact sets or output residency above the declared budgets.
 
-Transient pathlines additionally reject non-increasing or missing timestamps,
-geometry-digest drift, cell-order drift, incompatible field location/kind/unit,
-or a missing `U`/`Velocity` vector at any frame.
+Transient pathlines also reject:
+
+- timestamps that do not increase, and timestamps that are missing;
+- geometry-digest drift;
+- cell-order drift;
+- an incompatible field location, kind, or unit; and
+- a missing `U` or `Velocity` vector at any frame.
 
 ## Fixed budgets
 
@@ -207,10 +214,10 @@ No limit silently clamps or truncates a requested derived product.
   translucent raymarch, internal cut plane, optional presentation-only
   iso-surface, deterministic pathlines, and animated passive sprites share the
   same physical bounds.
-- WebGL1 retains the ordinary exterior VTK surface and reports
-  `webgl2-required`; it does not fabricate a volume fallback.
-- Iso triangles retain contributing source-cell IDs. A triangle with multiple
-  contributors or any ambiguous vertex is probe-only.
+- WebGL1 keeps the ordinary exterior VTK surface and reports
+  `webgl2-required`. It does not fabricate a volume fallback.
+- Iso triangles keep the contributing source-cell IDs. A triangle with more
+  than one contributor or with an ambiguous vertex is probe-only.
 - The current parser supports ASCII legacy VTK and ASCII VTU linear cells. It
   does not claim support for binary/appended VTU, polyhedra, higher-order cells,
   adaptive grids, arbitrary tensor fields, or a general-purpose visualization
@@ -218,9 +225,9 @@ No limit silently clamps or truncates a requested derived product.
 - Parsing, spatial indexing, voxelization, and pathline integration currently
   run synchronously in the local backend request. Large admitted grids can be
   CPU-intensive even though memory is bounded.
-- The derived cache is process-local and ephemeral. Restarting the backend
-  discards it and requires deterministic regeneration from the full source
-  artifact.
+- The derived cache is process-local and ephemeral. If you restart the backend,
+  FlowLab discards the cache. FlowLab must then regenerate it deterministically
+  from the full source artifact.
 - Derived output can visualize experimental CFD. It cannot validate that CFD,
   authorize a preset, change a benchmark pointer, or make a desktop candidate
   externally releasable.

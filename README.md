@@ -3,8 +3,8 @@
 [![Desktop Electron candidate](https://github.com/anieyrudh/flowlab/actions/workflows/desktop-electron-candidate.yml/badge.svg)](https://github.com/anieyrudh/flowlab/actions/workflows/desktop-electron-candidate.yml)
 
 FlowLab is a desktop application for fluid systems. You draw a system of pipes
-and components, get an immediate hydraulic estimate, then run a full CFD case
-on the same model.
+and components. FlowLab gives you an immediate hydraulic estimate. You can then
+run a full CFD case on the same model.
 
 Your project data stays on your computer.
 
@@ -21,10 +21,10 @@ Docker Desktop.
 ## Get FlowLab
 
 **Signed installers are not released yet.** Automated candidate builds pass on
-macOS 13+ Apple Silicon and on Windows 11 x64, but they are not signed, so your
-operating system will refuse to open them.
+macOS 13 or later on Apple Silicon, and on Windows 11 x64. But these builds are
+not signed. Your operating system will refuse to open them.
 
-Until a signed release exists, build FlowLab from source. Refer to
+Build FlowLab from source until a signed release exists. Refer to
 [the installation guide](docs/INSTALLATION.md).
 
 ## Start using it
@@ -54,7 +54,7 @@ Start the local service:
 npm run server
 ```
 
-In a second terminal, start the editor:
+Open a second terminal. Then start the editor:
 
 ```bash
 npm run dev
@@ -75,8 +75,8 @@ experimental. The accuracy evidence covers steady, incompressible, laminar flow
 only. It does not cover turbulence, transient flow, multiphase flow, or
 compressible flow.
 
-Refer to [benchmarks and verification status](docs/BENCHMARKS.md) for the
-measured results and the exact limit of each claim.
+Refer to [benchmarks and verification status](docs/BENCHMARKS.md). That page
+gives the measured results and the exact limit of each claim.
 
 ## Documentation
 
@@ -96,6 +96,6 @@ npm test -- --run
 npm run lint
 ```
 
-Seven tests fail if the local evidence archives are absent. That is expected.
+Seven tests fail if the local evidence archives are missing. That is expected.
 The complete command list is in
 [the installation guide](docs/INSTALLATION.md#verify-a-source-checkout).
