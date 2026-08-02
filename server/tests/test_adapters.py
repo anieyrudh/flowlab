@@ -1913,7 +1913,7 @@ def test_openfoam_full_ogrid_qualification_emits_explicit_multi_edge_volume(
     )
     assert (
         identity["algorithm"]
-        == "full-ogrid-normalized-logical-vertex-signature-v3"
+        == "full-ogrid-normalized-logical-vertex-signature-v4"
     )
     assert identity["sourceCellCount"] == 2496
     assert identity["unownedRanges"] == []

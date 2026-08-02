@@ -15,11 +15,33 @@ SOURCE_IDENTITY_ALGORITHM = "axisymmetric-logical-cell-vertex-signature-v2"
 SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH = (
     "full-ogrid-normalized-logical-vertex-signature-v3"
 )
+SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4 = (
+    "full-ogrid-normalized-logical-vertex-signature-v4"
+)
 SUPPORTED_SOURCE_IDENTITY_ALGORITHMS = {
     SOURCE_IDENTITY_ALGORITHM_V1,
     SOURCE_IDENTITY_ALGORITHM,
     SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH,
+    SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4,
 }
+# Both full O-grid algorithms express the same identity concept - a normalised
+# logical vertex signature with no ordering assumption - and both fail closed.
+# They differ only in numerical robustness, so product-path validation accepts
+# either, while a frozen campaign contract still pins one exact algorithm.
+FULL_OGRID_SOURCE_IDENTITY_ALGORITHMS = frozenset(
+    {
+        SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH,
+        SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4,
+    }
+)
+# Relative tolerance used by the v4 full O-grid algorithm to cluster normalised
+# cross-section coordinates. It must sit well above the numerical noise floor and
+# well below the smallest genuine gap between distinct normalised coordinates.
+# Measured on the frozen butterfly family: the noise floor is ~3.2e-8 (dominated
+# by the per-station radius estimate, plus ~1e-11 from OpenFOAM's
+# 10-significant-digit polyMesh output) and the smallest genuine gap is ~2.7e-2.
+# This value sits ~30x above the noise and ~27,000x below the signal.
+FULL_OGRID_LOGICAL_RELATIVE_TOLERANCE = 1.0e-6
 SOURCE_CELL_ID_FIELD = "flowlabSourceCellId"
 SOURCE_IDENTITY_CONTRACT_PATH = "constant/flowlab_result_identity_contract.json"
 SOURCE_IDENTITY_REPORT_PATH = "postProcessing/flowlab_result_identity.json"
@@ -101,12 +123,14 @@ def _source_signatures(
     return signatures
 
 
-def _clustered_ranks(values: list[float]) -> tuple[list[int], int]:
+def _clustered_ranks(
+    values: list[float], *, relative_tolerance: float = 1.0e-9
+) -> tuple[list[int], int]:
     if not values or any(not math.isfinite(value) for value in values):
         raise ResultIdentityError("logical identity coordinates must be finite")
     ordered = sorted(enumerate(values), key=lambda item: (item[1], item[0]))
     scale = max(1.0, max(abs(value) for value in values))
-    tolerance = 1.0e-9 * scale
+    tolerance = relative_tolerance * scale
     ranks = [0] * len(values)
     representatives: list[float] = []
     for original_index, value in ordered:
@@ -283,6 +307,156 @@ def _full_ogrid_logical_signatures(
     return signatures
 
 
+def _full_ogrid_logical_signatures_v4(
+    points: list[Any],
+    cells: list[Any],
+) -> list[str]:
+    """Tolerance-clustered logical vertex identity for the full O-grid path.
+
+    The v3 algorithm labelled each normalised cross-section coordinate with
+    ``format(value, ".9g")`` and compared those labels as exact text. Text
+    comparison of a rounded decimal is a discontinuous operator: two values that
+    differ by far less than the physical tolerance receive different labels when
+    they straddle a rounding boundary.
+
+    ``cos(22.5 deg) = 0.9238795325112867`` lies 1.13e-11 above the boundary
+    ``0.9238795325``. OpenFOAM writes ``constant/polyMesh/points`` with ten
+    significant digits, so the same physical vertex was labelled ``0.923879533``
+    from the generated mesh and ``0.923879532`` from the solver mesh. Every
+    16-sector butterfly cross-section necessarily contains that coordinate, so the
+    disagreement was structural rather than incidental: it reported 888 of 2,496
+    coarse cells as unmatched, and would have reported 5,920 of 19,968 and 56,344
+    of 159,744 at the medium and fine levels.
+
+    v4 keeps the identical normalisation and the identical set-of-eight-vertices
+    construction, and replaces only the two numerically brittle operators:
+
+    * exact-text quantisation becomes tolerance clustering, the same mechanism
+      already used for the axial direction here and by the axisymmetric v2
+      algorithm; and
+    * the per-station scale is averaged over the outer wall ring instead of taken
+      from a single ``max`` sample, so the scale no longer inherits the rounding
+      error of one arbitrary point.
+
+    This does not relax the contract. Cell signatures must still resolve to eight
+    unique logical vertices, signatures must still be globally unique, and the
+    caller still requires a strict one-to-one solver-to-source mapping. An
+    over-merged cluster therefore fails closed rather than binding the wrong cell.
+    """
+
+    parsed_points: list[tuple[float, float, float]] = []
+    for point in points:
+        if not isinstance(point, (list, tuple)) or len(point) != 3:
+            raise ResultIdentityError(
+                "full O-grid logical identity points require three coordinates"
+            )
+        coordinate = tuple(float(value) for value in point)
+        if any(not math.isfinite(value) for value in coordinate):
+            raise ResultIdentityError(
+                "full O-grid logical identity coordinates must be finite"
+            )
+        parsed_points.append(coordinate)
+
+    x_ranks, x_count = _clustered_ranks([point[0] for point in parsed_points])
+    if x_count < 2:
+        raise ResultIdentityError(
+            "full O-grid logical identity requires multiple axial stations"
+        )
+
+    station_scales: dict[int, float] = {}
+    for x_rank in range(x_count):
+        radii = [
+            math.hypot(point[1], point[2])
+            for index, point in enumerate(parsed_points)
+            if x_ranks[index] == x_rank
+        ]
+        peak = max(radii, default=0.0)
+        if not math.isfinite(peak) or peak <= 0.0:
+            raise ResultIdentityError(
+                "full O-grid logical identity has an invalid cross-section radius"
+            )
+        # Average the outer wall ring. Those points are analytically equidistant
+        # from the axis, so averaging cancels the per-point rounding error that a
+        # single `max` sample would otherwise propagate into every normalised
+        # coordinate at this station.
+        ring = [
+            radius
+            for radius in radii
+            if peak - radius <= FULL_OGRID_LOGICAL_RELATIVE_TOLERANCE * peak
+        ]
+        station_scales[x_rank] = sum(ring) / len(ring)
+
+    normalized_y = [
+        point[1] / station_scales[x_ranks[index]]
+        for index, point in enumerate(parsed_points)
+    ]
+    normalized_z = [
+        point[2] / station_scales[x_ranks[index]]
+        for index, point in enumerate(parsed_points)
+    ]
+    y_ranks, _ = _clustered_ranks(
+        normalized_y, relative_tolerance=FULL_OGRID_LOGICAL_RELATIVE_TOLERANCE
+    )
+    z_ranks, _ = _clustered_ranks(
+        normalized_z, relative_tolerance=FULL_OGRID_LOGICAL_RELATIVE_TOLERANCE
+    )
+    logical_points = [
+        (x_ranks[index], y_ranks[index], z_ranks[index])
+        for index in range(len(parsed_points))
+    ]
+
+    signatures: list[str] = []
+    for cell in cells:
+        if not isinstance(cell, list):
+            raise ResultIdentityError(
+                "full O-grid logical identity contains a non-list cell"
+            )
+        labels: set[tuple[int, int, int]] = set()
+        for raw_index in cell:
+            if (
+                not isinstance(raw_index, int)
+                or isinstance(raw_index, bool)
+                or raw_index < 0
+                or raw_index >= len(logical_points)
+            ):
+                raise ResultIdentityError(
+                    "full O-grid logical cell connectivity escapes the point array"
+                )
+            labels.add(logical_points[raw_index])
+        if len(labels) != 8:
+            raise ResultIdentityError(
+                "full O-grid cell identity requires eight unique logical vertices"
+            )
+        signatures.append(
+            "|".join(
+                f"{x_rank},{y_rank},{z_rank}"
+                for x_rank, y_rank, z_rank in sorted(labels)
+            )
+        )
+    if len(set(signatures)) != len(signatures):
+        raise ResultIdentityError(
+            "full O-grid logical cell vertex signatures are not unique"
+        )
+    return signatures
+
+
+def _is_full_ogrid_algorithm(algorithm: str) -> bool:
+    return algorithm in FULL_OGRID_SOURCE_IDENTITY_ALGORITHMS
+
+
+def _full_ogrid_signature_function(algorithm: str):
+    """Select the full O-grid signature builder declared by a contract.
+
+    Verification dispatches on the algorithm recorded in the identity contract, so
+    campaigns retained under v3 remain verifiable exactly as they were executed
+    while newly generated cases use v4.
+    """
+
+    if algorithm == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4:
+        return _full_ogrid_logical_signatures_v4
+    return _full_ogrid_logical_signatures
+
+
 def source_cell_identity_contract(mesh_snapshot: str) -> dict[str, Any]:
     try:
         mesh = json.loads(mesh_snapshot)
@@ -322,14 +496,14 @@ def source_cell_identity_contract(mesh_snapshot: str) -> dict[str, Any]:
     if mesh.get("profileSchema") == "flowlab.axisymmetric-profile.v1":
         algorithm = SOURCE_IDENTITY_ALGORITHM
     elif mesh.get("profileSchema") == "flowlab.full-ogrid-path-profile.v1":
-        algorithm = SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+        algorithm = SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4
     else:
         algorithm = SOURCE_IDENTITY_ALGORITHM_V1
     signatures = (
         _axisymmetric_logical_signatures(points, mesh.get("cells", []))
         if algorithm == SOURCE_IDENTITY_ALGORITHM
-        else _full_ogrid_logical_signatures(points, mesh.get("cells", []))
-        if algorithm == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+        else _full_ogrid_signature_function(algorithm)(points, mesh.get("cells", []))
+        if _is_full_ogrid_algorithm(algorithm)
         else _source_signatures(
             mesh,
             projection=projection,
@@ -515,11 +689,11 @@ def resolve_openfoam_source_cell_identity(
             generated_mesh.get("cells", []),
         )
         if algorithm == SOURCE_IDENTITY_ALGORITHM
-        else _full_ogrid_logical_signatures(
+        else _full_ogrid_signature_function(algorithm)(
             generated_mesh.get("points", []),
             generated_mesh.get("cells", []),
         )
-        if algorithm == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+        if _is_full_ogrid_algorithm(algorithm)
         else _source_signatures(
             generated_mesh,
             projection=projection,
@@ -537,8 +711,8 @@ def resolve_openfoam_source_cell_identity(
     solver_signatures = (
         _axisymmetric_logical_signatures(solver_points, solver_cells)
         if algorithm == SOURCE_IDENTITY_ALGORITHM
-        else _full_ogrid_logical_signatures(solver_points, solver_cells)
-        if algorithm == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+        else _full_ogrid_signature_function(algorithm)(solver_points, solver_cells)
+        if _is_full_ogrid_algorithm(algorithm)
         else [
             _cell_signature(solver_points, cell, projection=projection)
             for cell in solver_cells

@@ -1,0 +1,43 @@
+{
+  "schema": "flowlab.full-ogrid-geometry-experimental-qualification-contract-revision.v1",
+  "revisionId": "full-ogrid-generated-geometry-experimental-qualification-v5",
+  "frozenOn": "2026-08-02",
+  "status": "prospective-frozen-before-v5-retained-scientific-execution",
+  "baseContract": {
+    "path": "EXPERIMENTAL_QUALIFICATION_CONTRACT_V3.json",
+    "sha256": "f40c0dc582c58496209872c03808ee493c32535f3048af9e5ddbf78cbf98ba1f"
+  },
+  "v4Disposition": {
+    "campaignDirectory": "benchmarks/cases/full-ogrid-geometry/campaigns/2026-07-31-v4-r1",
+    "classification": "retained-pre-scientific-gate-result-identity-failure",
+    "solverExecuted": false,
+    "scientificGatesEvaluated": false,
+    "evidenceMayBeEditedOrReused": false,
+    "observedFailure": "The coarse level generated and meshed correctly (blockMesh 2,496 hexahedra, checkMesh Mesh OK) but stopped before solver launch because the generated and solver logical vertex signatures disagreed for 888 of 2,496 cells. The medium and fine levels were never queued.",
+    "resultMayBeReusedAsV5Outcome": false
+  },
+  "rationale": "The v3 identity algorithm labelled each normalised cross-section coordinate with format(value, '.9g') and compared those labels as exact text. Text comparison of a rounded decimal is discontinuous: values differing by far less than the physical tolerance receive different labels when they straddle a rounding boundary. cos(22.5 degrees) = 0.9238795325112867 lies 1.13e-11 above the boundary 0.9238795325, and OpenFOAM writes constant/polyMesh/points with ten significant digits, so the same physical vertex was labelled 0.923879533 from the generated mesh and 0.923879532 from the solver mesh. Every 16-sector butterfly cross-section necessarily contains that coordinate, so the disagreement was structural rather than incidental, and it reproduces at every level (888 of 2,496 coarse, 5,920 of 19,968 medium, 56,344 of 159,744 fine). V5 changes only result-identity and evaluator infrastructure. It replaces exact-text quantisation with tolerance clustering, averages the per-station scale over the outer wall ring instead of a single max sample, and repairs two checkMesh parsers that could never match any log. It changes no geometry, physics, grid, numerical threshold, expected trend, scientific claim, product status, or promotion gate.",
+  "mergePatch": {
+    "schema": "flowlab.full-ogrid-geometry-experimental-qualification-contract.v5",
+    "status": "prospective-frozen-before-v5-retained-scientific-execution",
+    "identity": {
+      "algorithm": "full-ogrid-normalized-logical-vertex-signature-v4"
+    },
+    "prospectiveRevision": {
+      "revisionId": "full-ogrid-generated-geometry-experimental-qualification-v5",
+      "baseContractSha256": "f40c0dc582c58496209872c03808ee493c32535f3048af9e5ddbf78cbf98ba1f",
+      "identityAlgorithmChange": "replace the discontinuous nine-significant-digit text quantisation of normalised cross-section coordinates with tolerance clustering at a relative tolerance of 1e-6, and take the per-station normalisation scale from the averaged outer wall ring rather than a single maximum sample",
+      "evaluatorParserRepairs": [
+        "the geometric-direction gate searched for 'Mesh has 3 geometric (non-empty) directions', but OpenFOAM 11 always writes the geometric line with the '(non-empty/wedge)' classification, so the literal test matched no mesh of any topology and the gate was permanently false rather than merely failing; it now parses the reported integer and compares it to the contract value, which is unchanged at 3",
+        "the connected-region gate searched for the anchored pattern '^\\s*regions:\\s+1\\s*$', but OpenFOAM writes 'Number of regions: 1 (OK).', so that gate was also permanently false; it now matches the reported count, and the required value is unchanged at 1"
+      ],
+      "identityAlgorithmChanges": true,
+      "scientificGateChanges": false,
+      "geometryOrPhysicsChanges": false,
+      "gateThresholdChanges": false,
+      "validatedOrPromotedStatusChanges": false,
+      "freshV3OrV4ExecutionAuthorized": false,
+      "predecessorResultMayBeReusedAsV5Outcome": false
+    }
+  }
+}

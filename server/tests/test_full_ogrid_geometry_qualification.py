@@ -32,7 +32,7 @@ def test_v3_contract_is_prospective_independent_and_nonpromotional() -> None:
     assert contract["review"]["validatedStatusChangeAuthorized"] is False
     assert contract["retention"]["trackedEvidenceMutationAuthorized"] is False
     assert contract["identity"]["algorithm"] == (
-        "full-ogrid-normalized-logical-vertex-signature-v3"
+        "full-ogrid-normalized-logical-vertex-signature-v4"
     )
 
     for relative_path, expected in (

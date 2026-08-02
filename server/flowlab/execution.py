@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterable
 
 from . import adapters
 from .result_identity import (
+    FULL_OGRID_SOURCE_IDENTITY_ALGORITHMS,
     SOURCE_CELL_ID_FIELD,
     SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH,
     ResultIdentityError,
@@ -3712,7 +3713,7 @@ def validate_solver_case(case: SolverCase) -> list[str]:
                         identity_contract = {}
                     if (
                         identity_contract.get("algorithm")
-                        != SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+                        not in FULL_OGRID_SOURCE_IDENTITY_ALGORITHMS
                         or identity_contract.get("orderingAssumptionAllowed")
                         is not False
                         or identity_contract.get("unownedRanges") != []

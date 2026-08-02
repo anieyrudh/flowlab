@@ -44,6 +44,7 @@ from .execution import (
 )
 from .result_identity import (
     SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH,
+    SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4,
     SOURCE_IDENTITY_CONTRACT_PATH,
     SOURCE_IDENTITY_REPORT_PATH,
     SOURCE_IDENTITY_REPORT_SCHEMA,
@@ -59,28 +60,36 @@ CONTRACT_PATH = (
     / "docs"
     / "validation"
     / "full-ogrid-geometry-experimental-qualification"
-    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V4.json"
+    / "EXPERIMENTAL_QUALIFICATION_CONTRACT_V5.json"
 )
 BASE_CONTRACT_PATH = CONTRACT_PATH.with_name(
     "EXPERIMENTAL_QUALIFICATION_CONTRACT_V3.json"
 )
-RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V4.md")
+# V4 is retained unchanged. It is listed as frozen so its digest stays provable,
+# but it is no longer the active revision.
+PRIOR_CONTRACT_PATH = CONTRACT_PATH.with_name(
+    "EXPERIMENTAL_QUALIFICATION_CONTRACT_V4.json"
+)
+RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V5.md")
 BASE_RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V3.md")
+PRIOR_RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V4.md")
 CAMPAIGN_SCHEMA = (
-    "flowlab.full-ogrid-geometry-experimental-qualification-campaign.v4"
+    "flowlab.full-ogrid-geometry-experimental-qualification-campaign.v5"
 )
 LEVEL_SCHEMA = (
-    "flowlab.full-ogrid-geometry-experimental-qualification-level.v4"
+    "flowlab.full-ogrid-geometry-experimental-qualification-level.v5"
 )
 RESULT_PIPELINE_SCHEMA = (
-    "flowlab.full-ogrid-multi-edge-result-pipeline-proof.v4"
+    "flowlab.full-ogrid-multi-edge-result-pipeline-proof.v5"
 )
 EXPECTED_PATCHES = {"inlet": "patch", "outlet": "patch", "walls": "wall"}
 FROZEN_PATHS = [
     str(CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
     str(BASE_CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
+    str(PRIOR_CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
     str(RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
     str(BASE_RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
+    str(PRIOR_RUNBOOK_PATH.relative_to(REPOSITORY_ROOT)),
     "server/flowlab/adapters.py",
     "server/flowlab/execution.py",
     "server/flowlab/full_ogrid.py",
@@ -118,9 +127,9 @@ def load_frozen_contract() -> tuple[dict[str, Any], str]:
             "contract-revision.v1"
         )
         or revision.get("revisionId")
-        != "full-ogrid-generated-geometry-experimental-qualification-v4"
+        != "full-ogrid-generated-geometry-experimental-qualification-v5"
         or revision.get("status")
-        != "prospective-frozen-before-v4-retained-scientific-execution"
+        != "prospective-frozen-before-v5-retained-scientific-execution"
     ):
         raise FullOGridGeometryQualificationError(
             "full-O-grid experimental qualification revision is unsupported "
@@ -133,7 +142,7 @@ def load_frozen_contract() -> tuple[dict[str, Any], str]:
         or base_reference.get("sha256") != _sha256_file(BASE_CONTRACT_PATH)
     ):
         raise FullOGridGeometryQualificationError(
-            "full-O-grid qualification base contract digest does not match v4"
+            "full-O-grid qualification base contract digest does not match v5"
         )
     contract = json.loads(BASE_CONTRACT_PATH.read_text(encoding="utf-8"))
 
@@ -156,13 +165,13 @@ def load_frozen_contract() -> tuple[dict[str, Any], str]:
     contract = merge_patch(contract, patch)
     if (
         contract.get("schema")
-        != "flowlab.full-ogrid-geometry-experimental-qualification-contract.v4"
+        != "flowlab.full-ogrid-geometry-experimental-qualification-contract.v5"
         or contract.get("contractId")
         != adapters.FULL_OGRID_QUALIFICATION_CONTRACT_ID
         or contract.get("status")
-        != "prospective-frozen-before-v4-retained-scientific-execution"
+        != "prospective-frozen-before-v5-retained-scientific-execution"
         or contract.get("identity", {}).get("algorithm")
-        != SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+        != SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4
         or contract.get("promotionAuthorized") is not False
     ):
         raise FullOGridGeometryQualificationError(
@@ -623,6 +632,39 @@ def _trend_gates(
     }
 
 
+def _check_mesh_directions(check_mesh: str) -> tuple[int | None, int | None]:
+    """Parse the geometric and solution direction counts from a checkMesh log.
+
+    OpenFOAM 11 always writes the geometric line with the ``(non-empty/wedge)``
+    classification, for example::
+
+        Mesh has 3 geometric (non-empty/wedge) directions (1 1 1)
+        Mesh has 3 solution (non-empty) directions (1 1 1)
+
+    Only the solution line uses the bare ``(non-empty)`` form. A literal substring
+    test for ``"Mesh has 3 geometric (non-empty) directions"`` therefore matches no
+    mesh of any topology, which left the geometric-direction gate permanently
+    false and unevaluatable rather than merely failing.
+
+    Returning the observed integers lets the gate compare counts and lets retained
+    evidence record what OpenFOAM actually reported. ``None`` means the line was
+    absent, which the caller must treat as a failure rather than a pass.
+    """
+
+    geometric = re.search(
+        r"Mesh has\s+(\d+)\s+geometric\s+\(non-empty(?:/wedge)?\)\s+directions",
+        check_mesh,
+    )
+    solution = re.search(
+        r"Mesh has\s+(\d+)\s+solution\s+\(non-empty\)\s+directions",
+        check_mesh,
+    )
+    return (
+        int(geometric.group(1)) if geometric else None,
+        int(solution.group(1)) if solution else None,
+    )
+
+
 def evaluate_level(
     case_dir: Path,
     case: SolverCase,
@@ -650,16 +692,17 @@ def evaluate_level(
         check_mesh
     )
     expected_count = int(level["expectedCellCount"])
+    geometric_directions, solution_directions = _check_mesh_directions(check_mesh)
     mesh_gate = {
         "checkMeshPassed": "Mesh OK." in check_mesh,
-        "solutionDirections3": (
-            "Mesh has 3 solution (non-empty) directions" in check_mesh
-        ),
-        "geometricDirections3": (
-            "Mesh has 3 geometric (non-empty) directions" in check_mesh
-        ),
+        "geometricDirections": geometric_directions,
+        "solutionDirections": solution_directions,
+        "solutionDirections3": solution_directions == 3,
+        "geometricDirections3": geometric_directions == 3,
+        # OpenFOAM writes `Number of regions: 1 (OK).`; the previous anchored
+        # pattern `^\s*regions:\s+1\s*$` matched no log line of any mesh.
         "oneConnectedRegion": re.search(
-            r"^\s*regions:\s+1\s*$", check_mesh, re.MULTILINE
+            r"Number of regions:\s*1\b", check_mesh
         )
         is not None,
         "allCellsHex": re.search(

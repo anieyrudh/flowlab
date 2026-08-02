@@ -17,6 +17,7 @@ from server.flowlab.result_identity import (
     SOURCE_CELL_ID_FIELD,
     SOURCE_IDENTITY_ALGORITHM,
     SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH,
+    SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4,
     SOURCE_IDENTITY_ALGORITHM_V1,
     SOURCE_IDENTITY_CONTRACT_PATH,
     ResultIdentityError,
@@ -198,8 +199,68 @@ def test_full_ogrid_logical_identity_is_invariant_to_axial_grading_and_radius() 
     contract = result_identity.source_cell_identity_contract(
         json.dumps(mesh)
     )
-    assert contract["algorithm"] == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH
+    assert contract["algorithm"] == SOURCE_IDENTITY_ALGORITHM_FULL_OGRID_PATH_V4
     assert contract["orderingAssumptionAllowed"] is False
+
+
+def test_full_ogrid_logical_identity_survives_openfoam_point_precision() -> None:
+    """Identity must survive the precision OpenFOAM actually writes points at.
+
+    ``constant/polyMesh/points`` is written with ten significant digits. The v3
+    algorithm labelled normalised coordinates with ``format(value, ".9g")`` and
+    compared those labels as exact text, so a coordinate sitting near a rounding
+    boundary was labelled differently either side of that truncation.
+    ``cos(22.5 deg)`` lies 1.13e-11 above such a boundary and is present in every
+    16-sector butterfly cross-section, which reported 888 of 2,496 coarse cells as
+    unmatched and blocked the qualification.
+
+    The previous invariance test only applied a smooth analytic grading, a
+    transformation the normalisation is exactly invariant to, so it could not
+    detect this class of failure.
+    """
+
+    spec = FullOGridPathSpec(
+        segments=(
+            FullOGridPathSegment(
+                edge_id="inlet-pipe",
+                edge_type="pipe",
+                length_m=0.06,
+                inlet_radius_m=0.006,
+                outlet_radius_m=0.006,
+                axial_cells=8,
+            ),
+        ),
+        annular_radial_cells=2,
+        circumferential_cells=16,
+        core_cells_per_side=4,
+    )
+    mesh = path_preview_mesh(
+        spec,
+        {"schema": "flowlab.full-ogrid-path-profile.v1"},
+    )
+    # Exactly what OpenFOAM does when it writes the polyMesh back out.
+    truncated_points = [
+        [float(format(float(value), ".10g")) for value in point]
+        for point in mesh["points"]
+    ]
+
+    assert result_identity._full_ogrid_logical_signatures_v4(
+        mesh["points"],
+        mesh["cells"],
+    ) == result_identity._full_ogrid_logical_signatures_v4(
+        truncated_points,
+        mesh["cells"],
+    )
+
+    # Document the historical defect: v3 is not invariant to the same truncation.
+    # It is retained so campaigns executed under it stay verifiable as executed.
+    assert result_identity._full_ogrid_logical_signatures(
+        mesh["points"],
+        mesh["cells"],
+    ) != result_identity._full_ogrid_logical_signatures(
+        truncated_points,
+        mesh["cells"],
+    )
 
 
 def test_solver_values_are_reordered_only_through_verified_mapping() -> None:
