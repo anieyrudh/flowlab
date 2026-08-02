@@ -250,7 +250,45 @@ describe("port-aware Tier 1 hydraulics", () => {
     expect(elbow.geometryMinorLossK).toBeGreaterThan(straight.geometryMinorLossK);
     expect(elbow.minorHeadLoss).toBeGreaterThan(straight.minorHeadLoss);
     expect(Math.abs(elbow.flowRate)).toBeLessThan(Math.abs(straight.flowRate));
-    expect(elbow.pressureDrop).toBeGreaterThan(straight.pressureDrop);
+
+    // Once the flow agrees with its own friction factor, the loss identically
+    // equals the driving head whatever the resistance: v^2 = 2*g*dH/resistance,
+    // so rho*resistance*v^2/2 collapses to rho*g*dH. Resistance therefore sets
+    // the flow, not the pressure drop, and the bend shows up as less flow
+    // (asserted above). The source is at 220 kPa and the sink at 120 kPa, at
+    // equal elevation, so both runs must consume exactly 100 kPa.
+    expect(straight.pressureDrop).toBeCloseTo(100_000, 6);
+    expect(elbow.pressureDrop).toBeCloseTo(100_000, 6);
+  });
+
+  it("matches Hagen-Poiseuille for a laminar round pipe", () => {
+    // The whole point of iterating: a single pass seeded at Re = 100,000 cannot
+    // reproduce a laminar answer. Oil keeps a normal-sized pipe laminar.
+    const density = 870;
+    const viscosity = 0.087;
+    const diameter = 0.02;
+    const length = 12;
+    const project = tier1PortGeometryProject("outlet", "inlet");
+    project.fluid = { ...project.fluid, density, dynamicViscosity: viscosity, vaporPressure: 100 };
+    project.nodes.source = { ...project.nodes.source, pressure: 101_325 + 4_000, elevation: 0 };
+    project.nodes.sink = { ...project.nodes.sink, pressure: 101_325, elevation: 0 };
+    project.edges.pipe = {
+      ...project.edges.pipe,
+      length,
+      shape: { kind: "circular", diameter },
+      roughness: 0.0000015,
+      minorLossK: 0
+    };
+
+    const solved = solveHydraulicNetwork(project);
+    const pipe = solved.edgeResults.pipe;
+    expect(solved.converged).toBe(true);
+    expect(pipe.reynolds).toBeLessThan(2300);
+
+    // Hagen-Poiseuille over the length the solver actually used.
+    const velocity = Math.abs(pipe.flowRate) / (Math.PI * (diameter / 2) ** 2);
+    const analytic = (32 * viscosity * velocity * pipe.effectiveLength) / diameter ** 2;
+    expect(pipe.majorHeadLoss * density * 9.80665).toBeCloseTo(analytic, 6);
   });
 
   it("orients control-volume reaction force along the selected port-to-port span", () => {
