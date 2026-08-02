@@ -4613,3 +4613,23 @@ body {
 
 .workspace-shell.dock-collapsed { grid-template-rows: minmax(64px, auto) minmax(0, 1fr) auto; }
 .workspace-shell.dock-collapsed .dock-panel { display: none; }
+
+
+/* ---- Top-bar file actions -------------------------------------------- */
+/* These were three unlabelled glyphs. They are the only way to keep or move
+   a project, so they carry their task in words. */
+/* `.toolbar-actions button` pins a 36px square for the icon-only controls, so
+   a labelled one has to opt out or its text overflows the button. */
+.toolbar-actions .file-action { width: auto; }
+
+.toolbar-actions { flex-wrap: wrap; }
+
+.file-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}

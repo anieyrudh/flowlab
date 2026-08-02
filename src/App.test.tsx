@@ -540,7 +540,7 @@ describe("FlowLab result visualization", () => {
     window.webkit = { messageHandlers: { flowlabDesktop: { postMessage } } };
     render(<App />);
 
-    fireEvent.click(screen.getByTitle("Export project"));
+    fireEvent.click(screen.getByTitle("Save a copy of this project"));
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "save-files",
@@ -558,7 +558,7 @@ describe("FlowLab result visualization", () => {
     window.flowlabDesktop = { platform: "darwin", saveFiles };
     render(<App />);
 
-    fireEvent.click(screen.getByTitle("Export project"));
+    fireEvent.click(screen.getByTitle("Save a copy of this project"));
 
     await waitFor(() => expect(saveFiles).toHaveBeenCalledTimes(1));
     expect(saveFiles.mock.calls[0][0]).toEqual([

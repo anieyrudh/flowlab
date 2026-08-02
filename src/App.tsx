@@ -2122,14 +2122,17 @@ export default function App() {
             <button type="button" aria-label="Redo" aria-keyshortcuts="Shift+Meta+Z Shift+Control+Z Meta+Y Control+Y" disabled={!canRedo} onClick={redo} title="Redo model edit">
               <Redo2 size={17} />
             </button>
-            <button onClick={exportProject} title="Export project">
-              <Download size={18} />
+            <button className="file-action" onClick={exportProject} title="Save a copy of this project" aria-label="Save a copy of this project">
+              <Download size={16} />
+              Save
             </button>
-            <button onClick={exportResultBundle} title="Export project and results">
-              <FileDown size={18} />
+            <button className="file-action" onClick={exportResultBundle} title="Save this project together with its results" aria-label="Save this project together with its results">
+              <FileDown size={16} />
+              Save + results
             </button>
-            <button onClick={() => fileRef.current?.click()} title="Import project">
-              <Upload size={18} />
+            <button className="file-action" onClick={() => fileRef.current?.click()} title="Open a project file" aria-label="Open a project file">
+              <Upload size={16} />
+              Open
             </button>
             <input
               ref={fileRef}
