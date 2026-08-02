@@ -13,6 +13,8 @@ import type {
 } from "../types";
 import type { CinemaCameraState } from "./viewportModel";
 import { recordEditorMetric } from "../performance/editorProfiler";
+import { addStreamlineScene } from "../streamlines/render";
+import type { StreamlineDisplayOptions, StreamlineResult } from "../streamlines/types";
 
 export type CinemaPick =
   | { kind: "node"; id: string }
@@ -380,11 +382,34 @@ export function buildCinemaScene(options: {
   resultFieldSelection: ResultFieldSelection | null;
   resultVectorComponent: ResultVectorComponent;
   resultColorMap: ResultColorMap;
+  streamlines?: StreamlineResult | null;
+  streamlineDisplay?: StreamlineDisplayOptions;
   selectedId: string | null;
   selectedKind?: "node" | "edge" | null;
 }): CinemaRuntime {
   const buildStarted = performance.now();
-  const { canvas, width, height, project, result, cinemaCamera = { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } }, resultDataset, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind } = options;
+  const {
+    canvas,
+    width,
+    height,
+    project,
+    result,
+    cinemaCamera = { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } },
+    resultDataset,
+    resultFieldSelection,
+    resultVectorComponent,
+    resultColorMap,
+    streamlines,
+    streamlineDisplay = {
+      colorField: "velocity",
+      colorMap: resultColorMap,
+      showLines: true,
+      showSprites: true,
+      reducedMotion: false
+    },
+    selectedId,
+    selectedKind
+  } = options;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(width, height, false);
@@ -461,6 +486,9 @@ export function buildCinemaScene(options: {
         resultVectorComponent,
         resultColorMap
       )
+    : null;
+  const streamlineScene = streamlines && resultSurface
+    ? addStreamlineScene(scene, streamlines, resultSurface.bounds, resultSurface.meshScale, streamlineDisplay)
     : null;
 
   const edgeValues = Object.values(result.edgeResults).map((edge) => {
@@ -820,6 +848,7 @@ export function buildCinemaScene(options: {
     engine: `three.js r${THREE.REVISION}`,
     render(time: number, advancePreview = true) {
       if (advancePreview) particleUniforms.uTime.value = time / 1000;
+      streamlineScene?.update(time, advancePreview);
       renderer.render(scene, camera);
     },
     updateModel,

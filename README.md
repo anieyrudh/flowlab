@@ -15,7 +15,8 @@ sending project data to a hosted service.
   flow through a straight circular pipe.
 - Supports one fail-closed experimental true-3D OpenFOAM path for a canonical
   90-degree circular elbow at Rc/D=3, 10D inlet/outlet legs, and Re=100.
-- Loads VTK/VTU results into a true 3D viewer with XYZ surface probing.
+- Loads VTK/VTU results into a true 3D viewer with XYZ surface probing and
+  [solver-derived steady streamlines](docs/solver-derived-streamlines.md).
 - Fails closed when geometry, topology, physics, or a solver runtime is not
   supported.
 

@@ -600,8 +600,10 @@ describe("FlowLab result visualization", () => {
 
     expect(await screen.findByText(/Using pressure from venturi-result\.vtk/)).toBeTruthy();
     expect(screen.getAllByText("Fixture result — developer example · probe only").length).toBeGreaterThan(1);
-    expect(screen.getByRole("button", { name: "Streamlines" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Pathlines" })).toBeDisabled();
+    expect(screen.getByLabelText("Steady streamline controls")).toHaveTextContent("Deterministic RK4 through loaded U(x,y,z)");
+    expect(screen.getByLabelText("Steady streamline controls")).toHaveTextContent("passive animation, not transient pathlines");
+    expect(screen.getByRole("button", { name: "Derive" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Automatic inlet seeds" })).toBeDisabled();
     expect(screen.getByLabelText("3D result camera controls")).toHaveTextContent("Yaw");
     expect(screen.getByLabelText("Result camera yaw")).toHaveValue("-32");
     fireEvent.change(screen.getByLabelText("Result camera yaw"), { target: { value: "45" } });
@@ -706,8 +708,7 @@ describe("FlowLab result visualization", () => {
     fireEvent.click(projectionFallback);
     expect(projectionFallback).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("cinema-canvas")).toHaveAttribute("data-canvas-render-mode", "projection");
-    expect(screen.getByRole("button", { name: "Streamlines" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Pathlines" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Derive" })).toBeDisabled();
   });
 
   it("shows an eligible generated-case mesh as the CFD authority before solver fields arrive", async () => {
@@ -914,8 +915,7 @@ describe("FlowLab result visualization", () => {
 
     expect(await screen.findByText(/Snapshot 25\/25/)).toBeTruthy();
     expect(screen.getAllByText("Thinned artifact preview — surface only").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Streamlines" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Pathlines" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Derive" })).toBeDisabled();
     expect(screen.getByText(/Using U from VTK\/case_24\.vtk preview/)).toBeTruthy();
     expect(screen.getByLabelText("Result field timeline")).toHaveTextContent("Trend");
     expect(screen.getByLabelText("Result field coverage")).toHaveTextContent("25/25 snapshots");

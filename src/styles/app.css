@@ -3540,6 +3540,56 @@ body {
   }
 }
 
+.streamline-controls {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(40, 198, 243, 0.22);
+  border-radius: 8px;
+  background: rgba(7, 17, 27, 0.58);
+}
+
+.streamline-control-header,
+.streamline-toggles {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.streamline-control-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.streamline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.streamline-grid label,
+.streamline-toggles label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.streamline-toggles label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.streamline-controls p,
+.streamline-controls small {
+  margin: 0;
+}
+
+.streamline-warning {
+  color: var(--warn-amber);
+}
+
 /* Guided dual-view workspace: the schematic and 3D views are peers, not modes. */
 .workflow-rail {
   display: grid;

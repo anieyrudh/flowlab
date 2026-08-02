@@ -670,8 +670,7 @@ test.describe("FlowLab editor workspace", () => {
     await page.getByRole("button", { name: "Index field files" }).click();
     await page.getByLabel("Indexed result artifacts").getByRole("button", { name: "Preview" }).click();
     await expect(page.getByText("Thinned artifact preview — surface only", { exact: true }).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "Streamlines" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Pathlines" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Derive" })).toBeDisabled();
 
     await showStage(page, "Inspect");
     await page.getByTestId("result-import-file").setInputFiles("public/fixtures/venturi-result.vtk");
@@ -682,6 +681,40 @@ test.describe("FlowLab editor workspace", () => {
 
     await page.getByLabel("Examples / Developer tooling").getByRole("button", { name: "Load fixture result" }).click();
     await expect(page.getByText("Fixture result — developer example · probe only", { exact: true }).first()).toBeVisible();
+  });
+
+  test("rejects steady streamline derivation for imported probe-only results", async ({ page }) => {
+    await openFresh(page, "passed", { keepCinema: true });
+    await loadFixtureResult(page);
+    const controls = page.getByLabel("Steady streamline controls");
+    await expect(controls).toContainText("Deterministic RK4 through loaded U(x,y,z)");
+    await expect(controls).toContainText("passive animation, not transient pathlines");
+    await expect(controls.getByRole("button", { name: "Derive" })).toBeDisabled();
+    await expect(controls.getByRole("button", { name: "Automatic inlet seeds" })).toBeDisabled();
+  });
+
+  test("keeps max-seed governed streamline cinema frames within budget", async ({ page }) => {
+    test.setTimeout(90_000);
+    await openFresh(page, "passed", { keepCinema: true, runnableOpenfoam: true, verifiedMultiEdgeLink: true });
+    await showStage(page, "CFD");
+    await page.getByRole("combobox", { name: "Solver" }).selectOption("openfoam");
+    await page.getByRole("button", { name: "Generate and queue experimental CFD case" }).click();
+    await showStage(page, "Inspect");
+    const controls = page.getByLabel("Steady streamline controls");
+    await controls.getByLabel("Streamline seed count").selectOption("256");
+    await controls.getByRole("button", { name: "Derive" }).click();
+    await expect(page.getByTestId("streamline-status")).toContainText("256 steady streamlines");
+
+    await page.evaluate(() => window.__flowlabEditorPerformance?.reset());
+    await page.waitForTimeout(750);
+    const performanceSnapshot = await page.evaluate(() => window.__flowlabEditorPerformance?.get());
+    expect(performanceSnapshot).toBeTruthy();
+    await test.info().attach("streamline-cinema-performance.json", {
+      body: Buffer.from(JSON.stringify(performanceSnapshot, null, 2)),
+      contentType: "application/json"
+    });
+    expect(performanceSnapshot?.counts["cinema-frame"]).toBeGreaterThan(10);
+    expect(performanceSnapshot?.p95["cinema-frame"]).toBeLessThan(16);
   });
 
   test("selects multi-edge generated results only through verified source-cell provenance", async ({ page }) => {

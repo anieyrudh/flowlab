@@ -24,6 +24,7 @@ import type {
 } from "../types";
 import type { CinemaPick, CinemaResultProbe, CinemaRuntime } from "./cinemaRenderer";
 import { recordEditorFrame, recordEditorMetric } from "../performance/editorProfiler";
+import type { StreamlineDisplayOptions, StreamlineResult } from "../streamlines/types";
 import {
   clampViewportZoom,
   defaultSchematicViewport,
@@ -44,6 +45,8 @@ type Props = {
   resultFieldSelection?: ResultFieldSelection | null;
   resultVectorComponent?: ResultVectorComponent;
   resultColorMap?: ResultColorMap;
+  streamlines?: StreamlineResult | null;
+  streamlineDisplay?: StreamlineDisplayOptions;
   canvasRenderMode?: CanvasRenderMode;
   cinemaCamera?: CinemaCameraState;
   resultViewMode?: ResultViewMode;
@@ -489,6 +492,8 @@ export function SimulationCanvas({
   resultFieldSelection = null,
   resultVectorComponent = "magnitude",
   resultColorMap = "turbo",
+  streamlines = null,
+  streamlineDisplay,
   canvasRenderMode = "cinema",
   cinemaCamera = { yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } },
   resultViewMode = "2d",
@@ -588,6 +593,8 @@ export function SimulationCanvas({
             resultFieldSelection,
             resultVectorComponent,
             resultColorMap,
+            streamlines,
+            streamlineDisplay,
             selectedId,
             selectedKind
           });
@@ -941,7 +948,7 @@ export function SimulationCanvas({
       resizeObserver?.disconnect();
       cancelAnimationFrame(animationId);
     };
-  }, [canvasRenderMode, force2dProjection, onRenderBackendChange, resultDataset, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind]);
+  }, [canvasRenderMode, force2dProjection, onRenderBackendChange, resultDataset, resultFieldSelection, resultVectorComponent, resultColorMap, selectedId, selectedKind, streamlineDisplay, streamlines]);
 
   useEffect(() => {
     if (canvasRenderMode !== "cinema") return;
