@@ -633,12 +633,22 @@ function defaultPortFor(node: FluidNode, role: "from" | "to"): PipePortId {
 
 function inferRotation(node: FluidNode, nodes: Record<NodeId, FluidNode>, edges: Record<string, FluidEdge>): number {
   if (typeof node.rotation === "number") return node.rotation;
-  const edge = Object.values(edges).find((candidate) => candidate.from === node.id || candidate.to === node.id);
+  // Aim along the flow. Taking whichever edge came first pointed a component in
+  // the middle of a chain at its UPSTREAM neighbour, so `portAngle`'s
+  // `inlet = base + 180` put its inlet on the downstream side. Straight-line
+  // drawing hid that; orthogonal routing shows it as a loop around the outside.
+  const candidates = Object.values(edges);
+  const outgoing = candidates.find((candidate) => candidate.from === node.id);
+  const edge = outgoing ?? candidates.find((candidate) => candidate.to === node.id);
   if (!edge) return 0;
   const otherId = edge.from === node.id ? edge.to : edge.from;
   const other = nodes[otherId];
   if (!other) return 0;
-  return Math.round((Math.atan2(other.position.y - node.position.y, other.position.x - node.position.x) * 180) / Math.PI);
+  // With only an incoming edge the neighbour is upstream, so face away from it.
+  const sense = outgoing ? 1 : -1;
+  const dx = sense * (other.position.x - node.position.x);
+  const dy = sense * (other.position.y - node.position.y);
+  return Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
 }
 
 export function normalizeProject(project: FluidProject): FluidProject {

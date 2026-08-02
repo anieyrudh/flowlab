@@ -128,7 +128,10 @@ describe("FlowLab editor browser workflows", () => {
 
     const edges = Object.values(useFlowStore.getState().project.edges);
     expect(edges).toHaveLength(3);
-    expect(edges.at(-1)).toMatchObject({ from: "source", to: "sink", fromPort: "north", toPort: "south" });
+    // The drop point is above the sink. It resolved to "south" only because the
+    // sink was inferred backwards; with the component aimed along the flow, a
+    // point above it is its north port.
+    expect(edges.at(-1)).toMatchObject({ from: "source", to: "sink", fromPort: "north", toPort: "north" });
 
     pointer("pointerDown", 120, 233);
     pointer("pointerMove", 720, 233);
