@@ -704,11 +704,17 @@ describe("FlowLab result visualization", () => {
     fireEvent.change(screen.getByTestId("result-import-file"), { target: { files: [imported] } });
 
     expect((await screen.findAllByText("Imported result — probe only")).length).toBeGreaterThan(0);
-    expect(screen.getByText("2D projection fallback — WebGL/accessibility/export")).toBeTruthy();
-    const projectionFallback = screen.getByRole("button", { name: "Use 2D projection fallback" });
+    // jsdom has no WebGL, so this is the automatic capability fallback rather
+    // than the user's own choice, and the notice now says which of the two it
+    // is. Both notice and control were relabelled out of developer language
+    // ("2D projection fallback — WebGL/accessibility/export", "Use 2D
+    // projection fallback"); neither changed what it does.
+    expect(screen.getByText("Simplified view — 3-D graphics are unavailable on this machine")).toBeTruthy();
+    const projectionFallback = screen.getByRole("button", { name: "Simplified view" });
     expect(projectionFallback).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(projectionFallback);
     expect(projectionFallback).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Simplified view — 3-D graphics turned off")).toBeTruthy();
     expect(screen.getByTestId("cinema-canvas")).toHaveAttribute("data-canvas-render-mode", "projection");
     expect(screen.getByRole("button", { name: "Derive" })).toBeDisabled();
   });
