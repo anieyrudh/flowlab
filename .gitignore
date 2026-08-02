@@ -24,7 +24,7 @@ coverage.xml
 htmlcov/
 
 # Node/Vite/TypeScript outputs
-node_modules/
+node_modules
 dist/
 coverage/
 .vite/
