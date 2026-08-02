@@ -862,7 +862,18 @@ test.describe("FlowLab editor workspace", () => {
     await expect(page.getByTestId("streamline-status")).toContainText("256 steady streamlines");
 
     await page.evaluate(() => window.__flowlabEditorPerformance?.reset());
-    await page.waitForTimeout(750);
+    // Collect frames until there are enough samples for a meaningful p95, rather
+    // than sampling a fixed wall-clock window. A CI runner has no GPU and renders
+    // through software, so a fixed 750 ms window made the required sample count
+    // depend on machine speed: it produced 9 frames where the test asks for more
+    // than 10, and the frame-time budget below never got to run. Waiting on the
+    // sample count keeps that budget unchanged and still fails if rendering
+    // genuinely stalls.
+    await page.waitForFunction(
+      () => (window.__flowlabEditorPerformance?.get()?.counts["cinema-frame"] ?? 0) > 10,
+      undefined,
+      { timeout: 30_000 }
+    );
     const performanceSnapshot = await page.evaluate(() => window.__flowlabEditorPerformance?.get());
     expect(performanceSnapshot).toBeTruthy();
     await test.info().attach("streamline-cinema-performance.json", {
