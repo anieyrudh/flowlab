@@ -14,6 +14,8 @@ import math
 import platform
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
 import time
 from typing import Any, Sequence
@@ -73,6 +75,12 @@ PRIOR_CONTRACT_PATH = CONTRACT_PATH.with_name(
 RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V5.md")
 BASE_RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V3.md")
 PRIOR_RUNBOOK_PATH = CONTRACT_PATH.with_name("RUNBOOK_V4.md")
+# V6 is drafted but deliberately not frozen and not loaded. Runtime-efficiency
+# levers (MPI decomposition, mesh sequencing, iteration control) are authorized
+# only by the active revision, so under V5 every lever below refuses to run.
+DRAFT_CONTRACT_PATH = CONTRACT_PATH.with_name(
+    "EXPERIMENTAL_QUALIFICATION_CONTRACT_V6.json"
+)
 CAMPAIGN_SCHEMA = (
     "flowlab.full-ogrid-geometry-experimental-qualification-campaign.v5"
 )
@@ -83,6 +91,7 @@ RESULT_PIPELINE_SCHEMA = (
     "flowlab.full-ogrid-multi-edge-result-pipeline-proof.v5"
 )
 EXPECTED_PATCHES = {"inlet": "patch", "outlet": "patch", "walls": "wall"}
+MESH_SEQUENCING_TIMEOUT_SECONDS = 1800.0
 FROZEN_PATHS = [
     str(CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
     str(BASE_CONTRACT_PATH.relative_to(REPOSITORY_ROOT)),
@@ -179,6 +188,65 @@ def load_frozen_contract() -> tuple[dict[str, Any], str]:
             "or not prospectively frozen"
         )
     return contract, _sha256_text(text)
+
+
+def runtime_efficiency(contract: dict[str, Any]) -> dict[str, Any]:
+    """Return the runtime-efficiency levers the active revision authorizes.
+
+    Runtime settings are contract-governed, so a revision that does not declare
+    ``runtime.efficiency`` authorizes nothing. This is deliberately fail-closed:
+    V5 declares no block, so ``--mpi-ranks`` and ``--mesh-sequencing`` refuse
+    rather than silently producing a campaign whose runtime configuration was
+    never prospectively declared.
+    """
+
+    runtime = contract.get("runtime")
+    block = runtime.get("efficiency") if isinstance(runtime, dict) else None
+    if not isinstance(block, dict):
+        return {
+            "declared": False,
+            "allowedRanks": (1,),
+            "decomposition": None,
+            "meshSequencingAuthorized": False,
+            "iterationControl": None,
+        }
+    parallel = block.get("parallel") if isinstance(block.get("parallel"), dict) else {}
+    sequencing = (
+        block.get("meshSequencing")
+        if isinstance(block.get("meshSequencing"), dict)
+        else {}
+    )
+    iteration_control = (
+        block.get("iterationControl")
+        if isinstance(block.get("iterationControl"), dict)
+        else None
+    )
+    allowed_ranks = (1,)
+    if parallel.get("authorized") is True:
+        declared = parallel.get("allowedRanks")
+        if not isinstance(declared, list) or not all(
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 1 <= value <= 256
+            for value in declared
+        ):
+            raise FullOGridGeometryQualificationError(
+                "contract runtime.efficiency.parallel.allowedRanks must be a list "
+                "of integers from 1 through 256"
+            )
+        if parallel.get("method") != "scotch":
+            raise FullOGridGeometryQualificationError(
+                "contract runtime.efficiency.parallel.method must be scotch"
+            )
+        allowed_ranks = tuple(sorted({1, *declared}))
+    return {
+        "declared": True,
+        "allowedRanks": allowed_ranks,
+        "decomposition": "scotch" if allowed_ranks != (1,) else None,
+        "meshSequencingAuthorized": sequencing.get("authorized") is True,
+        "meshSequencing": sequencing,
+        "iterationControl": iteration_control,
+    }
 
 
 def _base_project(name: str) -> dict[str, Any]:
@@ -335,6 +403,7 @@ def _runtime_project(
     contract: dict[str, Any],
     contract_sha256: str,
     level: dict[str, Any],
+    mpi_ranks: int = 1,
 ) -> dict[str, Any]:
     physical = contract["physicalCase"]
     project = _path_project(
@@ -352,7 +421,175 @@ def _runtime_project(
         volumetric_flow_rate=float(physical["volumetricFlowRateM3PerS"]),
     )
     project["solver"]["meshResolution"] = str(level["id"])
+    if mpi_ranks > 1:
+        # Reuse the reviewed narrow-envelope parallel opt-in verbatim: scotch
+        # decomposition, decomposePar/mpirun/reconstructPar in the generated
+        # Allrun, so downstream result reading stays byte-for-byte unchanged.
+        project["solver"]["performance"] = {
+            "openfoamParallel": {
+                "enabled": True,
+                "ranks": int(mpi_ranks),
+                "decomposition": "scotch",
+            }
+        }
     return project
+
+
+_INTERNAL_FIELD_PATTERN = re.compile(r"internalField\s.*?;", re.DOTALL)
+
+
+def _splice_internal_field(target_text: str, mapped_text: str) -> str:
+    """Replace only the ``internalField`` entry, keeping boundary conditions.
+
+    ``mapFields`` rewrites the whole field file. The O-grid inlet is a
+    ``codedFixedValue`` carrying the ``fullOGridParabolicInlet`` generator, and
+    the runtime validator requires that entry verbatim, so the mapped file is
+    never adopted wholesale. Only the initial interior values change, which is
+    exactly and only what mesh sequencing is entitled to change.
+    """
+
+    mapped = _INTERNAL_FIELD_PATTERN.search(mapped_text)
+    if mapped is None or _INTERNAL_FIELD_PATTERN.search(target_text) is None:
+        raise FullOGridGeometryQualificationError(
+            "mapped field file does not contain a parsable internalField entry"
+        )
+    return _INTERNAL_FIELD_PATTERN.sub(
+        lambda _match: mapped.group(0), target_text, count=1
+    )
+
+
+def _sequence_source_time(source_case_dir: Path) -> str:
+    times = sorted(
+        (float(path.name), path.name)
+        for path in source_case_dir.iterdir()
+        if path.is_dir() and re.fullmatch(r"\d+(?:\.\d+)?", path.name)
+    )
+    if not times or times[-1][0] <= 0.0:
+        raise FullOGridGeometryQualificationError(
+            f"mesh-sequencing source has no converged time directory: {source_case_dir}"
+        )
+    return times[-1][1]
+
+
+def apply_mesh_sequencing(
+    case: SolverCase,
+    *,
+    source_level_id: str,
+    source_case_dir: Path,
+    scratch_dir: Path,
+    image_tag: str,
+    fields: Sequence[str] = ("U", "p"),
+) -> dict[str, Any]:
+    """Initialize this level from the converged coarser level with ``mapFields``.
+
+    A converged steady solution does not depend on its initial condition, so this
+    changes no accepted result. It does change the reproducibility story: levels
+    become an ordered chain rather than independent runs, so the mapped initial
+    fields are digested into the campaign evidence and the coarsest level always
+    cold-starts. The stopping rule is untouched - the finer level still runs the
+    same declared common iteration count and is still gated on it.
+
+    Measured on this case, sequencing was no help: the medium level reached
+    durable QoI stationarity at iteration 202 when mapped from the converged
+    coarse solution against 185 cold-started, because the coarse source is
+    itself only converged to a 1e-4 residual plateau. The mechanism is kept
+    opt-in and contract-gated rather than enabled.
+    """
+
+    source_time = _sequence_source_time(source_case_dir)
+    target_dir = scratch_dir / "target"
+    source_dir = scratch_dir / "source"
+    materialize_case_files(case, target_dir)
+    (source_dir / "constant").mkdir(parents=True, exist_ok=True)
+    (source_dir / "system").mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source_case_dir / "constant" / "polyMesh",
+        source_dir / "constant" / "polyMesh",
+    )
+    for name in ("controlDict", "fvSchemes", "fvSolution"):
+        shutil.copy2(
+            source_case_dir / "system" / name, source_dir / "system" / name
+        )
+    # The foundation-style runtime rewrites controlDict to `#include "functions"`,
+    # and mapFields opens the source controlDict, so the include target must
+    # travel with it.
+    functions = source_case_dir / "system" / "functions"
+    if functions.is_file():
+        shutil.copy2(functions, source_dir / "system" / "functions")
+    shutil.copytree(source_case_dir / source_time, source_dir / source_time)
+
+    script = (
+        "source /opt/openfoam11/etc/bashrc && "
+        "cd /sequence/target && blockMesh > log.blockMesh 2>&1 && "
+        "mapFields /sequence/source -consistent -sourceTime latestTime "
+        "> log.mapFields 2>&1"
+    )
+    # The shared `_run` provenance helper caps at 30 s, which the fine-level
+    # blockMesh plus mapFields exceeds.
+    try:
+        mapped = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--platform",
+                "linux/amd64",
+                "--entrypoint",
+                "/bin/bash",
+                "-v",
+                f"{scratch_dir}:/sequence",
+                image_tag,
+                "-lc",
+                script,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=MESH_SEQUENCING_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise FullOGridGeometryQualificationError(
+            f"mesh sequencing from {source_level_id} could not run: {exc}"
+        ) from exc
+    if mapped.returncode != 0:
+        detail = (target_dir / "log.mapFields").read_text(
+            encoding="utf-8", errors="replace"
+        )[-2000:] if (target_dir / "log.mapFields").is_file() else mapped.stderr
+        raise FullOGridGeometryQualificationError(
+            f"mesh sequencing mapFields failed from {source_level_id}: {detail}"
+        )
+    provenance: dict[str, Any] = {
+        "utility": "mapFields -consistent -sourceTime latestTime",
+        "sourceLevel": source_level_id,
+        "sourceTime": source_time,
+        "mappedFields": list(fields),
+        "boundaryConditionsPreserved": True,
+        # The executed case deliberately differs from the preflight-hashed file
+        # set in exactly these initial-condition files, and in nothing else.
+        "divergesFromPreflightFileSet": [f"0/{field}" for field in fields],
+        "mappedInternalFieldSha256": {},
+    }
+    for field in fields:
+        relative = f"0/{field}"
+        mapped_path = target_dir / relative
+        if not mapped_path.is_file():
+            raise FullOGridGeometryQualificationError(
+                f"mesh sequencing did not produce {relative}"
+            )
+        spliced = _splice_internal_field(
+            case.files[relative],
+            mapped_path.read_text(encoding="utf-8", errors="replace"),
+        )
+        case.files[relative] = spliced
+        provenance["mappedInternalFieldSha256"][relative] = _sha256_text(spliced)
+    # The case manifest records every generated file's size and digest and is
+    # enforced by validate_solver_case, so it must be rebuilt over the mapped
+    # initial condition rather than left describing the cold-start fields.
+    adapters.add_case_manifest(case)
+    provenance["caseManifestSha256"] = _sha256_text(
+        case.files[adapters.CASE_MANIFEST_PATH]
+    )
+    return provenance
 
 
 def _build_case(project: dict[str, Any]) -> SolverCase:
@@ -429,6 +666,7 @@ def materialize_preflight(
     output_dir: Path,
     contract: dict[str, Any],
     contract_sha256: str,
+    mpi_ranks: int = 1,
 ) -> tuple[dict[str, SolverCase], dict[str, Any]]:
     cases: dict[str, SolverCase] = {}
     generation: list[dict[str, Any]] = []
@@ -458,8 +696,12 @@ def materialize_preflight(
             }
         )
     for level in contract["levels"]:
-        first = _build_case(_runtime_project(contract, contract_sha256, level))
-        second = _build_case(_runtime_project(contract, contract_sha256, level))
+        first = _build_case(
+            _runtime_project(contract, contract_sha256, level, mpi_ranks)
+        )
+        second = _build_case(
+            _runtime_project(contract, contract_sha256, level, mpi_ranks)
+        )
         first_hashes = _file_hashes(first)
         if first_hashes != _file_hashes(second):
             raise FullOGridGeometryQualificationError(
@@ -665,6 +907,64 @@ def _check_mesh_directions(check_mesh: str) -> tuple[int | None, int | None]:
     )
 
 
+def _final_initial_residual(solver_log: str, field: str) -> float:
+    values = re.findall(
+        rf"Solving for {field}, Initial residual = ([0-9.eE+-]+)", solver_log
+    )
+    return float(values[-1]) if values else math.inf
+
+
+def _iteration_control_gate(
+    solver_log: str, iteration_control: dict[str, Any]
+) -> dict[str, Any]:
+    """Assert that this level ran the declared common iteration count.
+
+    Measured on the frozen case: the pressure initial residual plateaus near
+    1e-4 at coarse and near 7e-8 at medium and never reaches the generated
+    ``residualControl`` value of 1e-8, so the SIMPLE loop always runs to the
+    frozen 2,000-iteration budget. The fixed common count, not a residual
+    criterion, is what actually keeps the iterative state comparable across
+    grid levels, and no single absolute residual criterion is reachable at
+    every level.
+
+    The gate therefore fails closed if any level stops early - including on
+    ``residualControl`` - because grid levels stopping at different iterative
+    states is what failed 18 of 24 laminar-all-hex v3 order-spread groups.
+    Residual values are recorded as diagnostics, not thresholds.
+    """
+
+    expected = int(iteration_control["iterations"])
+    iterations = len(re.findall(r"^Time = ", solver_log, re.MULTILINE))
+    gate = {
+        "method": iteration_control.get("method"),
+        "iterations": iterations,
+        "declaredCommonIterations": expected,
+        "commonAcrossLevels": (
+            iteration_control.get("commonAcrossLevels") is True
+        ),
+        "iterationCountMatchesDeclared": iterations == expected,
+        "residualBasedEarlyStopAuthorized": (
+            iteration_control.get("residualBasedEarlyStopAuthorized") is True
+        ),
+        "earlyStopObserved": "SIMPLE solution converged" in solver_log,
+        "diagnosticFinalAxialInitialResidual": _final_initial_residual(
+            solver_log, "Ux"
+        ),
+        "diagnosticFinalPressureInitialResidual": _final_initial_residual(
+            solver_log, "p"
+        ),
+    }
+    gate["passed"] = (
+        gate["commonAcrossLevels"]
+        and gate["iterationCountMatchesDeclared"]
+        and not (
+            gate["earlyStopObserved"]
+            and not gate["residualBasedEarlyStopAuthorized"]
+        )
+    )
+    return gate
+
+
 def evaluate_level(
     case_dir: Path,
     case: SolverCase,
@@ -774,6 +1074,16 @@ def evaluate_level(
         and solver_gate["measuredFlowRelativeSpan"] <= 0.001
         and solver_gate["relativeMassFlowImbalance"] <= 0.001
     )
+    iteration_control = runtime_efficiency(contract)["iterationControl"]
+    if iteration_control is not None:
+        # A revision that authorizes any runtime-efficiency lever must also
+        # police the iterative state, because MPI decomposition and a mapped
+        # initial condition both change the path a level takes to its stopping
+        # point. Only revisions that declare iteration control get this gate,
+        # so V5 evaluation output stays byte-identical.
+        iteration_gate = _iteration_control_gate(solver_log, iteration_control)
+        solver_gate["iterationControl"] = iteration_gate
+        solver_gate["passed"] = solver_gate["passed"] and iteration_gate["passed"]
 
     identity_report = _read_json(case_dir / SOURCE_IDENTITY_REPORT_PATH)
     component_map = (
@@ -959,9 +1269,33 @@ def _pipeline_proof(
     return proof
 
 
+def _authorize_efficiency(
+    contract: dict[str, Any], mpi_ranks: int, mesh_sequencing: bool
+) -> dict[str, Any]:
+    efficiency = runtime_efficiency(contract)
+    if mpi_ranks not in efficiency["allowedRanks"]:
+        raise FullOGridGeometryQualificationError(
+            f"the active contract revision does not authorize {mpi_ranks} MPI "
+            f"rank(s); authorized rank counts are "
+            f"{list(efficiency['allowedRanks'])}. Runtime settings are contract "
+            f"governed: freeze a revision declaring runtime.efficiency.parallel "
+            f"first (draft: {DRAFT_CONTRACT_PATH.name})."
+        )
+    if mesh_sequencing and not efficiency["meshSequencingAuthorized"]:
+        raise FullOGridGeometryQualificationError(
+            "the active contract revision does not authorize mesh sequencing. "
+            "Mesh sequencing makes the levels an ordered chain rather than "
+            "independent runs, so it must be declared prospectively (draft: "
+            f"{DRAFT_CONTRACT_PATH.name})."
+        )
+    return efficiency
+
+
 def execute_campaign(
     output_dir: Path,
     *,
+    mpi_ranks: int = 1,
+    mesh_sequencing: bool = False,
     poll_interval_seconds: float = 0.25,
     timeout_seconds_per_level: float = 7200.0,
 ) -> dict[str, Any]:
@@ -972,10 +1306,11 @@ def execute_campaign(
         )
     output_dir.mkdir(parents=True, exist_ok=True)
     contract, contract_sha256 = load_frozen_contract()
+    efficiency = _authorize_efficiency(contract, mpi_ranks, mesh_sequencing)
     source_control = _source_control_identity()
     runtime = _runtime_identity(contract["runtime"]["imageTag"])
     cases, preflight = materialize_preflight(
-        output_dir, contract, contract_sha256
+        output_dir, contract, contract_sha256, mpi_ranks
     )
     manager = JobManager(runtime_root=output_dir / "runtime")
     state: dict[str, Any] = {
@@ -992,14 +1327,33 @@ def execute_campaign(
         "preflightSha256": _sha256_file(
             output_dir / "preflight-report.json"
         ),
+        "runtimeEfficiency": {
+            "contractDeclaresEfficiencyBlock": efficiency["declared"],
+            "mpiRanks": mpi_ranks,
+            "decomposition": "scotch" if mpi_ranks > 1 else None,
+            "reconstructedBeforeEvaluation": mpi_ranks > 1,
+            "meshSequencing": mesh_sequencing,
+            "levelsIndependent": not mesh_sequencing,
+            "iterationControl": efficiency["iterationControl"],
+        },
         "levels": [],
     }
     _write_json(output_dir / "campaign-state.json", state)
     evaluations: list[dict[str, Any]] = []
     case_dirs: dict[str, Path] = {}
+    previous_level_id: str | None = None
     for level in contract["levels"]:
         level_id = str(level["id"])
         case = cases[level_id]
+        sequencing_provenance: dict[str, Any] | None = None
+        if mesh_sequencing and previous_level_id is not None:
+            sequencing_provenance = apply_mesh_sequencing(
+                case,
+                source_level_id=previous_level_id,
+                source_case_dir=case_dirs[previous_level_id],
+                scratch_dir=output_dir / "sequencing" / level_id,
+                image_tag=contract["runtime"]["imageTag"],
+            )
         terminal = manager.queue_job(case)
         record: dict[str, Any] = {
             "level": level_id,
@@ -1008,6 +1362,9 @@ def execute_campaign(
             "status": terminal.status,
             "execution": terminal.execution,
             "command": terminal.command,
+            "mpiRanks": mpi_ranks,
+            "meshSequencing": sequencing_provenance
+            or {"coldStart": True, "sourceLevel": None},
         }
         state["levels"].append(record)
         _write_json(output_dir / "campaign-state.json", state)
@@ -1085,6 +1442,8 @@ def execute_campaign(
             raise FullOGridGeometryQualificationError(
                 f"{level_id} failed a frozen mesh, solver, or identity gate"
             )
+        # Only a level that passed every mandatory gate may seed the next one.
+        previous_level_id = level_id
 
     samples = [
         {
@@ -1178,6 +1537,26 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the full frozen three-level experimental qualification.",
     )
+    parser.add_argument(
+        "--mpi-ranks",
+        type=int,
+        default=1,
+        help=(
+            "Run each level under MPI with this many scotch-decomposed ranks "
+            "and reconstructPar afterwards. Refused unless the active contract "
+            "revision declares runtime.efficiency.parallel."
+        ),
+    )
+    parser.add_argument(
+        "--mesh-sequencing",
+        action="store_true",
+        help=(
+            "Initialize each level from the converged coarser level with "
+            "mapFields. Makes the levels an ordered chain, so it is refused "
+            "unless the active contract revision declares "
+            "runtime.efficiency.meshSequencing."
+        ),
+    )
     return parser
 
 
@@ -1191,9 +1570,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         output.mkdir(parents=True, exist_ok=True)
         contract, digest = load_frozen_contract()
-        _cases, result = materialize_preflight(output, contract, digest)
+        _authorize_efficiency(contract, args.mpi_ranks, args.mesh_sequencing)
+        _cases, result = materialize_preflight(
+            output, contract, digest, args.mpi_ranks
+        )
     else:
-        result = execute_campaign(args.output_dir)
+        result = execute_campaign(
+            args.output_dir,
+            mpi_ranks=args.mpi_ranks,
+            mesh_sequencing=args.mesh_sequencing,
+        )
     print(json.dumps(result, indent=2, sort_keys=True))
     return (
         0
