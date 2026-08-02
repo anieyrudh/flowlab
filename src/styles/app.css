@@ -136,7 +136,7 @@ input[type="number"] {
 .workspace-shell {
   display: grid;
   grid-template-columns: minmax(250px, 292px) minmax(520px, 1fr) minmax(300px, 340px);
-  grid-template-rows: 64px minmax(0, 1fr) minmax(150px, 188px);
+  grid-template-rows: minmax(64px, auto) minmax(0, 1fr) minmax(150px, 188px);
   gap: var(--gap);
   overflow: hidden;
   padding: 10px;
@@ -3678,7 +3678,9 @@ body {
 .dual-view-workspace {
   position: relative;
   display: grid;
-  grid-template-rows: 42px minmax(0, 1fr);
+  /* The floor stays 42px for the single-row header. The track grows when a
+     stage adds its own action row, so the header never paints over the panes. */
+  grid-template-rows: minmax(42px, auto) minmax(0, 1fr);
   overflow: hidden;
   isolation: isolate;
 }
@@ -4375,4 +4377,130 @@ body {
     padding-inline: 7px;
     font-size: 10px;
   }
+}
+
+/* ---- CFD stage action bar --------------------------------------------
+   The CFD stage previously showed only the schematic, and its controls sat
+   inside the collapsed Inspector, so the stage did not show its own work. */
+.stage-action-bar {
+  /* The workspace header is a three-column grid whose row height is auto, so
+     a full-width child adds a second row instead of squeezing the first. */
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 10px;
+  border: 1px solid rgba(98, 243, 189, 0.28);
+  border-radius: 10px;
+  background: rgba(10, 26, 34, 0.72);
+}
+
+.stage-action-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stage-action-copy strong {
+  color: #edf9ff;
+  font-size: 13px;
+}
+
+.stage-action-copy small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.stage-action-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* One-click correction for the most common reason the action is unavailable. */
+.stage-action-fix {
+  border-color: rgba(98, 243, 189, 0.5);
+  background: rgba(98, 243, 189, 0.14);
+  color: #d8fff2;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stage-action-secondary {
+  white-space: nowrap;
+}
+
+/* `.primary-action` is full width in the Inspector column. In this row it
+   sits beside its siblings, so the stretch and the stacking margin come off. */
+.stage-action-controls .primary-action {
+  width: auto;
+  margin-top: 0;
+}
+
+.stage-action-copy {
+  flex: 1 1 260px;
+}
+
+/* ---- First-run guidance ---------------------------------------------- */
+.first-run-note {
+  /* Lives in the top bar, which grows for it, so it never covers a panel. */
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 12px;
+  border: 1px solid rgba(120, 190, 255, 0.34);
+  border-radius: 10px;
+  background: rgba(20, 42, 68, 0.7);
+}
+
+.first-run-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.first-run-copy strong {
+  color: #edf9ff;
+  font-size: 13px;
+}
+
+.first-run-copy small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.first-run-copy b {
+  color: #cfe8ff;
+  font-weight: 600;
+}
+
+.first-run-dismiss {
+  white-space: nowrap;
+}
+
+/* ---- Out-of-evidence metric marker ------------------------------------
+   FlowLab's accuracy evidence covers laminar flow only, so a Reynolds number
+   above the laminar limit is marked rather than shown as a bare figure. */
+.metric-flag {
+  display: inline-block;
+  margin-left: 4px;
+  color: #ffcf7a;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---- Status readouts must not break mid-word -------------------------- */
+.status-list dd,
+.metric-grid dd,
+.readouts dd {
+  overflow-wrap: normal;
+  word-break: keep-all;
+  hyphens: none;
 }

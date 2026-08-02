@@ -69,7 +69,7 @@ test.describe("FlowLab workspace shell", () => {
   test("keeps each stage's controls contained and its dock aligned", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
-    await expect(page.getByText("FlowLab")).toBeVisible();
+    await expect(page.getByText("FlowLab", { exact: true })).toBeVisible();
     await expect(page.getByText("Components")).toBeVisible();
     await expect(page.getByText("Project")).toBeVisible();
     await expect(page.getByText("Layers")).toBeVisible();
