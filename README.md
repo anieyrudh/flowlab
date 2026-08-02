@@ -20,23 +20,25 @@ Docker Desktop.
 
 ## Get FlowLab
 
-Download it from the [releases page](https://github.com/anieyrudh/flowlab/releases).
-It runs on macOS 13 or later on Apple Silicon, and on Windows 11 x64.
+**There is no release to download.** FlowLab has no signed installer and no
+published release. To use FlowLab now, build it from source. Refer to
+[the installation guide](docs/INSTALLATION.md).
 
-**The builds are not signed.** Your operating system shows a warning the first
-time you open the application. The application still runs. On macOS, open
-**System Settings**, click **Privacy & Security**, then click **Open Anyway**.
-On Windows, click **More info**, then **Run anyway**. Do this one time.
+FlowLab runs on macOS 13 or later on Apple Silicon, and on Windows 11 x64.
+
+**Every build available today is unsigned.** This includes a build you make
+yourself and a candidate artifact from continuous integration. Your operating
+system shows a warning the first time you open an unsigned build. The
+application still runs. On macOS, open **System Settings**, click
+**Privacy & Security**, then click **Open Anyway**. On Windows, click
+**More info**, then **Run anyway**. Do this one time.
 [The user guide](docs/USER_GUIDE.md#3-start-the-application) gives the steps.
 
-CFD also needs Docker Desktop and one container. Build it one time:
+CFD also needs Docker Desktop and one container. Build the container one time:
 
 ```bash
 docker build -t flowlab/openfoam11-gmsh:2026-07-13 docker/openfoam11-gmsh
 ```
-
-You can also build FlowLab from source. Refer to
-[the installation guide](docs/INSTALLATION.md).
 
 ## Start using it
 
@@ -44,7 +46,9 @@ Read [the user guide](docs/USER_GUIDE.md). It shows you how to build a system,
 read an estimate, and run a CFD case.
 
 The application has four steps: **Define**, **Estimate**, **CFD**, **Inspect**.
-Do them in that sequence.
+Do them in that sequence. FlowLab opens on the **Laminar Starter Pipe
+(Experimental)** preset, which is inside the only flow regime that FlowLab has
+accuracy evidence for.
 
 ## Run from source
 
