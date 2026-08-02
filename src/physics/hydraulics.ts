@@ -183,20 +183,59 @@ function nodePressure(node: FluidNode, fluid: FluidParams): number {
   return 101_325 + fluid.density * G * node.elevation;
 }
 
-function edgeBaseFlow(edge: FluidEdge, from: FluidNode, to: FluidNode, fluid: FluidParams): number {
+/** Iteration limit for the flow/friction fixed point. It settles in far fewer. */
+const FLOW_SOLVE_MAX_ITERATIONS = 60;
+const FLOW_SOLVE_RELATIVE_TOLERANCE = 1e-12;
+
+export type EdgeFlowSolution = { flow: number; converged: boolean; iterations: number };
+
+/**
+ * Solves one edge for a flow that agrees with its own friction factor.
+ *
+ * The friction factor depends on the Reynolds number, which depends on the
+ * flow this equation produces, so a single pass cannot be self-consistent.
+ * This previously seeded a turbulent factor at Re = 100,000 and returned that
+ * first pass, which is wrong wherever the flow is not near that Reynolds
+ * number. In laminar flow the error is large: at Re = 200 the true factor is
+ * 64/200 = 0.32 against the seed's 0.0183, a factor of 17.5, and flow scales
+ * with the inverse square root of it. Laminar flow is the one regime the
+ * accuracy evidence covers, so this is where correctness matters most.
+ */
+function edgeBaseFlow(edge: FluidEdge, from: FluidNode, to: FluidNode, fluid: FluidParams): EdgeFlowSolution {
   const fromHead = pressureHead(nodePressure(from, fluid), fluid) + from.elevation + (from.head ?? 0);
   const toHead = pressureHead(nodePressure(to, fluid), fluid) + to.elevation;
   const deltaHead = fromHead - toHead;
   const diameter = edgeDiameter(edge);
   const pipeArea = area(edge.shape);
   const geometry = resolveEdgeGeometry(edge, { [from.id]: from, [to.id]: to });
-  const roughGuess = frictionFactor(100_000, edge.roughness, diameter);
   const effectiveLength = geometry?.effectiveLength ?? edge.length;
   const totalMinorLossK = geometry?.totalMinorLossK ?? edge.minorLossK;
-  const resistance = Math.max(roughGuess * (effectiveLength / diameter) + totalMinorLossK, 0.001);
   const signed = Math.sign(deltaHead || 1);
-  const flow = signed * pipeArea * Math.sqrt(Math.abs((2 * G * deltaHead) / resistance));
-  return Number.isFinite(flow) ? flow : 0;
+
+  // Seed with the old turbulent guess, then correct it against the Reynolds
+  // number each pass produces. The factor falls as Reynolds rises, so the
+  // feedback is negative and the fixed point is stable.
+  let friction = frictionFactor(100_000, edge.roughness, diameter);
+  let flow = 0;
+  let converged = false;
+  let iterations = 0;
+
+  for (let step = 1; step <= FLOW_SOLVE_MAX_ITERATIONS; step += 1) {
+    iterations = step;
+    const resistance = Math.max(friction * (effectiveLength / diameter) + totalMinorLossK, 0.001);
+    const next = signed * pipeArea * Math.sqrt(Math.abs((2 * G * deltaHead) / resistance));
+    if (!Number.isFinite(next)) return { flow: 0, converged: false, iterations: step };
+
+    const change = Math.abs(next - flow);
+    flow = next;
+    if (step > 1 && change <= FLOW_SOLVE_RELATIVE_TOLERANCE * Math.max(Math.abs(flow), Number.EPSILON)) {
+      converged = true;
+      break;
+    }
+    friction = frictionFactor(reynoldsNumber(flow, edge.shape, fluid), edge.roughness, diameter);
+  }
+
+  return { flow, converged, iterations };
 }
 
 function topologyWarnings(project: FluidProject): SimulationWarning[] {
@@ -338,6 +377,7 @@ export function solveHydraulicNetwork(project: FluidProject): SimulationResult {
     };
   }
 
+  let allEdgesConverged = true;
   for (const edge of Object.values(project.edges)) {
     const from = project.nodes[edge.from];
     const to = project.nodes[edge.to];
@@ -351,7 +391,9 @@ export function solveHydraulicNetwork(project: FluidProject): SimulationResult {
       continue;
     }
 
-    const flow = edgeBaseFlow(edge, from, to, project.fluid);
+    const flowSolution = edgeBaseFlow(edge, from, to, project.fluid);
+    const flow = flowSolution.flow;
+    if (!flowSolution.converged) allEdgesConverged = false;
     const geometry = resolveEdgeGeometry(edge, project.nodes, flow);
     const v = velocity(flow, edge.shape);
     const re = reynoldsNumber(flow, edge.shape, project.fluid);
@@ -437,7 +479,7 @@ export function solveHydraulicNetwork(project: FluidProject): SimulationResult {
 
   return {
     stable: !warnings.some((warning) => warning.severity === "error"),
-    converged: true,
+    converged: allEdgesConverged,
     timestep: Date.now(),
     edgeResults,
     nodeResults,

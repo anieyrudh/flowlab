@@ -1787,6 +1787,85 @@ def _latest_table(path: Path) -> tuple[list[str], dict[str, float]] | None:
     return columns, rows[-1]
 
 
+INCOMPRESSIBLE_PRESSURE_DIMENSIONS = "[02-20000]"
+KINEMATIC_PRESSURE_UNIT = "m2/s2"
+_PRESSURE_VALUE_KEYS = ("min", "mean", "max", "value", "deltaP", "inletPressure", "outletPressure", "minPressure", "maxPressure", "pressureSpan")
+
+
+def _case_pressure_is_kinematic(case_dir: Path) -> bool:
+    """
+    True when the case stores pressure as p/rho.
+
+    OpenFOAM's incompressible solvers work in kinematic pressure, m2/s2, and
+    `adapters.py` writes exactly that. Compressible cases write true pascals,
+    so this must be read from the case and never assumed.
+    """
+    for candidate in (case_dir / "0" / "p", case_dir / "0.orig" / "p"):
+        try:
+            text = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        match = re.search(r"dimensions\s+(\[[^\]]*\])", text)
+        if match:
+            return match.group(1).replace(" ", "") == INCOMPRESSIBLE_PRESSURE_DIMENSIONS
+    return False
+
+
+def _case_density(case_dir: Path) -> float | None:
+    try:
+        payload = json.loads((case_dir / "flowlab_project.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    fluid = payload.get("fluid") if isinstance(payload, dict) else None
+    density = (fluid or {}).get("density")
+    try:
+        value = float(density)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _convert_pressure_entry(entry: Any, density: float | None) -> None:
+    if not isinstance(entry, dict) or entry.get("unit") != "Pa":
+        return
+    if density is None:
+        # Never present a kinematic number as pascals. Relabel instead.
+        entry["unit"] = KINEMATIC_PRESSURE_UNIT
+        entry["unitNote"] = "solver kinematic value; fluid density was unavailable to convert it"
+        return
+    for key in _PRESSURE_VALUE_KEYS:
+        raw = entry.get(key)
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            entry[key] = float(raw) * density
+    entry["convertedFromKinematic"] = True
+    entry["densityKgPerM3"] = density
+
+
+def product_patch_metrics(case_dir: Path) -> dict[str, Any]:
+    """
+    Patch metrics with pressure in real pascals, for the application to show.
+
+    `collect_patch_metrics` keeps the raw solver value, because the frozen
+    campaign path multiplies it by density itself (see
+    `full_ogrid_straight_pipe_campaign.py`, and the `pressureDrop` note in the
+    case manifest). Converting inside that function would make the campaign
+    multiply twice. The application therefore converts here, at its own
+    boundary, and the campaign is untouched.
+    """
+    metrics = collect_patch_metrics(case_dir)
+    if not _case_pressure_is_kinematic(case_dir):
+        return metrics
+    density = _case_density(case_dir)
+    for patch in (metrics.get("patches") or {}).values():
+        if isinstance(patch, dict):
+            for value in patch.values():
+                _convert_pressure_entry(value, density)
+    for key in ("pressureDrops", "pressureProbes"):
+        for entry in metrics.get(key) or []:
+            _convert_pressure_entry(entry, density)
+    return metrics
+
+
 def collect_patch_metrics(case_dir: Path) -> dict[str, Any]:
     metrics: dict[str, Any] = {
         "schema": "flowlab.patch_metrics.v1",
@@ -6566,7 +6645,7 @@ class JobManager:
                 "evidenceCapability": job.evidenceCapability.model_dump(mode="json"),
             }
             if job.solver == "openfoam":
-                job.result["patchMetrics"] = collect_patch_metrics(case_dir)
+                job.result["patchMetrics"] = product_patch_metrics(case_dir)
                 validated_result = read_validated_open_boundary_result(case_dir)
                 if validated_result is not None:
                     job.result["validatedBenchmark"] = validated_result
@@ -6824,7 +6903,7 @@ class JobManager:
                     diagnostic_files = collect_diagnostic_files(case_dir)
                     diagnostic_summary = parse_diagnostic_files(diagnostic_files)
                     mesh_quality = read_case_mesh_quality(case_dir)
-                    patch_metrics = collect_patch_metrics(case_dir)
+                    patch_metrics = product_patch_metrics(case_dir)
                     with self._lock:
                         job = self.jobs[job_id]
                         job.exitCode = None
@@ -6913,7 +6992,7 @@ class JobManager:
                     if solver_log_relative is not None:
                         job.result["solverLogPath"] = solver_log_relative
                     if job.solver == "openfoam":
-                        job.result["patchMetrics"] = collect_patch_metrics(case_dir)
+                        job.result["patchMetrics"] = product_patch_metrics(case_dir)
                     return
                 job.exitCode = exit_code
                 job.finishedAt = _utc_now()
@@ -6932,7 +7011,7 @@ class JobManager:
                     patch_metrics = (
                         diagnostics_acceptance["patchMetrics"]
                         if job.solver == "openfoam" and diagnostics_acceptance
-                        else collect_patch_metrics(case_dir)
+                        else product_patch_metrics(case_dir)
                         if job.solver == "openfoam"
                         else None
                     )
@@ -7013,7 +7092,7 @@ class JobManager:
                     patch_metrics = (
                         diagnostics_acceptance["patchMetrics"]
                         if job.solver == "openfoam" and diagnostics_acceptance
-                        else collect_patch_metrics(case_dir)
+                        else product_patch_metrics(case_dir)
                         if job.solver == "openfoam"
                         else None
                     )
