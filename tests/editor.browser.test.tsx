@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
+import { MIN_NODE_SEPARATION, SCHEMATIC_GRID_SIZE } from "../src/components/viewportModel";
 import { venturiPreset } from "../src/data/presets";
 import { useFlowStore } from "../src/state/useFlowStore";
 
@@ -13,6 +14,8 @@ const canvasContext = {
   beginPath: vi.fn(),
   moveTo: vi.fn(),
   lineTo: vi.fn(),
+  closePath: vi.fn(),
+  quadraticCurveTo: vi.fn(),
   stroke: vi.fn(),
   fill: vi.fn(),
   arc: vi.fn(),
@@ -23,6 +26,7 @@ const canvasContext = {
   scale: vi.fn(),
   rotate: vi.fn(),
   fillText: vi.fn(),
+  measureText: vi.fn((text: string) => ({ width: text.length * 6 })),
   setLineDash: vi.fn()
 };
 
@@ -34,10 +38,18 @@ function canvas() {
   return screen.getByTestId("schematic-canvas");
 }
 
+/**
+ * Drives the editor in schematic world coordinates. The canvas publishes its own
+ * pan/zoom, so the test stays correct when the auto-fit framing changes.
+ */
 function pointer(type: "pointerDown" | "pointerMove" | "pointerUp", x: number, y: number) {
-  fireEvent[type](canvas(), {
-    clientX: x,
-    clientY: y,
+  const element = canvas();
+  const scale = Number(element.dataset.viewScale ?? 1);
+  const offsetX = Number(element.dataset.viewOffsetX ?? 0);
+  const offsetY = Number(element.dataset.viewOffsetY ?? 0);
+  fireEvent[type](element, {
+    clientX: x * scale + offsetX,
+    clientY: y * scale + offsetY,
     pointerId: 1,
     button: 0
   });
@@ -87,7 +99,18 @@ describe("FlowLab editor browser workflows", () => {
     pointer("pointerMove", pump.position.x + 60, pump.position.y + 50);
     pointer("pointerUp", pump.position.x + 60, pump.position.y + 50);
     pump = useFlowStore.getState().project.nodes["pump-4"];
-    expect(pump.position).toEqual({ x: 396, y: 230 });
+    // The drop snaps to the grid, and to the closest free cell when the requested one is
+    // too near another component: (396, 230) rounds to (400, 240), which crowds the
+    // throat at (420, 260), so the component lands on the neighbouring free cell.
+    expect(pump.position).toEqual({ x: 360, y: 200 });
+    expect(pump.position.x % SCHEMATIC_GRID_SIZE).toBe(0);
+    expect(pump.position.y % SCHEMATIC_GRID_SIZE).toBe(0);
+    for (const other of Object.values(useFlowStore.getState().project.nodes)) {
+      if (other.id === pump.id) continue;
+      expect(Math.hypot(other.position.x - pump.position.x, other.position.y - pump.position.y)).toBeGreaterThanOrEqual(
+        MIN_NODE_SEPARATION
+      );
+    }
 
     fireEvent.click(screen.getByRole("button", { name: /delete/i }));
     await waitFor(() => expect(useFlowStore.getState().project.nodes["pump-4"]).toBeUndefined());

@@ -28,14 +28,21 @@ import type { DerivedPresentationOptions } from "./derivedRenderer";
 import { recordEditorFrame, recordEditorMetric } from "../performance/editorProfiler";
 import type { StreamlineDisplayOptions, StreamlineResult } from "../streamlines/types";
 import {
+  PORT_SNAP_RADIUS,
+  SCHEMATIC_GRID_MAJOR,
+  SCHEMATIC_GRID_SIZE,
   clampViewportZoom,
   defaultSchematicViewport,
   fitSchematicViewport,
+  isCellFree,
   panSchematicViewport,
   resetSchematicViewport,
   screenToWorld,
+  snapNodeToFreeCell,
+  snapToGrid,
   type CinemaCameraState,
   type SchematicViewport,
+  visibleGridRange,
   worldToScreen,
   zoomViewportAtPoint
 } from "./viewportModel";
@@ -77,18 +84,76 @@ type Props = {
 };
 
 type PortHit = { nodeId: string; port: PipePortId; point: Vec2 };
+/** A snap candidate plus whether the store will actually accept a connection there. */
+type PortSnap = PortHit & { free: boolean };
 type ViewTransform = { scale: number; offset: Vec2 };
 type DragState =
-  | { kind: "node"; id: string; offsetX: number; offsetY: number; position: Vec2 }
-  | { kind: "connect"; from: PortHit; pointer: Vec2 }
-  | { kind: "endpoint"; edgeId: string; endpoint: "from" | "to"; pointer: Vec2 }
+  | {
+      kind: "node";
+      id: string;
+      offsetX: number;
+      offsetY: number;
+      /** Grid-locked position the component will be committed at. */
+      position: Vec2;
+      /** Unsnapped pointer position, used only to draw the snap hint. */
+      pointer: Vec2;
+      /** True when the raw grid cell was taken and the component was pushed to a free one. */
+      deflected: boolean;
+      /** A press that never moves is a selection, not a drag, and must not reposition anything. */
+      moved: boolean;
+    }
+  | { kind: "connect"; from: PortHit; pointer: Vec2; snap: PortSnap | null }
+  | { kind: "endpoint"; edgeId: string; endpoint: "from" | "to"; pointer: Vec2; snap: PortSnap | null }
   | { kind: "rotate"; nodeId: string; rotation: number }
   | { kind: "canvas-pan"; start: Vec2; viewport: SchematicViewport; moved: boolean }
   | { kind: "cinema-orbit"; startX: number; startY: number; camera: CinemaCameraState; moved: boolean }
   | { kind: "cinema-pan"; startX: number; startY: number; camera: CinemaCameraState; moved: boolean };
 
+type HoverTarget =
+  | { kind: "node"; id: string }
+  | { kind: "edge"; id: string }
+  | { kind: "port"; nodeId: string; port: PipePortId }
+  | { kind: "endpoint"; edgeId: string; endpoint: "from" | "to" }
+  | { kind: "rotate"; nodeId: string };
+
+type LabelBox = { left: number; top: number; right: number; bottom: number };
+
 const ports: PipePortId[] = ["inlet", "outlet", "north", "south"];
 const ignoreRenderBackendChange = () => {};
+
+/**
+ * Screen-space margin auto-fit keeps clear. The bottom strip is the anchored Fit/Reset
+ * cluster; the side and top margins are room for the label chips, which are drawn at a
+ * fixed screen size and therefore need screen-space allowance rather than world padding.
+ */
+const schematicFitInsets = { top: 28, right: 50, bottom: 62, left: 50 };
+
+const cursorForHover: Record<HoverTarget["kind"], string> = {
+  node: "move",
+  edge: "pointer",
+  port: "crosshair",
+  endpoint: "crosshair",
+  rotate: "crosshair"
+};
+
+function boxesOverlap(a: LabelBox, b: LabelBox) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function roundedRectPath(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + r);
+  context.lineTo(x + width, y + height - r);
+  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  context.lineTo(x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+  context.closePath();
+}
 
 const paletteByOverlay: Record<OverlayMode, string[]> = {
   velocity: ["#0ad7ff", "#62f3bd", "#ffe15c", "#ff6f3d"],
@@ -182,30 +247,8 @@ function endpointPoint(edge: FluidEdge, endpoint: "from" | "to", nodes: Record<s
   return portPosition(node, endpoint === "from" ? (edge.fromPort ?? "outlet") : (edge.toPort ?? "inlet"));
 }
 
-function computeViewTransform(project: FluidProject, width: number, height: number): ViewTransform {
-  const positions = Object.values(project.nodes).map((node) => node.position);
-  if (!positions.length) return { scale: 1, offset: { x: 0, y: 0 } };
-  const minX = Math.min(...positions.map((point) => point.x));
-  const maxX = Math.max(...positions.map((point) => point.x));
-  const minY = Math.min(...positions.map((point) => point.y));
-  const maxY = Math.max(...positions.map((point) => point.y));
-  const padding = 96;
-  const worldWidth = Math.max(1, maxX - minX + padding * 2);
-  const worldHeight = Math.max(1, maxY - minY + padding * 2);
-  const rawScale = Math.min((width - 48) / worldWidth, (height - 48) / worldHeight);
-  if (rawScale >= 1) return { scale: 1, offset: { x: 0, y: 0 } };
-  const scale = Math.max(0.45, rawScale);
-  return {
-    scale,
-    offset: {
-      x: (width - (minX + maxX) * scale) / 2,
-      y: (height - (minY + maxY) * scale) / 2
-    }
-  };
-}
-
 function draftNode(node: FluidNode, drag: DragState | null): FluidNode {
-  if (drag?.kind === "node" && drag.id === node.id) return { ...node, position: drag.position };
+  if (drag?.kind === "node" && drag.id === node.id) return drag.moved ? { ...node, position: drag.position } : node;
   if (drag?.kind === "rotate" && drag.nodeId === node.id) return { ...node, rotation: drag.rotation };
   return node;
 }
@@ -523,9 +566,14 @@ export function SimulationCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef(0);
   const dragRef = useRef<DragState | null>(null);
+  const hoverRef = useRef<HoverTarget | null>(null);
   const viewRef = useRef<ViewTransform>({ scale: 1, offset: { x: 0, y: 0 } });
   const schematicViewportRef = useRef<SchematicViewport>({ ...defaultSchematicViewport, pan: { ...defaultSchematicViewport.pan } });
   const schematicViewportInitializedRef = useRef(false);
+  /** Set once the user zooms on purpose; auto-refit then stops overriding their framing. */
+  const userZoomedRef = useRef(false);
+  const canvasSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  const placedNodeIdsRef = useRef<Set<string> | null>(null);
   const cinemaRef = useRef<CinemaRuntime | null>(null);
   const previewPlayingRef = useRef(previewPlaying);
   const resultCameraRef = useRef(resultCamera);
@@ -558,7 +606,31 @@ export function SimulationCanvas({
 
   useEffect(() => {
     schematicViewportInitializedRef.current = false;
+    userZoomedRef.current = false;
   }, [canvasRenderMode]);
+
+  // A component that arrives on top of an existing one (for example repeated clicks in the
+  // component palette) is pushed to the nearest free grid cell exactly once, so the schematic
+  // never starts out as a stack. Existing components are never moved behind the user's back.
+  useEffect(() => {
+    if (canvasRenderMode !== "schematic") return;
+    const known = placedNodeIdsRef.current;
+    const currentIds = Object.keys(project.nodes);
+    if (!known) {
+      placedNodeIdsRef.current = new Set(currentIds);
+      return;
+    }
+    const inserted = currentIds.filter((id) => !known.has(id));
+    placedNodeIdsRef.current = new Set(currentIds);
+    const collided = inserted.find((id) => {
+      const node = project.nodes[id];
+      return node && !isCellFree(project, id, node.position);
+    });
+    if (!collided) return;
+    const node = project.nodes[collided];
+    const resolved = snapNodeToFreeCell(project, collided, node.position);
+    if (resolved.x !== node.position.x || resolved.y !== node.position.y) onMoveNode(collided, resolved);
+  }, [canvasRenderMode, onMoveNode, project]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -688,6 +760,17 @@ export function SimulationCanvas({
         canvasElement.height = height;
         context.setTransform(scale, 0, 0, scale, 0, 0);
       }
+      // The panel can be resized by the workspace divider, the window, or the action bar
+      // appearing. Re-frame the drawing unless the user has chosen their own zoom.
+      const changed = Math.abs(canvasSizeRef.current.width - rect.width) > 1 || Math.abs(canvasSizeRef.current.height - rect.height) > 1;
+      if (changed) {
+        canvasSizeRef.current = { width: rect.width, height: rect.height };
+        if (schematicViewportInitializedRef.current && !userZoomedRef.current) {
+          schematicViewportRef.current = fitSchematicViewport(projectRef.current, rect.width, rect.height, {
+            insets: schematicFitInsets
+          });
+        }
+      }
       return true;
     }
 
@@ -717,7 +800,8 @@ export function SimulationCanvas({
         nodes: Object.fromEntries(Object.values(activeProject.nodes).map((node) => [node.id, draftNode(node, dragRef.current)]))
       } as FluidProject;
       if (!schematicViewportInitializedRef.current) {
-        schematicViewportRef.current = fitSchematicViewport(renderedProject, width, height);
+        canvasSizeRef.current = { width, height };
+        schematicViewportRef.current = fitSchematicViewport(renderedProject, width, height, { insets: schematicFitInsets });
         schematicViewportInitializedRef.current = true;
       }
       const view = { scale: schematicViewportRef.current.zoom, offset: schematicViewportRef.current.pan };
@@ -725,6 +809,8 @@ export function SimulationCanvas({
       canvasElement.dataset.viewScale = String(view.scale);
       canvasElement.dataset.viewOffsetX = String(view.offset.x);
       canvasElement.dataset.viewOffsetY = String(view.offset.y);
+      canvasElement.dataset.snapGrid = String(SCHEMATIC_GRID_SIZE);
+      canvasElement.dataset.viewFitted = userZoomedRef.current ? "user" : "auto";
       context.clearRect(0, 0, width, height);
 
       const grd = context.createRadialGradient(width * 0.45, height * 0.35, 40, width * 0.5, height * 0.5, width * 0.75);
@@ -734,21 +820,35 @@ export function SimulationCanvas({
       context.fillStyle = grd;
       context.fillRect(0, 0, width, height);
 
+      // The grid lives in world space, so a snapped component visibly lands on a line the
+      // user can already see. A screen-space grid would drift under pan and zoom and make
+      // snapping look arbitrary.
       if (activeProject.visualization.grid) {
-        context.strokeStyle = "rgba(160, 190, 210, 0.13)";
-        context.lineWidth = 1;
-        for (let x = 0; x < width; x += 36) {
+        const range = visibleGridRange({ pan: view.offset, zoom: view.scale }, width, height);
+        const minorSpacing = range.step * view.scale;
+        context.save();
+        context.translate(view.offset.x, view.offset.y);
+        context.scale(view.scale, view.scale);
+        context.lineWidth = 1 / view.scale;
+        for (let x = range.startX; x <= range.endX; x += range.step) {
+          const major = Math.round(x / range.step) % SCHEMATIC_GRID_MAJOR === 0;
+          if (!major && minorSpacing < 9) continue;
+          context.strokeStyle = major ? "rgba(150, 194, 224, 0.2)" : "rgba(150, 194, 224, 0.082)";
           context.beginPath();
-          context.moveTo(x, 0);
-          context.lineTo(x, height);
+          context.moveTo(x, range.startY);
+          context.lineTo(x, range.endY);
           context.stroke();
         }
-        for (let y = 0; y < height; y += 36) {
+        for (let y = range.startY; y <= range.endY; y += range.step) {
+          const major = Math.round(y / range.step) % SCHEMATIC_GRID_MAJOR === 0;
+          if (!major && minorSpacing < 9) continue;
+          context.strokeStyle = major ? "rgba(150, 194, 224, 0.2)" : "rgba(150, 194, 224, 0.082)";
           context.beginPath();
-          context.moveTo(0, y);
-          context.lineTo(width, y);
+          context.moveTo(range.startX, y);
+          context.lineTo(range.endX, y);
           context.stroke();
         }
+        context.restore();
       }
 
       if (resultDataset) {
@@ -789,9 +889,76 @@ export function SimulationCanvas({
       if (previewPlayingRef.current) frameRef.current += 0.012;
       canvasElement.dataset.previewPhase = frameRef.current.toFixed(4);
 
+      const draft = dragRef.current;
+      const hover = hoverRef.current;
+      /** Converts a screen-pixel size into world units, so affordances stay legible at any zoom. */
+      const px = (value: number) => value / view.scale;
+
+      if (draft) canvasElement.dataset.dragKind = draft.kind;
+      else delete canvasElement.dataset.dragKind;
+      if (draft?.kind === "node") {
+        canvasElement.dataset.snapTargetX = String(draft.position.x);
+        canvasElement.dataset.snapTargetY = String(draft.position.y);
+        canvasElement.dataset.snapDeflected = draft.deflected ? "true" : "false";
+      } else {
+        delete canvasElement.dataset.snapTargetX;
+        delete canvasElement.dataset.snapTargetY;
+        delete canvasElement.dataset.snapDeflected;
+      }
+      if (draft?.kind === "connect" || draft?.kind === "endpoint") {
+        canvasElement.dataset.snapPort = draft.snap ? `${draft.snap.nodeId}:${draft.snap.port}` : "";
+        canvasElement.dataset.snapPortFree = draft.snap ? String(draft.snap.free) : "";
+      } else {
+        delete canvasElement.dataset.snapPort;
+        delete canvasElement.dataset.snapPortFree;
+      }
+
       context.save();
       context.translate(view.offset.x, view.offset.y);
       context.scale(view.scale, view.scale);
+
+      // Snap preview: the target cell is painted under the geometry so the user can see
+      // exactly where the component is going to land before releasing the pointer.
+      if (draft?.kind === "node" && draft.moved) {
+        const range = visibleGridRange({ pan: view.offset, zoom: view.scale }, width, height);
+        const accent = draft.deflected ? "#ffc65c" : "#3ee0ff";
+        context.save();
+        context.lineWidth = px(1.5);
+        context.strokeStyle = draft.deflected ? "rgba(255, 198, 92, 0.5)" : "rgba(62, 224, 255, 0.46)";
+        context.setLineDash([px(7), px(6)]);
+        context.beginPath();
+        context.moveTo(range.startX, draft.position.y);
+        context.lineTo(range.endX, draft.position.y);
+        context.moveTo(draft.position.x, range.startY);
+        context.lineTo(draft.position.x, range.endY);
+        context.stroke();
+        context.setLineDash([]);
+
+        const cell = Math.max(SCHEMATIC_GRID_SIZE * 1.5, px(52));
+        context.fillStyle = draft.deflected ? "rgba(255, 198, 92, 0.14)" : "rgba(62, 224, 255, 0.13)";
+        context.strokeStyle = accent;
+        context.lineWidth = px(2);
+        roundedRectPath(context, draft.position.x - cell / 2, draft.position.y - cell / 2, cell, cell, px(9));
+        context.fill();
+        context.stroke();
+
+        if (draft.deflected) {
+          // Show the cell the pointer asked for and the free cell it was pushed to, so a
+          // refused position never looks like the editor ignoring the drag.
+          const requested = snapToGrid(draft.pointer);
+          context.strokeStyle = "rgba(255, 122, 122, 0.78)";
+          context.lineWidth = px(1.5);
+          context.setLineDash([px(5), px(4)]);
+          roundedRectPath(context, requested.x - cell / 2, requested.y - cell / 2, cell, cell, px(9));
+          context.stroke();
+          context.beginPath();
+          context.moveTo(requested.x, requested.y);
+          context.lineTo(draft.position.x, draft.position.y);
+          context.stroke();
+          context.setLineDash([]);
+        }
+        context.restore();
+      }
 
       Object.values(renderedProject.edges).forEach((edge) => {
         const from = renderedProject.nodes[edge.from];
@@ -808,8 +975,17 @@ export function SimulationCanvas({
               ? solved.reynolds
               : solved.velocity;
         const color = overlayValueColor(metric, maxEdge, activeProject.visualization.overlay);
+        const hovered = hover?.kind === "edge" && hover.id === edge.id;
 
         context.lineCap = "round";
+        if (hovered && edge.id !== selectedId) {
+          context.strokeStyle = "rgba(62, 224, 255, 0.34)";
+          context.lineWidth = Math.max(18, widthScale + 18) + 10;
+          context.beginPath();
+          context.moveTo(start.x, start.y);
+          context.lineTo(end.x, end.y);
+          context.stroke();
+        }
         context.strokeStyle = "rgba(8, 20, 28, 0.95)";
         context.lineWidth = Math.max(18, widthScale + 18);
         context.beginPath();
@@ -839,18 +1015,25 @@ export function SimulationCanvas({
             context.fill();
           }
         }
-
-        const mid = edgeMidpoint(edge, renderedProject.nodes);
-        context.fillStyle = "rgba(227, 242, 255, 0.9)";
-        context.font = "12px Inter, system-ui, sans-serif";
-        context.fillText(`${edge.label} · Re ${Math.round(solved.reynolds).toLocaleString()}`, mid.x + 12, mid.y - 12);
       });
 
       Object.values(renderedProject.nodes).forEach((node) => {
-        const solved = activeResult.nodeResults[node.id];
         const radius = nodeRadius(node);
         const angle = degreesToRadians(node.rotation ?? 0);
         const active = node.id === selectedId;
+        const hovered = hover?.kind === "node" && hover.id === node.id;
+        const grabbed = draft?.kind === "node" && draft.id === node.id;
+
+        if (hovered || active || grabbed) {
+          context.beginPath();
+          context.arc(node.position.x, node.position.y, radius + 9, 0, Math.PI * 2);
+          context.fillStyle = active ? "rgba(247, 216, 75, 0.16)" : "rgba(62, 224, 255, 0.16)";
+          context.fill();
+          context.lineWidth = 1.6;
+          context.strokeStyle = active ? "rgba(247, 216, 75, 0.72)" : "rgba(62, 224, 255, 0.66)";
+          context.stroke();
+        }
+
         context.save();
         context.translate(node.position.x, node.position.y);
         context.rotate(angle);
@@ -872,36 +1055,48 @@ export function SimulationCanvas({
 
         ports.forEach((port) => {
           const point = portPosition(node, port);
+          const flowPort = port === "inlet" || port === "outlet";
+          const portHovered = hover?.kind === "port" && hover.nodeId === node.id && hover.port === port;
+          const snapped =
+            (draft?.kind === "connect" || draft?.kind === "endpoint")
+            && draft.snap?.nodeId === node.id
+            && draft.snap.port === port;
+          const snapRefused = snapped && (draft.kind === "connect" || draft.kind === "endpoint") && draft.snap?.free === false;
+          if (portHovered || snapped) {
+            context.beginPath();
+            context.arc(point.x, point.y, Math.max(11, px(13)), 0, Math.PI * 2);
+            context.fillStyle = snapRefused
+              ? "rgba(255, 122, 122, 0.26)"
+              : snapped
+                ? "rgba(157, 251, 215, 0.3)"
+                : "rgba(62, 224, 255, 0.22)";
+            context.fill();
+            context.lineWidth = px(2);
+            context.strokeStyle = snapRefused ? "#ff7a7a" : snapped ? "#9dfbd7" : "rgba(62, 224, 255, 0.85)";
+            context.stroke();
+          }
           context.fillStyle = active ? "#f7d84b" : "#071019";
-          context.strokeStyle = port === "inlet" || port === "outlet" ? "#9dfbd7" : "rgba(238, 248, 255, 0.45)";
+          context.strokeStyle = flowPort ? "#9dfbd7" : "rgba(238, 248, 255, 0.45)";
           context.lineWidth = 1.5;
           context.beginPath();
-          context.arc(point.x, point.y, port === "inlet" || port === "outlet" ? 4.5 : 3.5, 0, Math.PI * 2);
+          context.arc(point.x, point.y, flowPort ? 4.5 : 3.5, 0, Math.PI * 2);
           context.fill();
           context.stroke();
         });
 
         if (active && ["pump", "sink", "source", "junction"].includes(node.type)) {
           const handle = aimHandlePosition(node);
+          const handleHovered = hover?.kind === "rotate" && hover.nodeId === node.id;
           context.strokeStyle = "rgba(247, 216, 75, 0.58)";
           context.lineWidth = 1.5;
           context.beginPath();
           context.moveTo(node.position.x, node.position.y);
           context.lineTo(handle.x, handle.y);
           context.stroke();
-          context.fillStyle = "#f7d84b";
+          context.fillStyle = handleHovered ? "#fff0a6" : "#f7d84b";
           context.beginPath();
-          context.arc(handle.x, handle.y, 6, 0, Math.PI * 2);
+          context.arc(handle.x, handle.y, handleHovered ? 8 : 6, 0, Math.PI * 2);
           context.fill();
-        }
-
-        context.fillStyle = "#edf8ff";
-        context.font = "600 12px Inter, system-ui, sans-serif";
-        context.fillText(node.label, node.position.x + 18, node.position.y + 4);
-        if (solved) {
-          context.fillStyle = "rgba(206, 227, 239, 0.75)";
-          context.font = "11px Inter, system-ui, sans-serif";
-          context.fillText(`${Math.round(solved.pressure / 1000)} kPa · ${node.rotation ?? 0}deg`, node.position.x + 18, node.position.y + 19);
         }
       });
 
@@ -915,33 +1110,165 @@ export function SimulationCanvas({
         }
       }
 
-      const draft = dragRef.current;
-      if (draft?.kind === "connect") {
-        context.strokeStyle = "#f7d84b";
-        context.lineWidth = 3;
-        context.setLineDash([8, 8]);
-        context.beginPath();
-        context.moveTo(draft.from.point.x, draft.from.point.y);
-        context.lineTo(draft.pointer.x, draft.pointer.y);
-        context.stroke();
-        context.setLineDash([]);
-        drawEndpointHandle(draft.from.point, true);
-      } else if (draft?.kind === "endpoint") {
-        const edge = renderedProject.edges[draft.edgeId];
-        const anchor = edge ? endpointPoint(edge, draft.endpoint === "from" ? "to" : "from", renderedProject.nodes) : null;
+      if (draft?.kind === "connect" || draft?.kind === "endpoint") {
+        const anchor =
+          draft.kind === "connect"
+            ? draft.from.point
+            : (() => {
+                const edge = renderedProject.edges[draft.edgeId];
+                return edge ? endpointPoint(edge, draft.endpoint === "from" ? "to" : "from", renderedProject.nodes) : null;
+              })();
+        // The rubber band terminates on the snapped port, not the raw pointer, so the
+        // connection the user is about to make is the one they can see.
+        const target = draft.snap?.point ?? draft.pointer;
         if (anchor) {
-          context.strokeStyle = "#f7d84b";
-          context.lineWidth = 3;
-          context.setLineDash([8, 8]);
+          context.save();
+          context.strokeStyle = "rgba(4, 12, 19, 0.85)";
+          context.lineWidth = px(7);
           context.beginPath();
           context.moveTo(anchor.x, anchor.y);
-          context.lineTo(draft.pointer.x, draft.pointer.y);
+          context.lineTo(target.x, target.y);
+          context.stroke();
+          context.strokeStyle = draft.snap ? (draft.snap.free ? "#9dfbd7" : "#ff7a7a") : "#f7d84b";
+          context.lineWidth = px(3);
+          context.setLineDash(draft.snap?.free ? [] : [px(9), px(7)]);
+          context.beginPath();
+          context.moveTo(anchor.x, anchor.y);
+          context.lineTo(target.x, target.y);
           context.stroke();
           context.setLineDash([]);
+          context.restore();
+          if (draft.kind === "connect") drawEndpointHandle(anchor, true);
         }
       }
 
       context.restore();
+
+      // Labels are drawn last, in screen space, at a fixed size. Anything that would land
+      // on top of a label already placed is dropped, so the schematic never turns into
+      // overlapping text no matter how far the user zooms out.
+      const viewport = { pan: view.offset, zoom: view.scale };
+      const placedLabels: LabelBox[] = [];
+      // Regions no label may cover, whatever its priority: the snap markers must stay
+      // readable while a component is being dragged.
+      const reservedBoxes: LabelBox[] = [];
+      const snapMarkerHalf = (Math.max(SCHEMATIC_GRID_SIZE * 1.5, px(52)) * view.scale) / 2;
+      if (draft?.kind === "node" && draft.moved) {
+        const centre = worldToScreen(draft.position, viewport);
+        reservedBoxes.push({
+          left: centre.x - snapMarkerHalf,
+          top: centre.y - snapMarkerHalf,
+          right: centre.x + snapMarkerHalf,
+          bottom: centre.y + snapMarkerHalf
+        });
+        if (draft.deflected) {
+          const requested = worldToScreen(snapToGrid(draft.pointer), viewport);
+          reservedBoxes.push({
+            left: requested.x - snapMarkerHalf,
+            top: requested.y - snapMarkerHalf,
+            right: requested.x + snapMarkerHalf,
+            bottom: requested.y + snapMarkerHalf
+          });
+        }
+      }
+
+      function drawLabelChip(
+        anchor: Vec2,
+        lines: string[],
+        tone: "node" | "edge",
+        emphasis: boolean,
+        placement: "below" | "above" = "below"
+      ) {
+        const padding = 7;
+        const lineHeight = 14;
+        context.save();
+        context.font = emphasis ? "700 11.5px Inter, system-ui, sans-serif" : "600 11.5px Inter, system-ui, sans-serif";
+        const textWidth = Math.max(...lines.map((line) => context.measureText(line).width));
+        const boxWidth = textWidth + padding * 2;
+        const boxHeight = lines.length * lineHeight + padding * 2 - 3;
+        const left = Math.round(anchor.x - boxWidth / 2);
+        const top = Math.round(placement === "above" ? anchor.y - boxHeight : anchor.y);
+        const box: LabelBox = { left, top, right: left + boxWidth, bottom: top + boxHeight };
+        if (box.right < -40 || box.left > width + 40 || box.bottom < -40 || box.top > height + 40) {
+          context.restore();
+          return;
+        }
+        if (reservedBoxes.some((reserved) => boxesOverlap(reserved, box))) {
+          context.restore();
+          return;
+        }
+        if (!emphasis && placedLabels.some((existing) => boxesOverlap(existing, box))) {
+          context.restore();
+          return;
+        }
+        placedLabels.push(box);
+        roundedRectPath(context, left, top, boxWidth, boxHeight, 6);
+        context.fillStyle = emphasis ? "rgba(38, 32, 8, 0.88)" : "rgba(4, 12, 19, 0.82)";
+        context.fill();
+        context.lineWidth = 1;
+        context.strokeStyle = emphasis
+          ? "rgba(247, 216, 75, 0.66)"
+          : tone === "node"
+            ? "rgba(150, 194, 224, 0.24)"
+            : "rgba(150, 194, 224, 0.18)";
+        context.stroke();
+        context.textAlign = "center";
+        context.textBaseline = "alphabetic";
+        lines.forEach((line, index) => {
+          context.font =
+            index === 0
+              ? emphasis
+                ? "700 11.5px Inter, system-ui, sans-serif"
+                : "600 11.5px Inter, system-ui, sans-serif"
+              : "500 10.5px Inter, system-ui, sans-serif";
+          context.fillStyle = index === 0 ? (emphasis ? "#fff3c4" : "#e9f6ff") : "rgba(200, 222, 238, 0.78)";
+          context.fillText(line, left + boxWidth / 2, top + padding + lineHeight * index + 9);
+        });
+        context.restore();
+      }
+
+      // Selected first, so the item the user is working on always keeps its label.
+      const labelledNodes = Object.values(renderedProject.nodes).sort((left, right) =>
+        Number(right.id === selectedId) - Number(left.id === selectedId)
+      );
+      for (const node of labelledNodes) {
+        const solved = activeResult.nodeResults[node.id];
+        const emphasis = node.id === selectedId || (hover?.kind === "node" && hover.id === node.id);
+        const centre = worldToScreen(node.position, viewport);
+        // The component being dragged keeps its name, pushed clear of the snap marker.
+        const anchor =
+          draft?.kind === "node" && draft.moved && draft.id === node.id
+            ? { x: centre.x, y: centre.y + snapMarkerHalf + 8 }
+            : worldToScreen({ x: node.position.x, y: node.position.y + nodeRadius(node) + 12 }, viewport);
+        const lines = [node.label];
+        if (solved) lines.push(`${Math.round(solved.pressure / 1000)} kPa · ${Math.round(node.rotation ?? 0)}°`);
+        drawLabelChip(anchor, lines, "node", emphasis);
+      }
+
+      for (const edge of Object.values(renderedProject.edges)) {
+        const solved = activeResult.edgeResults[edge.id];
+        if (!solved) continue;
+        const from = renderedProject.nodes[edge.from];
+        const to = renderedProject.nodes[edge.to];
+        if (!from || !to) continue;
+        const emphasis = edge.id === selectedId || (hover?.kind === "edge" && hover.id === edge.id);
+        const mid = worldToScreen(edgeMidpoint(edge, renderedProject.nodes), viewport);
+        // Offset along the run's normal, always choosing the upward-pointing one, so the
+        // chip sits clear of the pipe and clear of the node chips that hang below nodes.
+        const dx = to.position.x - from.position.x;
+        const dy = to.position.y - from.position.y;
+        const length = Math.hypot(dx, dy) || 1;
+        const normal = { x: -dy / length, y: dx / length };
+        const direction = normal.y > 0 ? -1 : 1;
+        const offset = 24;
+        drawLabelChip(
+          { x: mid.x + normal.x * direction * offset, y: mid.y + normal.y * direction * offset },
+          [edge.label, `Re ${Math.round(solved.reynolds).toLocaleString()}`],
+          "edge",
+          emphasis,
+          "above"
+        );
+      }
 
       recordEditorMetric("schematic-frame", performance.now() - started);
       recordEditorFrame("schematic-frame");
@@ -1021,15 +1348,43 @@ export function SimulationCanvas({
     target.setPointerCapture?.(pointerId);
   }
 
-  function portAt(point: Vec2): PortHit | null {
+  /**
+   * Hit tolerances are authored in screen pixels and converted to world units, so a
+   * component stays just as easy to grab when the drawing is zoomed out.
+   */
+  function tolerance(screenPixels: number) {
+    return screenPixels / Math.max(0.05, viewRef.current.scale);
+  }
+
+  /**
+   * A port already carrying a pipe end cannot take another; the store silently refuses.
+   * Knowing this up front lets the snap target say so instead of the drop doing nothing.
+   */
+  function portIsFree(nodeId: string, port: PipePortId, ignoredEdgeId?: string) {
+    return !Object.values(project.edges).some(
+      (edge) =>
+        edge.id !== ignoredEdgeId
+        && ((edge.from === nodeId && (edge.fromPort ?? "outlet") === port)
+          || (edge.to === nodeId && (edge.toPort ?? "inlet") === port))
+    );
+  }
+
+  function portAt(point: Vec2, radius = tolerance(18), excludeNodeId?: string, ignoredEdgeId?: string): PortSnap | null {
     const activeProject = currentProject();
+    let best: PortSnap | null = null;
+    let bestDistance = radius;
     for (const node of Object.values(activeProject.nodes)) {
+      if (node.id === excludeNodeId) continue;
       for (const port of ports) {
         const portPoint = portPosition(node, port);
-        if (Math.hypot(portPoint.x - point.x, portPoint.y - point.y) < 18) return { nodeId: node.id, port, point: portPoint };
+        const distance = Math.hypot(portPoint.x - point.x, portPoint.y - point.y);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = { nodeId: node.id, port, point: portPoint, free: portIsFree(node.id, port, ignoredEdgeId) };
+        }
       }
     }
-    return null;
+    return best;
   }
 
   function selectedEndpointAt(point: Vec2): { edgeId: string; endpoint: "from" | "to" } | null {
@@ -1037,10 +1392,11 @@ export function SimulationCanvas({
     const activeProject = currentProject();
     const edge = activeProject.edges[selectedId];
     if (!edge) return null;
+    const reach = tolerance(16);
     const from = endpointPoint(edge, "from", activeProject.nodes);
     const to = endpointPoint(edge, "to", activeProject.nodes);
-    if (from && Math.hypot(from.x - point.x, from.y - point.y) < 16) return { edgeId: edge.id, endpoint: "from" };
-    if (to && Math.hypot(to.x - point.x, to.y - point.y) < 16) return { edgeId: edge.id, endpoint: "to" };
+    if (from && Math.hypot(from.x - point.x, from.y - point.y) < reach) return { edgeId: edge.id, endpoint: "from" };
+    if (to && Math.hypot(to.x - point.x, to.y - point.y) < reach) return { edgeId: edge.id, endpoint: "to" };
     return null;
   }
 
@@ -1049,15 +1405,41 @@ export function SimulationCanvas({
     const node = currentProject().nodes[selectedId];
     if (!node) return null;
     const handle = aimHandlePosition(node);
-    return Math.hypot(handle.x - point.x, handle.y - point.y) < 18 ? node : null;
+    return Math.hypot(handle.x - point.x, handle.y - point.y) < tolerance(18) ? node : null;
   }
 
-  function nodeAt(point: Vec2) {
-    return Object.values(currentProject().nodes).find((candidate) => Math.hypot(candidate.position.x - point.x, candidate.position.y - point.y) < 24);
+  /**
+   * Resolves a body-versus-port hit by distance rather than by fixed priority. Both hit
+   * zones are screen-constant, so when the drawing is zoomed out a fixed priority would
+   * let the port zones swallow the node body and make components undraggable.
+   */
+  function nodeOrPortAt(point: Vec2): { kind: "node"; node: FluidNode } | { kind: "port"; hit: PortHit } | null {
+    const activeProject = currentProject();
+    const nodeReach = tolerance(24);
+    const portReach = tolerance(18);
+    let best: { kind: "node"; node: FluidNode } | { kind: "port"; hit: PortHit } | null = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const node of Object.values(activeProject.nodes)) {
+      const bodyDistance = Math.hypot(node.position.x - point.x, node.position.y - point.y);
+      if (bodyDistance < nodeReach && bodyDistance < bestDistance) {
+        bestDistance = bodyDistance;
+        best = { kind: "node", node };
+      }
+      for (const port of ports) {
+        const portPoint = portPosition(node, port);
+        const portDistance = Math.hypot(portPoint.x - point.x, portPoint.y - point.y);
+        if (portDistance < portReach && portDistance < bestDistance) {
+          bestDistance = portDistance;
+          best = { kind: "port", hit: { nodeId: node.id, port, point: portPoint } };
+        }
+      }
+    }
+    return best;
   }
 
   function edgeAt(point: Vec2) {
     const activeProject = currentProject();
+    const reach = tolerance(20);
     return Object.values(activeProject.edges).find((candidate) => {
       const from = endpointPoint(candidate, "from", activeProject.nodes);
       const to = endpointPoint(candidate, "to", activeProject.nodes);
@@ -1066,8 +1448,34 @@ export function SimulationCanvas({
       const t = Math.max(0, Math.min(1, ((point.x - from.x) * (to.x - from.x) + (point.y - from.y) * (to.y - from.y)) / length ** 2));
       const px = from.x + (to.x - from.x) * t;
       const py = from.y + (to.y - from.y) * t;
-      return Math.hypot(px - point.x, py - point.y) < 20;
+      return Math.hypot(px - point.x, py - point.y) < reach;
     });
+  }
+
+  /** What the pointer is currently over, in the same priority order the click handler uses. */
+  function hoverTargetAt(point: Vec2): HoverTarget | null {
+    const rotateTarget = rotateHandleAt(point);
+    if (rotateTarget) return { kind: "rotate", nodeId: rotateTarget.id };
+    const endpoint = selectedEndpointAt(point);
+    if (endpoint) return { kind: "endpoint", ...endpoint };
+    const component = nodeOrPortAt(point);
+    if (component?.kind === "port") return { kind: "port", nodeId: component.hit.nodeId, port: component.hit.port };
+    if (component?.kind === "node") return { kind: "node", id: component.node.id };
+    const edge = edgeAt(point);
+    if (edge) return { kind: "edge", id: edge.id };
+    return null;
+  }
+
+  function applyCursor(canvas: HTMLCanvasElement, value: string, hoverKind: string) {
+    canvas.style.cursor = value;
+    canvas.dataset.hoverKind = hoverKind;
+  }
+
+  /** Snapped drop position plus whether a collision pushed it off the requested cell. */
+  function resolveNodeDrop(nodeId: string, desired: Vec2) {
+    const requested = snapToGrid(desired);
+    const position = snapNodeToFreeCell(project, nodeId, desired);
+    return { position, deflected: position.x !== requested.x || position.y !== requested.y };
   }
 
   function handlePointerDown(event: PointerEvent<HTMLCanvasElement>) {
@@ -1103,7 +1511,7 @@ export function SimulationCanvas({
       }
       if (pick?.kind === "port") {
         onSelect("node", pick.nodeId);
-        dragRef.current = { kind: "connect", from: { nodeId: pick.nodeId, port: pick.port, point: pick.point }, pointer: point ?? pick.point };
+        dragRef.current = { kind: "connect", from: { nodeId: pick.nodeId, port: pick.port, point: pick.point }, pointer: point ?? pick.point, snap: null };
         capturePointer(event.currentTarget, event.pointerId);
         return;
       }
@@ -1151,38 +1559,61 @@ export function SimulationCanvas({
       return;
     }
 
-    const port = portAt(point);
-    if (port) {
-      onSelect("node", port.nodeId);
-      dragRef.current = { kind: "connect", from: port, pointer: point };
+    // The selected pipe draws grab handles on its own two ends. Those handles win over a
+    // fresh connection so the affordance the user can see is the one they get; a port that
+    // already carries a pipe end could not start a new one anyway.
+    const selectedHandle = selectedEndpointAt(point);
+    if (selectedHandle) {
+      dragRef.current = { kind: "endpoint", ...selectedHandle, pointer: point, snap: null };
+      applyCursor(event.currentTarget, "crosshair", "endpoint");
       capturePointer(event.currentTarget, event.pointerId);
       return;
     }
 
-      const endpoint = selectedEndpointAt(point);
-    if (endpoint) {
-      dragRef.current = { kind: "endpoint", ...endpoint, pointer: point };
+    const component = nodeOrPortAt(point);
+    if (component?.kind === "port") {
+      onSelect("node", component.hit.nodeId);
+      dragRef.current = { kind: "connect", from: component.hit, pointer: point, snap: null };
+      applyCursor(event.currentTarget, "crosshair", "port");
       capturePointer(event.currentTarget, event.pointerId);
       return;
     }
 
-    const node = nodeAt(point);
-    if (node) {
+    if (component?.kind === "node") {
+      const node = component.node;
       onSelect("node", node.id);
+
+      const offsetX = point.x - node.position.x;
+      const offsetY = point.y - node.position.y;
+      const drop = resolveNodeDrop(node.id, { x: point.x - offsetX, y: point.y - offsetY });
       dragRef.current = {
         kind: "node",
         id: node.id,
-        offsetX: point.x - node.position.x,
-        offsetY: point.y - node.position.y,
-        position: { ...node.position }
+        offsetX,
+        offsetY,
+        position: drop.position,
+        pointer: { x: point.x - offsetX, y: point.y - offsetY },
+        deflected: drop.deflected,
+        moved: false
       };
+      applyCursor(event.currentTarget, "grabbing", "node");
       capturePointer(event.currentTarget, event.pointerId);
       return;
     }
+
+    const endpoint = selectedEndpointAt(point);
+    if (endpoint) {
+      dragRef.current = { kind: "endpoint", ...endpoint, pointer: point, snap: null };
+      applyCursor(event.currentTarget, "crosshair", "endpoint");
+      capturePointer(event.currentTarget, event.pointerId);
+      return;
+    }
+
     const edge = edgeAt(point);
     if (edge) onSelect("edge", edge.id);
     else {
       dragRef.current = { kind: "canvas-pan", start: screen, viewport: { ...schematicViewportRef.current, pan: { ...schematicViewportRef.current.pan } }, moved: false };
+      applyCursor(event.currentTarget, "grabbing", "canvas");
       if (resultDataset) onProbePoint(screen, { width: rect.width, height: rect.height });
       capturePointer(event.currentTarget, event.pointerId);
     }
@@ -1202,6 +1633,7 @@ export function SimulationCanvas({
       const pinch = pinchRef.current;
       const ratio = distance / pinch.distance;
       if (canvasRenderMode === "schematic" && pinch.viewport) {
+        userZoomedRef.current = true;
         const zoom = clampViewportZoom(pinch.viewport.zoom * ratio);
         schematicViewportRef.current = {
           zoom,
@@ -1215,14 +1647,28 @@ export function SimulationCanvas({
       }
         return;
       }
-      if (!dragRef.current) return;
+      if (!dragRef.current) {
+        // Idle hover: keep the cursor and the highlight in step with what is under it,
+        // so what is draggable is obvious before the user presses anything.
+        if (canvasRenderMode === "schematic") {
+          const target = hoverTargetAt(canvasPoint(event));
+          hoverRef.current = target;
+          applyCursor(event.currentTarget, target ? cursorForHover[target.kind] : "grab", target?.kind ?? "canvas");
+        }
+        return;
+      }
       const point = canvasRenderMode === "cinema" && cinemaRef.current ? (cinemaPoint(event) ?? canvasPoint(event)) : canvasPoint(event);
       if (dragRef.current.kind === "node") {
-      const nextPosition = {
-        x: Math.round(point.x - dragRef.current.offsetX),
-        y: Math.round(point.y - dragRef.current.offsetY)
+      const desired = { x: point.x - dragRef.current.offsetX, y: point.y - dragRef.current.offsetY };
+      const drop = resolveNodeDrop(dragRef.current.id, desired);
+      const travelled = Math.hypot(desired.x - dragRef.current.pointer.x, desired.y - dragRef.current.pointer.y);
+      dragRef.current = {
+        ...dragRef.current,
+        position: drop.position,
+        pointer: desired,
+        deflected: drop.deflected,
+        moved: dragRef.current.moved || travelled > 0.5
       };
-      dragRef.current = { ...dragRef.current, position: nextPosition };
       if (canvasRenderMode === "cinema") cinemaRef.current?.updateModel(currentProject(), result);
       } else if (dragRef.current.kind === "rotate") {
       const node = currentProject().nodes[dragRef.current.nodeId];
@@ -1232,9 +1678,17 @@ export function SimulationCanvas({
         if (canvasRenderMode === "cinema") cinemaRef.current?.updateModel(currentProject(), result);
       }
       } else if (dragRef.current.kind === "connect") {
-      dragRef.current = { ...dragRef.current, pointer: point };
+      dragRef.current = {
+        ...dragRef.current,
+        pointer: point,
+        snap: portAt(point, tolerance(PORT_SNAP_RADIUS), dragRef.current.from.nodeId)
+      };
       } else if (dragRef.current.kind === "endpoint") {
-      dragRef.current = { ...dragRef.current, pointer: point };
+      dragRef.current = {
+        ...dragRef.current,
+        pointer: point,
+        snap: portAt(point, tolerance(PORT_SNAP_RADIUS), undefined, dragRef.current.edgeId)
+      };
       } else if (dragRef.current.kind === "canvas-pan") {
       const delta = { x: pointOnScreen.x - dragRef.current.start.x, y: pointOnScreen.y - dragRef.current.start.y };
       dragRef.current = { ...dragRef.current, moved: dragRef.current.moved || Math.hypot(delta.x, delta.y) > 2 };
@@ -1265,9 +1719,14 @@ export function SimulationCanvas({
     }
     const point = canvasRenderMode === "cinema" && cinemaRef.current ? (cinemaPoint(event) ?? canvasPoint(event)) : canvasPoint(event);
     const cinemaTarget = canvasRenderMode === "cinema" && cinemaRef.current ? cinemaPick(event) : null;
-    const target = cinemaTarget?.kind === "port" ? { nodeId: cinemaTarget.nodeId, port: cinemaTarget.port, point: cinemaTarget.point } : portAt(point);
     const active = dragRef.current;
-    if (!cancelled && active?.kind === "node") {
+    // The port shown as the snap target during the drag is the one that gets connected.
+    const dragSnap = active?.kind === "connect" || active?.kind === "endpoint" ? active.snap : null;
+    const target =
+      cinemaTarget?.kind === "port"
+        ? { nodeId: cinemaTarget.nodeId, port: cinemaTarget.port, point: cinemaTarget.point }
+        : (dragSnap ?? portAt(point, tolerance(PORT_SNAP_RADIUS)));
+    if (!cancelled && active?.kind === "node" && active.moved) {
       onMoveNode(active.id, active.position);
     } else if (!cancelled && active?.kind === "rotate") {
       onRotateNode(active.nodeId, active.rotation);
@@ -1288,9 +1747,18 @@ export function SimulationCanvas({
     }
 
     dragRef.current = null;
+    if (canvasRenderMode === "schematic") {
+      const hovered = hoverTargetAt(point);
+      hoverRef.current = hovered;
+      applyCursor(event.currentTarget, hovered ? cursorForHover[hovered.kind] : "grab", hovered?.kind ?? "canvas");
+    }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+  }
+
+  function handlePointerLeave() {
+    hoverRef.current = null;
   }
 
   function handleWheel(event: WheelEvent<HTMLCanvasElement>) {
@@ -1301,6 +1769,7 @@ export function SimulationCanvas({
       onCinemaCameraChange({ ...cinemaCamera, zoom: clampViewportZoom(cinemaCamera.zoom * Math.exp(-event.deltaY * 0.0012)) });
       return;
     }
+    userZoomedRef.current = true;
     schematicViewportRef.current = zoomViewportAtPoint(schematicViewportRef.current, point, event.deltaY);
   }
 
@@ -1311,7 +1780,9 @@ export function SimulationCanvas({
     }
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    schematicViewportRef.current = fitSchematicViewport(project, rect.width, rect.height);
+    // Fit hands framing back to the app, so later resizes keep the drawing framed.
+    userZoomedRef.current = false;
+    schematicViewportRef.current = fitSchematicViewport(project, rect.width, rect.height, { insets: schematicFitInsets });
     schematicViewportInitializedRef.current = true;
   }
 
@@ -1320,6 +1791,8 @@ export function SimulationCanvas({
       onCinemaCameraChange({ yaw: 0, pitch: 38, zoom: 1, pan: { x: 0, y: 0 } });
       return;
     }
+    // Reset is a deliberate 1:1 framing choice, so auto-fit stops taking it back.
+    userZoomedRef.current = true;
     schematicViewportRef.current = resetSchematicViewport();
     schematicViewportInitializedRef.current = true;
   }
@@ -1333,12 +1806,13 @@ export function SimulationCanvas({
     } else if (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowRight") {
       const node = selectedKind === "node" && selectedId ? project.nodes[selectedId] : null;
       if (!node) return;
-      const step = event.shiftKey ? 10 : 1;
+      // Keyboard nudges move by whole grid cells so they land on the same lattice as drags.
+      const step = SCHEMATIC_GRID_SIZE * (event.shiftKey ? 3 : 1);
       const delta = {
         x: event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0,
         y: event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0
       };
-      onMoveNode(node.id, { x: node.position.x + delta.x, y: node.position.y + delta.y });
+      onMoveNode(node.id, snapNodeToFreeCell(project, node.id, { x: node.position.x + delta.x, y: node.position.y + delta.y }));
       event.preventDefault();
     } else if (event.key === "f" || event.key === "F") {
       event.preventDefault();
@@ -1349,11 +1823,17 @@ export function SimulationCanvas({
     } else if (event.key === "+" || event.key === "=") {
       event.preventDefault();
       if (canvasRenderMode === "cinema") onCinemaCameraChange({ ...cinemaCamera, zoom: clampViewportZoom(cinemaCamera.zoom * 1.15) });
-      else schematicViewportRef.current = zoomViewportAtPoint(schematicViewportRef.current, { x: viewRef.current.offset.x, y: viewRef.current.offset.y }, -120);
+      else {
+        userZoomedRef.current = true;
+        schematicViewportRef.current = zoomViewportAtPoint(schematicViewportRef.current, { x: viewRef.current.offset.x, y: viewRef.current.offset.y }, -120);
+      }
     } else if (event.key === "-") {
       event.preventDefault();
       if (canvasRenderMode === "cinema") onCinemaCameraChange({ ...cinemaCamera, zoom: clampViewportZoom(cinemaCamera.zoom / 1.15) });
-      else schematicViewportRef.current = zoomViewportAtPoint(schematicViewportRef.current, { x: viewRef.current.offset.x, y: viewRef.current.offset.y }, 120);
+      else {
+        userZoomedRef.current = true;
+        schematicViewportRef.current = zoomViewportAtPoint(schematicViewportRef.current, { x: viewRef.current.offset.x, y: viewRef.current.offset.y }, 120);
+      }
     }
   }
 
@@ -1370,6 +1850,7 @@ export function SimulationCanvas({
         onPointerMove={handlePointerMove}
         onPointerUp={(event) => handlePointerEnd(event)}
         onPointerCancel={(event) => handlePointerEnd(event, true)}
+        onPointerLeave={handlePointerLeave}
         onWheel={handleWheel}
         onKeyDown={handleKeyDown}
         aria-label={ariaLabel}
